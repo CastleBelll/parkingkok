@@ -21,6 +21,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // The fallback only fires under a harness whose Application is not ours. It is
+        // safe because `preferencesDataStore` memoizes one DataStore per process, so a
+        // second container still reads and writes the same store.
         val container = ParkingkokApplication.containerOf(this) ?: AppContainer(this)
         setContent {
             ParkingkokTheme {
