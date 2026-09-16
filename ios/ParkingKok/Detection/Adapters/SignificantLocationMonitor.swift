@@ -73,7 +73,7 @@ extension SignificantLocationMonitor: CLLocationManagerDelegate {
         // Reading the status first keeps the non-Sendable manager out of the closure.
         let authorization = LocationAuthorization(manager.authorizationStatus)
         MainActor.assumeIsolated {
-            AppLog.detection.info("location authorization -> \(authorization.rawValue, privacy: .public)")
+            AppLog.detection.notice("location authorization -> \(authorization.rawValue, privacy: .public)")
             delegate?.monitorDidChangeAuthorization(authorization)
         }
     }

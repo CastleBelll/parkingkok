@@ -24,12 +24,14 @@ final class DetectionRuntime {
     private(set) var storeSetupFailure: String?
 
     private let motionHistory: any MotionHistoryProviding
+    private let diagnosticsStore: (any DiagnosticsReportStoring)?
 
     init(
         monitor: SignificantLocationMonitor = SignificantLocationMonitor(),
         motionHistory: any MotionHistoryProviding = CoreMotionHistoryProvider(),
         preference: SmartDetectionPreference = SmartDetectionPreference(),
-        checkpointStore: (any DetectionCheckpointStoring)? = nil
+        checkpointStore: (any DetectionCheckpointStoring)? = nil,
+        diagnosticsStore: (any DiagnosticsReportStoring)? = nil
     ) {
         self.monitor = monitor
         self.motionHistory = motionHistory
@@ -54,6 +56,11 @@ final class DetectionRuntime {
             }
         }
         storeSetupFailure = setupFailure
+
+        // Beside the checkpoint, or nowhere. A diagnostics file in an unexpected place is
+        // worse than none: it would be stale the moment anyone looked for it.
+        self.diagnosticsStore = diagnosticsStore
+            ?? (try? FileDiagnosticsReportStore(fileURL: FileDiagnosticsReportStore.defaultFileURL()))
 
         coordinator = BackgroundCoordinator(checkpointStore: store, motionHistory: motionHistory)
         locationAuthorization = monitor.authorization
@@ -80,10 +87,11 @@ final class DetectionRuntime {
         startMonitoringIfPermitted()
         hasBootstrapped = true
 
-        AppLog.lifecycle.info("bootstrap reason=\(launchReason.rawValue, privacy: .public)")
+        AppLog.lifecycle.notice("bootstrap reason=\(launchReason.rawValue, privacy: .public)")
 
-        Task { [coordinator] in
+        Task { [weak self, coordinator] in
             await coordinator.rehydrate(launchReason: launchReason)
+            await self?.exportDiagnostics()
         }
     }
 
@@ -95,6 +103,34 @@ final class DetectionRuntime {
         locationAuthorization = monitor.authorization
         motionAuthorization = motionHistory.authorization
         isMotionHistoryAvailable = motionHistory.isHistoryAvailable
+    }
+
+    /// Writes the diagnostics file that `checkpoint.json` sits beside.
+    ///
+    /// The single writer: it is the only place that holds both the coordinator's snapshot
+    /// and the authorization statuses. Best-effort — a diagnostics write must never break
+    /// a detection callback, and a failure shows up as `lastPersistError` in the next
+    /// report rather than as a thrown error here.
+    func exportDiagnostics() async {
+        guard let store = diagnosticsStore else { return }
+        let report = await DiagnosticsReport(
+            snapshot: coordinator.currentSnapshot(),
+            now: Date(),
+            locationAuthorization: locationAuthorization,
+            motionAuthorization: motionAuthorization,
+            isMotionHistoryAvailable: isMotionHistoryAvailable,
+            isMonitoringSignificantChanges: monitor.isMonitoring,
+            isSmartDetectionEnabled: preference.isEnabled,
+            storeSetupFailure: storeSetupFailure
+        )
+        do {
+            try store.write(report)
+        } catch {
+            let nsError = error as NSError
+            AppLog.detection.error(
+                "diagnostics export failed: \(nsError.domain, privacy: .public)(\(nsError.code, privacy: .public))"
+            )
+        }
     }
 
     /// The contextual request ladder from docs/04 §4. Returns what it asked for, so the
@@ -114,10 +150,14 @@ final class DetectionRuntime {
     }
 
     /// Motion permission is granted by the first query, so this doubles as the prompt.
+    ///
+    /// Routed through the coordinator so a refusal is recorded instead of discarded.
+    /// Querying here with `try?` swallowed the one error that explains an unresponsive
+    /// button, which is exactly the silent recovery the checkpoint path forbids.
     func requestMotionPermission() async {
-        let window = MotionHistoryWindowPolicy.window(now: Date(), checkpointDate: nil)
-        _ = try? await motionHistory.samples(in: window)
+        await coordinator.requestMotionHistoryAccess()
         refreshAuthorizationStatuses()
+        await exportDiagnostics()
     }
 
     func setSmartDetectionEnabled(_ enabled: Bool) {
@@ -128,6 +168,7 @@ final class DetectionRuntime {
         } else {
             monitor.stopMonitoring()
         }
+        Task { await exportDiagnostics() }
     }
 
     private func startMonitoringIfPermitted() {
@@ -149,15 +190,19 @@ extension DetectionRuntime: SignificantLocationMonitorDelegate {
         startMonitoringIfPermitted()
     }
 
+    /// The one path that runs while nobody is watching, so it is the one whose evidence
+    /// most needs to outlive the process.
     func monitorDidReceiveLocation(_ sample: LocationQualitySample) {
-        Task { [coordinator] in
+        Task { [weak self, coordinator] in
             await coordinator.handleSignificantChange(sample)
+            await self?.exportDiagnostics()
         }
     }
 
     func monitorDidFail(_ description: String) {
-        Task { [coordinator] in
+        Task { [weak self, coordinator] in
             await coordinator.recordLocationFailure(description)
+            await self?.exportDiagnostics()
         }
     }
 }

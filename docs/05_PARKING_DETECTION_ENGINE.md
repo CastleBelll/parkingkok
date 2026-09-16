@@ -85,6 +85,26 @@ Rules:
 - impossible speed/distance outliers rejected
 - poor samples must not overwrite lastReliableLocation
 
+### Cached-fix replay — 양 플랫폼 필수 가드
+OS는 위치 모니터링을 시작하는 순간 **캐시된 마지막 fix를 즉시 한 번 전달**한다.
+이 fix는 임의로 오래됐을 수 있다. iOS 실기기 M0A-1 관측에서 앱 설치(12:12)보다
+**3시간 20분 이른 08:51 fix**가 전달됐고, 정확도가 8m로 양호했기 때문에
+`negative accuracy` 검사를 그대로 통과해 live evidence로 기록됐다.
+
+정확도만으로는 잡을 수 없다. 캐시된 fix는 대체로 *좋은* fix이고, 단지 현재가 아닐 뿐이다.
+따라서 **타임스탬프 기반 freshness 가드를 반드시 둔다.**
+
+- 기본값: 수신 시점 기준 **300초** 초과 시 live evidence에서 제외
+- 시계 오차 허용: 미래 방향 5초까지
+- §6의 20초 기준은 **bounded driving session 전용**이며 이 경로에 재사용하지 않는다.
+  실제 significant change는 앱이 suspend된 탓에 수 분 늦게 도달할 수 있고, 그건
+  fix의 결함이 아니다
+- 제외한 샘플은 **조용히 버리지 말고 카운트**한다. fresh 샘플이 없는데 제외 카운트만
+  올라가면 임계값이 잘못 잡힌 것이다
+- 300초는 §8의 가중치와 같은 성격의 **필드 튜닝용 출발점**이지 스펙이 유도한 값이 아니다
+
+Android도 Fused Location 도입 시(M0B-2) 동일 의미론을 구현한다.
+
 ## 6. Reliable Location
 Initial default:
 - horizontalAccuracy <= 35m

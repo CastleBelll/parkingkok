@@ -53,10 +53,11 @@ protocol DetectionCheckpointStoring: Sendable {
 /// 1. **A plain file, not SwiftData.** A significant-change relaunch must read this on
 ///    the fastest possible path, before any stack is spun up. docs/04 §7 says background
 ///    callbacks do minimal work.
-/// 2. **`.completeFileProtectionUntilFirstUserAuthentication`.** The default protection
-///    class makes a file unreadable while the device is locked — which is exactly when
-///    significant-change wakes happen. With the default, rehydration would fail silently
-///    in the field and look like a detection bug.
+/// 2. **`.completeUntilFirstUserAuthentication`, set on the directory.** The default
+///    protection class makes a file unreadable while the device is locked — which is
+///    exactly when significant-change wakes happen. With the default, rehydration would
+///    fail silently in the field and look like a detection bug. The class lives on the
+///    directory rather than on each write; see `save(_:)`.
 struct FileDetectionCheckpointStore: DetectionCheckpointStoring {
     /// Bump whenever the encoded shape changes; an older payload is rejected rather than
     /// half-decoded.
@@ -72,6 +73,9 @@ struct FileDetectionCheckpointStore: DetectionCheckpointStoring {
     }
 
     /// Production location. Throws only when Application Support itself is unavailable.
+    ///
+    /// The protection class is set on the *directory* so files created inside it inherit
+    /// it. See `save(_:)` for why it is not passed to the write itself.
     static func defaultFileURL() throws -> URL {
         let support = try FileManager.default.url(
             for: .applicationSupportDirectory,
@@ -80,7 +84,11 @@ struct FileDetectionCheckpointStore: DetectionCheckpointStoring {
             create: true
         )
         let directory = support.appending(path: directoryName, directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true,
+            attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication]
+        )
         return directory.appending(path: fileName, directoryHint: .notDirectory)
     }
 
@@ -107,11 +115,19 @@ struct FileDetectionCheckpointStore: DetectionCheckpointStoring {
         return .restored(envelope.checkpoint)
     }
 
+    /// Writes atomically and lets the file inherit the directory's protection class.
+    ///
+    /// Passing a protection option *and* `.atomic` to the same `Data.write` failed on the
+    /// device with `NSCocoaErrorDomain(513)` — no permission. An atomic write lands in a
+    /// temporary file and then replaces the original, and that replace cannot reattach a
+    /// protection class to a destination the OS currently considers unreadable. Setting
+    /// the class on the containing directory gets the same protection without asking the
+    /// replace to do two jobs at once.
     func save(_ checkpoint: DetectionCheckpoint) throws {
         let envelope = Envelope(schemaVersion: Self.schemaVersion, checkpoint: checkpoint)
         do {
             let data = try JSONEncoder().encode(envelope)
-            try data.write(to: fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            try data.write(to: fileURL, options: [.atomic])
         } catch {
             throw DetectionCheckpointStoreError.writeFailed(Self.reason(for: error))
         }

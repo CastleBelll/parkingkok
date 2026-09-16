@@ -1,0 +1,157 @@
+import Foundation
+
+/// The P0 diagnostics, flattened for export beside the checkpoint.
+///
+/// Why it exists: the motion samples, authorization statuses and drop counters that
+/// prove the detection path worked lived only in memory and in `.info` log lines, so
+/// reading them back from a device needed `sudo log collect`. Written as a file instead,
+/// it comes off the device over the same path the checkpoint already uses, with no root.
+///
+/// **A hand-written projection, never an encoding of the live types.** `DetectionCheckpoint`
+/// is `Codable` and carries `lastReliableLocation`, which holds real coordinates from
+/// M0A-2 onward. This file is copied off the device by design, so encoding the checkpoint
+/// wholesale would walk parking coordinates straight past
+/// `docs/00_CORE_RULES.md` Privacy. Every field below is listed by hand; the
+/// coordinate-bearing ones are deliberately absent, and a test enforces it.
+struct DiagnosticsReport: Sendable, Equatable, Codable {
+    static let schemaVersion = 1
+
+    var schemaVersion: Int = DiagnosticsReport.schemaVersion
+    var generatedAt: Date
+
+    // Launch and rehydration
+    var launchReason: String
+    var rehydratedAt: Date?
+    var checkpointLoad: String
+    var checkpointAge: TimeInterval?
+    var isBeyondMotionRetention: Bool
+
+    // Checkpoint, projected
+    var state: String?
+    var revision: Int?
+    var stateEnteredAt: Date?
+    var lastAutomotiveAt: Date?
+    var lastLocationAt: Date?
+    var travelDistanceEstimate: Double?
+    var hasCandidate: Bool
+    /// Presence and quality of the reliable fix — never where it was.
+    var hasReliableLocation: Bool
+    var reliableLocationCapturedAt: Date?
+    var reliableLocationAccuracy: Double?
+
+    // Motion
+    var motionWindowStart: Date?
+    var motionWindowEnd: Date?
+    var motionSampleCount: Int
+    var motionFailure: String?
+    var motionSamples: [MotionSample]
+
+    // Location quality
+    var significantChangeCount: Int
+    var lastLocationAccuracy: Double?
+    var staleLocationDropCount: Int
+    var lastStaleLocationAge: TimeInterval?
+    var locationFailure: String?
+
+    // Permissions and wiring
+    var locationAuthorization: String
+    var motionAuthorization: String
+    var isMotionHistoryAvailable: Bool
+    var isMonitoringSignificantChanges: Bool
+    var isSmartDetectionEnabled: Bool
+    var storeSetupFailure: String?
+    var lastPersistError: String?
+
+    init(
+        snapshot: RehydrationSnapshot,
+        now: Date,
+        locationAuthorization: LocationAuthorization,
+        motionAuthorization: MotionAuthorization,
+        isMotionHistoryAvailable: Bool,
+        isMonitoringSignificantChanges: Bool,
+        isSmartDetectionEnabled: Bool,
+        storeSetupFailure: String?
+    ) {
+        generatedAt = now
+
+        launchReason = snapshot.launchReason.rawValue
+        rehydratedAt = snapshot.rehydratedAt
+        checkpointLoad = Self.describe(snapshot.checkpointLoad)
+        checkpointAge = snapshot.checkpointAge
+        isBeyondMotionRetention = snapshot.isBeyondMotionRetention
+
+        let checkpoint = snapshot.currentCheckpoint
+        state = checkpoint?.state.rawValue
+        revision = checkpoint?.revision
+        stateEnteredAt = checkpoint?.stateEnteredAt
+        lastAutomotiveAt = checkpoint?.lastAutomotiveAt
+        lastLocationAt = checkpoint?.lastLocationAt
+        travelDistanceEstimate = checkpoint?.travelDistanceEstimate
+        hasCandidate = checkpoint?.candidateId != nil
+        hasReliableLocation = checkpoint?.lastReliableLocation != nil
+        reliableLocationCapturedAt = checkpoint?.lastReliableLocation?.capturedAt
+        reliableLocationAccuracy = checkpoint?.lastReliableLocation?.horizontalAccuracy
+
+        motionWindowStart = snapshot.motionWindow?.start
+        motionWindowEnd = snapshot.motionWindow?.end
+        motionSampleCount = snapshot.motionSamples.count
+        motionFailure = snapshot.motionFailure
+        motionSamples = snapshot.motionSamples
+
+        significantChangeCount = snapshot.significantChangeCount
+        lastLocationAccuracy = snapshot.lastLocationAccuracy
+        staleLocationDropCount = snapshot.staleLocationDropCount
+        lastStaleLocationAge = snapshot.lastStaleLocationAge
+        locationFailure = snapshot.locationFailure
+
+        self.locationAuthorization = locationAuthorization.rawValue
+        self.motionAuthorization = motionAuthorization.rawValue
+        self.isMotionHistoryAvailable = isMotionHistoryAvailable
+        self.isMonitoringSignificantChanges = isMonitoringSignificantChanges
+        self.isSmartDetectionEnabled = isSmartDetectionEnabled
+        self.storeSetupFailure = storeSetupFailure
+        lastPersistError = snapshot.lastPersistError
+    }
+
+    private static func describe(_ load: DetectionCheckpointLoadResult) -> String {
+        switch load {
+        case let .restored(checkpoint): "restored(rev \(checkpoint.revision))"
+        case .absent: "absent"
+        case let .failed(failure): "failed(\(failure.diagnosticDescription))"
+        }
+    }
+}
+
+/// Writes the report beside the checkpoint so it inherits the same directory protection
+/// class and comes off the device over the same path.
+///
+/// Best-effort by design: a diagnostics file that fails to write must never take down a
+/// detection callback. The failure surfaces in the next report instead.
+protocol DiagnosticsReportStoring: Sendable {
+    func write(_ report: DiagnosticsReport) throws
+}
+
+struct FileDiagnosticsReportStore: DiagnosticsReportStoring {
+    private static let fileName = "diagnostics.json"
+
+    private let fileURL: URL
+
+    init(fileURL: URL) {
+        self.fileURL = fileURL
+    }
+
+    /// Beside `checkpoint.json`, so the directory's protection class covers both.
+    static func defaultFileURL() throws -> URL {
+        try FileDetectionCheckpointStore.defaultFileURL()
+            .deletingLastPathComponent()
+            .appending(path: fileName, directoryHint: .notDirectory)
+    }
+
+    func write(_ report: DiagnosticsReport) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(report)
+        try data.write(to: fileURL, options: [.atomic])
+    }
+}

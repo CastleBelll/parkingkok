@@ -168,4 +168,104 @@ struct BackgroundCoordinatorTests {
         #expect(!invalid.isValid)
         #expect(valid.isValid)
     }
+
+    /// Regression: the permission path used to query on the side with `try?`, so a
+    /// refusal vanished and the screen showed nothing while the button looked broken.
+    @Test("Requesting motion access records the refusal instead of discarding it")
+    func motionRefusalReachesTheSnapshot() async {
+        // Arrange
+        let motion = StubMotionHistoryProvider(
+            result: .failure(.notAuthorized),
+            authorization: .denied
+        )
+        let coordinator = makeCoordinator(store: StubCheckpointStore(), motion: motion)
+
+        // Act
+        await coordinator.requestMotionHistoryAccess()
+
+        // Assert
+        let snapshot = await coordinator.currentSnapshot()
+        #expect(snapshot.motionFailure == MotionHistoryError.notAuthorized.diagnosticDescription)
+        #expect(snapshot.motionSamples.isEmpty)
+    }
+
+    /// The window must stay open. Anchoring on a just-seeded checkpoint collapses it to
+    /// zero, `samples(in:)` returns early without touching Core Motion, and the prompt
+    /// never appears — the same deadlock by a different route.
+    @Test("Requesting motion access queries a non-empty window")
+    func motionRequestUsesOpenWindow() async throws {
+        // Arrange
+        let motion = StubMotionHistoryProvider(authorization: .notDetermined)
+        let coordinator = makeCoordinator(store: StubCheckpointStore(), motion: motion)
+
+        // Act
+        await coordinator.requestMotionHistoryAccess()
+
+        // Assert
+        let window = try #require(motion.requestedWindow)
+        #expect(window.start < window.end)
+    }
+
+    /// Regression, straight off the device: Core Location replayed a cached fix from
+    /// 08:51 into an app installed at 12:12, and it was persisted as a live arrival.
+    /// The fix was perfectly accurate — only old — so `isValid` let it through.
+    @Test("A cached fix older than the freshness bound never reaches the checkpoint")
+    func rejectsStaleSignificantChange() async {
+        // Arrange — 3h20m stale, exactly the gap observed on the iPhone.
+        let store = StubCheckpointStore()
+        let coordinator = makeCoordinator(
+            store: store,
+            motion: StubMotionHistoryProvider(),
+            now: TestTime.offset(12000)
+        )
+        let cached = LocationQualitySample(timestamp: TestTime.offset(0), horizontalAccuracy: 8)
+
+        // Act
+        await coordinator.handleSignificantChange(cached)
+
+        // Assert
+        let snapshot = await coordinator.currentSnapshot()
+        #expect(snapshot.significantChangeCount == 0)
+        #expect(snapshot.lastLocationAt == nil)
+        #expect(snapshot.staleLocationDropCount == 1)
+        #expect(snapshot.lastStaleLocationAge == 12000)
+        #expect(snapshot.currentCheckpoint?.lastLocationAt == nil)
+    }
+
+    @Test("A fresh fix still lands, so the guard does not swallow real movement")
+    func acceptsFreshSignificantChange() async {
+        // Arrange
+        let coordinator = makeCoordinator(
+            store: StubCheckpointStore(),
+            motion: StubMotionHistoryProvider(),
+            now: TestTime.offset(60)
+        )
+        let fresh = LocationQualitySample(timestamp: TestTime.offset(30), horizontalAccuracy: 8)
+
+        // Act
+        await coordinator.handleSignificantChange(fresh)
+
+        // Assert
+        let snapshot = await coordinator.currentSnapshot()
+        #expect(snapshot.significantChangeCount == 1)
+        #expect(snapshot.lastLocationAt == TestTime.offset(30))
+        #expect(snapshot.staleLocationDropCount == 0)
+        #expect(snapshot.currentCheckpoint?.lastLocationAt == TestTime.offset(30))
+    }
+
+    @Test("The freshness bound covers delivery delay but not a cached replay")
+    func freshnessBoundary() {
+        // Arrange / Act / Assert — docs/05_PARKING_DETECTION_ENGINE.md §5.
+        let now = TestTime.offset(1000)
+        func sample(age: TimeInterval) -> LocationQualitySample {
+            LocationQualitySample(timestamp: now.addingTimeInterval(-age), horizontalAccuracy: 8)
+        }
+        #expect(LocationFreshnessPolicy.isFresh(sample(age: 0), now: now))
+        #expect(LocationFreshnessPolicy.isFresh(sample(age: 299), now: now))
+        #expect(LocationFreshnessPolicy.isFresh(sample(age: 300), now: now))
+        #expect(!LocationFreshnessPolicy.isFresh(sample(age: 301), now: now))
+        // Clock skew a little ahead is ordinary; far ahead is not.
+        #expect(LocationFreshnessPolicy.isFresh(sample(age: -4), now: now))
+        #expect(!LocationFreshnessPolicy.isFresh(sample(age: -60), now: now))
+    }
 }

@@ -29,6 +29,9 @@ struct RehydrationSnapshot: Sendable, Equatable {
     var significantChangeCount = 0
     var lastLocationAt: Date?
     var lastLocationAccuracy: Double?
+    /// Cached fixes rejected as too old to be live evidence.
+    var staleLocationDropCount = 0
+    var lastStaleLocationAge: TimeInterval?
     var lastPersistError: String?
 }
 
@@ -107,11 +110,24 @@ actor BackgroundCoordinator {
     /// A significant change arrived. M0A-1 records that it happened and how good the fix
     /// was; interpreting it is M0A-2.
     func handleSignificantChange(_ sample: LocationQualitySample) {
+        let now = dateProvider.now
+
+        // Core Location replays its cached fix when monitoring starts. Persisting that
+        // as a live arrival walks lastLocationAt backwards and, once M0A-2 fills
+        // lastReliableLocation, would surface an hours-old point as the parking spot.
+        // Counted rather than dropped quietly: a rising count with no fresh samples is
+        // the signal that the freshness bound is set wrong.
+        guard LocationFreshnessPolicy.isFresh(sample, now: now) else {
+            snapshot.staleLocationDropCount += 1
+            snapshot.lastStaleLocationAge = now.timeIntervalSince(sample.timestamp)
+            return
+        }
+
         snapshot.significantChangeCount += 1
         snapshot.lastLocationAt = sample.timestamp
         snapshot.lastLocationAccuracy = sample.horizontalAccuracy
 
-        var updated = checkpoint ?? DetectionCheckpoint.initial(at: dateProvider.now)
+        var updated = checkpoint ?? DetectionCheckpoint.initial(at: now)
         updated.lastLocationAt = sample.timestamp
         updated.revision += 1
         persist(updated)
@@ -122,6 +138,17 @@ actor BackgroundCoordinator {
         snapshot.locationFailure = description
     }
 
+    /// Asking for motion permission *is* running a query, so this shares the
+    /// reconstruction path rather than querying on the side: whatever comes back —
+    /// samples or the reason it failed — lands in the snapshot and reaches the screen.
+    ///
+    /// Anchored on nothing on purpose. Anchoring on the live checkpoint would collapse
+    /// the window to zero right after a seed, `samples(in:)` would return early without
+    /// touching Core Motion, and the prompt would never appear.
+    func requestMotionHistoryAccess() async {
+        await reconstructMotionHistory(now: dateProvider.now, anchor: nil)
+    }
+
     private func reconstructMotionHistory(now: Date, anchor: Date?) async {
         let window = MotionHistoryWindowPolicy.window(now: now, checkpointDate: anchor)
         snapshot.motionWindow = window
@@ -130,7 +157,7 @@ actor BackgroundCoordinator {
             let samples = try await motionHistory.samples(in: window)
             snapshot.motionSamples = samples
             snapshot.motionFailure = nil
-            AppLog.detection.info("motion history restored: \(samples.count, privacy: .public) samples")
+            AppLog.detection.notice("motion history restored: \(samples.count, privacy: .public) samples")
         } catch let error as MotionHistoryError {
             snapshot.motionSamples = []
             snapshot.motionFailure = error.diagnosticDescription
