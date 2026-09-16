@@ -1,0 +1,8 @@
+#include "Base.xcconfig"
+
+// Internal / TestFlight build. Installs side by side with DEV and PROD.
+PK_BUNDLE_ID = $(PK_BUNDLE_ID_BASE).staging
+PK_DISPLAY_NAME = ParkingKok STG
+PK_APP_ENV = staging
+
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) PK_STAGING

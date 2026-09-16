@@ -29,6 +29,7 @@ Icon?
 ._*
 
 # ── Xcode / Swift ───────────────────────────────────────────────────────────
+ios/*.xcodeproj
 build/
 DerivedData/
 *.xcuserstate

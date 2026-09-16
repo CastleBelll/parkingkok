@@ -1,0 +1,35 @@
+# SwiftFormat — formatting only, no opinion the team has not agreed on.
+# Rule selection mirrors docs/16_CODING_STANDARDS.md; SwiftLint owns correctness.
+
+--swiftversion 6.0
+
+# ── Layout ──────────────────────────────────────────────────────────────────
+--indent 4
+--maxwidth 120
+--wraparguments before-first
+--wrapparameters before-first
+--wrapcollections before-first
+--wrapconditions after-first
+--closingparen balanced
+--commas inline
+
+# ── Imports ─────────────────────────────────────────────────────────────────
+--importgrouping testable-bottom
+
+# ── Explicitness ────────────────────────────────────────────────────────────
+--self remove
+--stripunusedargs closure-only
+--trimwhitespace always
+--emptybraces no-space
+
+# Opt-in rules worth having.
+--enable isEmpty
+--enable redundantOptionalBinding
+--enable sortImports
+--enable blankLinesBetweenScopes
+
+# Cosmetic-only rules that churn diffs without catching anything.
+--disable wrapMultilineStatementBraces
+--disable organizeDeclarations
+
+--exclude **/DerivedData,**/build,**/*.xcodeproj,**/.build

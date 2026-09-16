@@ -1,0 +1,62 @@
+# SwiftLint — high-signal rules only (docs/04_IOS_IMPLEMENTATION.md §18).
+# Formatting is SwiftFormat's job; nothing here duplicates it.
+# `only_rules` is deliberate: new SwiftLint releases cannot silently add noise.
+
+included:
+  - ios
+
+excluded:
+  - ios/ParkingKok.xcodeproj
+  - ios/DerivedData
+  - ios/build
+
+only_rules:
+  # ── Crash safety: no force unwrap / try! in production (docs/16 §1) ────────
+  - force_cast
+  - force_try
+  - force_unwrapping
+  - implicitly_unwrapped_optional
+  - fatal_error_message
+
+  # ── Memory / lifecycle: every long-lived listener has an owner (docs/16 §6)
+  - unowned_variable_capture
+  - weak_delegate
+  - discarded_notification_center_observer
+
+  # ── Real bugs the compiler does not catch ─────────────────────────────────
+  - empty_count
+  - unused_enumerated
+  - unused_setter_value
+  - overridden_super_call
+  - duplicate_imports
+  - implicit_optional_initialization
+  - legacy_random
+  - nsobject_prefer_isequal
+  - private_action
+  - private_outlet
+
+  # Custom rules must be listed here too, or only_rules silences them.
+  - custom_rules
+
+analyzer_rules:
+  - unused_import
+
+force_unwrapping:
+  severity: error
+force_try:
+  severity: error
+force_cast:
+  severity: error
+
+custom_rules:
+  no_print_logging:
+    name: "Use OSLog instead of print"
+    regex: '(?<![\w.])print\s*\('
+    message: "docs/16 §7: use OSLog. print() bypasses release privacy scrubbing."
+    severity: error
+
+  no_coordinate_logging:
+    name: "No coordinates in logs"
+    regex: '(?i)(os_log|Logger\(\)|logger\.[a-z]+|NSLog)[^\n]*\b(latitude|longitude|coordinate)\b'
+    message: "CLAUDE.md hard constraint: never log exact coordinates."
+    severity: error
