@@ -26,6 +26,10 @@ final class DetectionRuntime {
 
     private let motionHistory: any MotionHistoryProviding
     private let diagnosticsStore: (any DiagnosticsReportStoring)?
+    /// The labelling screen reads and writes traces through this; the coordinator writes
+    /// them through its own `TraceRecorder`. `nil` when the directory is unavailable, in
+    /// which case recording is simply off — never an app failure (docs/05 §9 best-effort).
+    private(set) var traceStore: (any TraceStoring)?
 
     init(
         monitor: SignificantLocationMonitor = SignificantLocationMonitor(),
@@ -33,7 +37,8 @@ final class DetectionRuntime {
         motionHistory: any MotionHistoryProviding = CoreMotionHistoryProvider(),
         preference: SmartDetectionPreference = SmartDetectionPreference(),
         checkpointStore: (any DetectionCheckpointStoring)? = nil,
-        diagnosticsStore: (any DiagnosticsReportStoring)? = nil
+        diagnosticsStore: (any DiagnosticsReportStoring)? = nil,
+        traceStore: (any TraceStoring)? = nil
     ) {
         self.monitor = monitor
         self.locationCapture = locationCapture
@@ -65,10 +70,16 @@ final class DetectionRuntime {
         self.diagnosticsStore = diagnosticsStore
             ?? (try? FileDiagnosticsReportStore(fileURL: FileDiagnosticsReportStore.defaultFileURL()))
 
+        // Beside the checkpoint, so traces inherit the directory's protection class and
+        // come off the device over the same `devicectl copy` path as diagnostics.json.
+        let traces = traceStore ?? (try? FileTraceStore(directory: FileTraceStore.defaultDirectoryURL()))
+        self.traceStore = traces
+
         coordinator = BackgroundCoordinator(
             checkpointStore: store,
             motionHistory: motionHistory,
-            locationCapture: locationCapture
+            locationCapture: locationCapture,
+            traceRecorder: traces.map { TraceRecorder(store: $0) }
         )
         locationAuthorization = monitor.authorization
         motionAuthorization = motionHistory.authorization
@@ -151,7 +162,8 @@ final class DetectionRuntime {
             isMotionHistoryAvailable: isMotionHistoryAvailable,
             isMonitoringSignificantChanges: monitor.isMonitoring,
             isSmartDetectionEnabled: preference.isEnabled,
-            storeSetupFailure: storeSetupFailure
+            storeSetupFailure: storeSetupFailure,
+            traceSummary: traceStore?.summary() ?? .empty
         )
         do {
             try store.write(report)

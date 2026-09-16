@@ -36,6 +36,9 @@ struct RehydrationSnapshot: Sendable, Equatable {
     var staleLocationDropCount = 0
     var lastStaleLocationAge: TimeInterval?
     var lastPersistError: String?
+    /// Last trace-recording write failure. Recording is best-effort, so the failure has to
+    /// be visible somewhere or it is silent (docs/05 §9).
+    var traceFailure: String?
 
     // ── Bounded driving session (M0A-2) ──────────────────────────────────────
     var isCapturingDrivingLocation = false
@@ -73,6 +76,9 @@ actor BackgroundCoordinator {
     private let motionHistory: any MotionHistoryProviding
     private let locationCapture: (any BoundedLocationCapturing)?
     private let dateProvider: any DateProviding
+    /// Field-data recorder (docs/05 §9). `nil` disables recording entirely, which is what
+    /// the tests that are not about tracing use.
+    private var traceRecorder: TraceRecorder?
 
     private var checkpoint: DetectionCheckpoint?
     private var snapshot = RehydrationSnapshot()
@@ -87,12 +93,14 @@ actor BackgroundCoordinator {
         checkpointStore: any DetectionCheckpointStoring,
         motionHistory: any MotionHistoryProviding,
         locationCapture: (any BoundedLocationCapturing)? = nil,
-        dateProvider: any DateProviding = SystemDateProvider()
+        dateProvider: any DateProviding = SystemDateProvider(),
+        traceRecorder: TraceRecorder? = nil
     ) {
         self.checkpointStore = checkpointStore
         self.motionHistory = motionHistory
         self.locationCapture = locationCapture
         self.dateProvider = dateProvider
+        self.traceRecorder = traceRecorder
     }
 
     func currentSnapshot() -> RehydrationSnapshot {
@@ -174,6 +182,7 @@ actor BackgroundCoordinator {
         snapshot.significantChangeCount += 1
         snapshot.lastLocationAt = sample.timestamp
         snapshot.lastLocationAccuracy = sample.horizontalAccuracy
+        recordTrace { $0.record(qualitySample: sample) }
 
         var updated = checkpoint ?? DetectionCheckpoint.initial(at: now)
         updated.lastLocationAt = sample.timestamp
@@ -213,6 +222,7 @@ actor BackgroundCoordinator {
 
         let accepted = evidence.record(fix: fix)
         drivingEvidence = evidence
+        recordTrace { $0.record(fix: fix) }
         snapshot.drivingFixCount = evidence.fixCount
         snapshot.drivingMovingSampleCount = evidence.movingSampleCount
         snapshot.drivingOutlierDropCount = evidence.outlierCount
@@ -293,6 +303,10 @@ actor BackgroundCoordinator {
         drivingEvidence = resumed
         consumedVehicleEvidenceAt = restored.lastAutomotiveAt
         snapshot.drivingSessionResumedFromCheckpoint = true
+        // A *new* trace, anchored at the wake. The part of the trip that ran before the
+        // process died is already sealed in its own file with a usable `endedAt`, and
+        // stitching the two together would need history this process never saw.
+        recordTrace { $0.beginSession(at: now) }
         await beginCapture(startedAt: restored.stateEnteredAt, now: now)
     }
 
@@ -313,6 +327,10 @@ actor BackgroundCoordinator {
         }
 
         if let evidence = drivingEvidence {
+            // Recorded *before* the session can end, or the walking transition that ends
+            // it would be the one event missing from the trace that explains the ending.
+            recordTrace { $0.record(motionSamples: samples) }
+
             // Walking after the vehicle evidence is the parking transition (docs/05 §8).
             // In M0A-2 it ends the session and preserves the fix; creating the candidate
             // and notifying it is M3.
@@ -336,6 +354,9 @@ actor BackgroundCoordinator {
         // `vehicleEvidenceTimeout` window — while a missed one costs the whole trip.
         // Revisit once the field data in §18 exists.
         await startDrivingSession(at: vehicle.timestamp, now: now)
+        // The trace opens inside `startDrivingSession`, so the same replayed history now
+        // yields the `vehicle_enter` that opens the recording.
+        recordTrace { $0.record(motionSamples: samples) }
     }
 
     private func noteVehicleEvidence(at date: Date, now: Date) {
@@ -354,6 +375,9 @@ actor BackgroundCoordinator {
     private func startDrivingSession(at vehicleEvidenceAt: Date, now: Date) async {
         let evidence = DrivingEvidence(startedAt: now, lastVehicleEvidenceAt: vehicleEvidenceAt)
         drivingEvidence = evidence
+        // Anchored on the vehicle evidence rather than on `now`: that instant is where the
+        // trip began, and it is the `initialState` boundary a fixture is cut from.
+        recordTrace { $0.beginSession(at: vehicleEvidenceAt) }
         consumedVehicleEvidenceAt = vehicleEvidenceAt
         snapshot.drivingSessionCount += 1
 
@@ -402,6 +426,7 @@ actor BackgroundCoordinator {
         snapshot.isCapturingDrivingLocation = await locationCapture?.isActive() ?? false
 
         guard hadSession else { return }
+        recordTrace { $0.endSession(at: now) }
 
         snapshot.drivingSessionStartedAt = nil
         snapshot.lastDrivingSessionEndReason = reason
@@ -521,6 +546,18 @@ actor BackgroundCoordinator {
             let nsError = error as NSError
             snapshot.motionFailure = "unexpected: \(nsError.domain)(\(nsError.code))"
         }
+    }
+
+    /// The single place recording touches the coordinator's state.
+    ///
+    /// Best-effort by construction: `TraceRecorder` swallows its own write failures into
+    /// `lastFailure`, and this lifts that into the snapshot so a trace that stopped being
+    /// written is visible in diagnostics instead of silent (docs/05 §9).
+    private func recordTrace(_ body: (inout TraceRecorder) -> Void) {
+        guard var recorder = traceRecorder else { return }
+        body(&recorder)
+        traceRecorder = recorder
+        snapshot.traceFailure = recorder.lastFailure
     }
 
     private func persist(_ checkpoint: DetectionCheckpoint) {
