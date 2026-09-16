@@ -82,6 +82,22 @@ Flutter로도 가능하지만, 이 핵심 기능들은 결국 iOS/Android 네이
 
 이 이미지들은 visual direction reference이며, 상세 기준은 `docs/19_VISUAL_REFERENCES_AND_UI_MAPPING.md`를 따른다.
 
+## 개발 환경 셋업
+
+클론 후 한 번 실행한다.
+
+```sh
+git config core.hooksPath .githooks   # main 직접 push 차단
+```
+
+`main`은 PR로만 들어간다. PR의 세 체크(iOS / Android / backend)가 모두 통과해야 머지한다.
+GitHub branch protection은 private repo에서 Pro 요금제를 요구하므로, 이 규칙은
+`.githooks/pre-push`로 로컬에서 강제한다. 우회하려면 `--no-verify`가 필요한데
+그건 이 저장소의 유일한 게이트를 끄는 것이다.
+
+필요한 환경변수는 `ANDROID_HOME`(Android SDK 경로) 하나이며, backend 작업은
+Node 22에서 해야 한다(`.nvmrc`, `backend/.npmrc`의 `engine-strict=true`가 강제).
+
 ## 읽는 순서
 
 1. `docs/00_CORE_RULES.md`

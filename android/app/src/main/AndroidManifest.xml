@@ -1,7 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Motion signal for smart detection. Runtime permission on Android 10+
+         (docs/04_ANDROID_IMPLEMENTATION.md §19). Denial disables automatic detection
+         only; manual parking records stay fully available. -->
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+
+    <!-- Reboot drops the Play services transition subscription; this lets the app
+         re-register it (§6). -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
     <application
+        android:name=".ParkingkokApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -18,6 +28,25 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Target of the Activity Transition PendingIntent. Not exported: only Play
+             services holds the PendingIntent, and a PendingIntent target does not need
+             to be exported to be delivered. -->
+        <receiver
+            android:name=".detection.ActivityTransitionReceiver"
+            android:exported="false" />
+
+        <!-- Must be exported to receive the system broadcasts. -->
+        <receiver
+            android:name=".detection.RegistrationRecoveryReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

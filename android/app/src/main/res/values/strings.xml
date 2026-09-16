@@ -1,3 +1,32 @@
 <resources>
     <string name="app_name">주차콕</string>
+
+    <!-- P0 diagnostics screen. Instrumentation only, not product UI. -->
+    <string name="diagnostics_title">감지 진단 (P0)</string>
+    <string name="diagnostics_permission_title">권한</string>
+    <string name="diagnostics_permission_activity_recognition">신체 활동</string>
+    <string name="diagnostics_granted">허용됨</string>
+    <string name="diagnostics_denied">거부됨</string>
+    <string name="diagnostics_permission_optional_note">권한이 없어도 수동 주차 기록은 계속 사용할 수 있습니다.</string>
+    <string name="diagnostics_request_permission">권한 요청</string>
+    <string name="diagnostics_registration_title">전환 감지 등록</string>
+    <string name="diagnostics_smart_detection">스마트 감지</string>
+    <string name="diagnostics_registration_state">상태</string>
+    <string name="diagnostics_registration_unknown">확인 중</string>
+    <string name="diagnostics_registration_disabled">미등록</string>
+    <string name="diagnostics_registration_missing_permission">권한 없음 — 등록 보류</string>
+    <string name="diagnostics_registration_active">등록됨 (spec v%1$d, %2$s)</string>
+    <string name="diagnostics_registration_failed">실패: %1$s</string>
+    <string name="diagnostics_checkpoint_title">체크포인트</string>
+    <string name="diagnostics_checkpoint_absent">저장된 체크포인트 없음</string>
+    <string name="diagnostics_checkpoint_state">state</string>
+    <string name="diagnostics_checkpoint_revision">revision</string>
+    <string name="diagnostics_checkpoint_last_automotive">lastAutomotiveAt</string>
+    <string name="diagnostics_checkpoint_reliable_location">lastReliableLocation</string>
+    <string name="diagnostics_present">있음</string>
+    <string name="diagnostics_absent">없음</string>
+    <string name="diagnostics_events_title">수신 전환 이벤트 (%1$d)</string>
+    <string name="diagnostics_events_empty">아직 수신된 전환 이벤트가 없습니다.</string>
+    <string name="diagnostics_event_detail">발생 %1$s · 수신 지연 %2$d ms</string>
+    <string name="diagnostics_clear">지우기</string>
 </resources>

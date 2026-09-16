@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Placeholder root screen. Real navigation arrives with the detection engine
-/// milestones; see docs/04_IOS_IMPLEMENTATION.md for the P0 ordering.
+/// Root shell. P0 has exactly one screen — the detection diagnostics readout — because
+/// CLAUDE.md's development order says the product UI comes after the engine.
 struct RootView: View {
     private let appInfo: AppInfo
 
@@ -10,15 +10,9 @@ struct RootView: View {
     }
 
     var body: some View {
-        VStack(spacing: 8) {
-            Text(appInfo.displayName)
-                .font(.largeTitle.weight(.semibold))
-            Text(appInfo.versionSummary)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+        NavigationStack {
+            DiagnosticsView(appInfo: appInfo)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityElement(children: .combine)
     }
 }
 

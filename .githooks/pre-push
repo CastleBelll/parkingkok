@@ -1,0 +1,27 @@
+#!/bin/sh
+# Block direct pushes to main. GitHub branch protection needs Pro on a private
+# repo, so the PR + required-checks gate is enforced here instead.
+# Bypass deliberately with: git push --no-verify
+remote_ref_prefix="refs/heads/main"
+
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  case "$remote_ref" in
+    "$remote_ref_prefix")
+      cat >&2 <<'MSG'
+✗ Direct push to main is blocked.
+
+  Every change lands through a pull request whose three CI checks pass:
+    iOS build + test / Android assemble + unit test / Backend build + lint + test
+
+  Open one instead:
+    git switch -c <branch> && git push -u origin <branch>
+    gh pr create --base main
+    gh pr checks <n>     # all three must pass before merging
+
+  Bypassing (git push --no-verify) skips the only gate this repo has.
+MSG
+      exit 1
+      ;;
+  esac
+done
+exit 0
