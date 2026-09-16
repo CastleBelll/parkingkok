@@ -7,7 +7,11 @@ import com.parkingkok.app.data.DetectionStateStore
 import com.parkingkok.app.data.detectionDataStore
 import com.parkingkok.app.detection.ActivityTransitionRegistrar
 import com.parkingkok.app.detection.DetectionRegistrationCoordinator
+import com.parkingkok.app.detection.FusedLocationSessionController
+import com.parkingkok.app.detection.FusedLocationSessionRegistrar
 import com.parkingkok.app.detection.TransitionEventIngestor
+import com.parkingkok.app.diagnostics.DiagnosticsExporter
+import com.parkingkok.app.diagnostics.FileDiagnosticsReportStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -33,8 +37,23 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
     val registrationCoordinator: DetectionRegistrationCoordinator =
         DetectionRegistrationCoordinator(detectionStateStore, registrar, clock)
 
+    val locationSessionController: FusedLocationSessionController = FusedLocationSessionController(
+        store = detectionStateStore,
+        registrar = FusedLocationSessionRegistrar(appContext),
+        clock = clock,
+    )
+
     val transitionEventIngestor: TransitionEventIngestor =
-        TransitionEventIngestor(detectionStateStore, clock)
+        TransitionEventIngestor(detectionStateStore, clock, locationSessionController)
+
+    val diagnosticsExporter: DiagnosticsExporter = DiagnosticsExporter(
+        store = detectionStateStore,
+        sessionController = locationSessionController,
+        registrationCoordinator = registrationCoordinator,
+        hasActivityRecognitionPermission = ::hasActivityRecognitionPermission,
+        reportStore = FileDiagnosticsReportStore(FileDiagnosticsReportStore.defaultFile(appContext)),
+        clock = clock,
+    )
 
     fun hasActivityRecognitionPermission(): Boolean = registrar.hasPermission()
 }
