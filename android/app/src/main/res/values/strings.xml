@@ -53,4 +53,20 @@
     <string name="diagnostics_events_empty">아직 수신된 전환 이벤트가 없습니다.</string>
     <string name="diagnostics_event_detail">발생 %1$s · 수신 지연 %2$d ms</string>
     <string name="diagnostics_clear">지우기</string>
+    <string name="diagnostics_trace_title">기록된 trace (%1$d)</string>
+    <string name="diagnostics_trace_path">files/detection/traces/ — adb shell run-as 로 회수</string>
+    <string name="diagnostics_trace_empty">아직 기록된 trace가 없습니다.</string>
+    <string name="diagnostics_trace_detail">%1$d events · %2$s · 주차 %3$s</string>
+    <string name="diagnostics_trace_note">메모</string>
+    <string name="diagnostics_trace_note_save">메모 저장</string>
+    <string name="diagnostics_trace_parked_yes">주차함</string>
+    <string name="diagnostics_trace_parked_no">주차 안 함</string>
+    <string name="diagnostics_trace_parked_unknown">모름</string>
+    <string name="diagnostics_trace_mode_car">자가용</string>
+    <string name="diagnostics_trace_mode_bus">버스</string>
+    <string name="diagnostics_trace_mode_subway">지하철</string>
+    <string name="diagnostics_trace_mode_taxi">택시</string>
+    <string name="diagnostics_trace_mode_walk">도보</string>
+    <string name="diagnostics_trace_mode_still">정지</string>
+    <string name="diagnostics_trace_mode_unknown">미분류</string>
 </resources>

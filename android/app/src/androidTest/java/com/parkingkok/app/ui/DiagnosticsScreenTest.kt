@@ -26,6 +26,7 @@ class DiagnosticsScreenTest {
                 onCaptureModeChange = {},
                 onExportDiagnostics = {},
                 onClearEvents = {},
+                onTraceLabelChange = { _, _ -> },
             )
         }
     }
