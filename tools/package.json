@@ -1,0 +1,26 @@
+{
+  "name": "parkingkok-tools",
+  "version": "0.1.0",
+  "private": true,
+  "description": "주차콕 개발 도구 — trace(05 계약 §9) → parity fixture(§8) 변환기와 fixture 스키마 검증기",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "npm run build && node --test \"lib/**/*.test.js\"",
+    "clean": "rm -rf lib",
+    "trace2fixture": "npm run --silent build && node lib/cli.js"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.20.3",
+    "eslint": "^10.10.0",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.70.0"
+  }
+}
