@@ -15,7 +15,8 @@ struct DiagnosticsReportTests {
             isMotionHistoryAvailable: true,
             isMonitoringSignificantChanges: true,
             isSmartDetectionEnabled: true,
-            storeSetupFailure: nil
+            storeSetupFailure: nil,
+            traceSummary: .empty
         )
     }
 
@@ -100,7 +101,8 @@ struct DiagnosticsReportTests {
             isMotionHistoryAvailable: true,
             isMonitoringSignificantChanges: false,
             isSmartDetectionEnabled: true,
-            storeSetupFailure: nil
+            storeSetupFailure: nil,
+            traceSummary: .empty
         )
 
         // Assert
@@ -132,12 +134,48 @@ struct DiagnosticsReportTests {
             isMotionHistoryAvailable: false,
             isMonitoringSignificantChanges: false,
             isSmartDetectionEnabled: false,
-            storeSetupFailure: nil
+            storeSetupFailure: nil,
+            traceSummary: .empty
         )
 
         // Assert
         #expect(report.checkpointLoad.contains("failed"))
         #expect(report.checkpointLoad.contains("3840"))
+    }
+
+    /// docs/05 §9: the four numbers exist so "is recording working?" can be answered from
+    /// the diagnostics file alone, without retrieving a single trace.
+    @Test("The trace summary is projected into the report")
+    func traceSummaryIsProjected() {
+        // Arrange
+        var snapshot = RehydrationSnapshot()
+        snapshot.traceFailure = "TraceStoreError(writeFailed)"
+        let summary = TraceSummary(
+            sessionCount: 7,
+            eventCount: 412,
+            droppedSessionCount: 3,
+            unlabeledSessionCount: 2
+        )
+
+        // Act
+        let report = DiagnosticsReport(
+            snapshot: snapshot,
+            now: TestTime.offset(0),
+            locationAuthorization: .always,
+            motionAuthorization: .authorized,
+            isMotionHistoryAvailable: true,
+            isMonitoringSignificantChanges: true,
+            isSmartDetectionEnabled: true,
+            storeSetupFailure: nil,
+            traceSummary: summary
+        )
+
+        // Assert
+        #expect(report.traceSessionCount == 7)
+        #expect(report.traceEventCount == 412)
+        #expect(report.traceDroppedSessionCount == 3)
+        #expect(report.traceUnlabeledSessionCount == 2)
+        #expect(report.traceFailure == "TraceStoreError(writeFailed)")
     }
 
     @Test("A written report round-trips off disk")

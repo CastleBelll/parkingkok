@@ -70,10 +70,20 @@ invalid로 규정했고 어댑터가 이미 거른다. trace까지 도달하면 
 IDLE
 DRIVING_CANDIDATE
 DRIVING
-PARKING_CANDIDATE
+PARKING_TRANSITION
+CANDIDATE_PENDING
 PARKED
 DEPARTURE_CANDIDATE
 ```
+
+이 목록은 `docs/02_PRODUCT_SCOPE_AND_FLOWS.md` §4의 제품 플로우,
+`docs/05_PARKING_DETECTION_ENGINE.md` §3과 일치한다.
+
+이전 판은 `PARKING_CANDIDATE` 하나로 뭉쳐 있었는데, 그 둘은 실제로 다른 상태다.
+`PARKING_TRANSITION`은 차량 활동이 끝난 뒤 확인 신호를 **기다리는** 구간이고 사용자에게
+보이는 것이 없다. `CANDIDATE_PENDING`은 candidate를 저장하고 **알림을 띄운** 뒤
+45분 만료를 기다리는 구간이다. 진입 조건, 종료 조건, 사용자 영향이 전부 다르므로
+한 상태로 표현하면 알림 시점과 만료 처리를 구분할 수 없다.
 
 ## 4. Evidence Reason Codes
 Stable strings shared across analytics/tests:
@@ -134,7 +144,7 @@ JSON fixture schema example:
   "expected": {
     "candidate": true,
     "confidence":"high",
-    "finalState":"PARKING_CANDIDATE"
+    "finalState":"CANDIDATE_PENDING"
   }
 }
 ```
@@ -187,7 +197,16 @@ trace를 fixture로 **변환**한다. 반대는 없다. 기록 메타데이터�
   안전하다. 위도·경도 필드를 추가하는 순간 이 파일은 주차 위치 기록이 된다
 - **이벤트 타입은 §2의 wire 어휘 표를 그대로 쓴다.** 플랫폼 SDK enum을 노출하지 않는다.
   버킷 값도 §2의 표를 따른다
+- **선택 필드는 없으면 키 자체가 빠진다.** 위 예시에 모든 키가 보인다고 필수는 아니다.
+  - `speed`: 정지 상태에서 Core Location이 음수를 주고 어댑터가 nil로 정규화하므로
+    키가 사라진다(iOS 실기기 확인)
+  - `confidence`: Android `ActivityTransitionEvent`는 confidence를 싣지 않으므로
+    **Android trace에는 항상 없다**. iOS는 Core Motion에서 얻는다
+  - `distanceFromPreviousM`: 세션의 첫 이벤트에는 없다. 직전 세션의 fix와 비교하면
+    출퇴근 한 번이 새 세션 안에서 일어난 것처럼 보인다(Android 실기기에서 발견·수정)
 - `label`은 기기가 알 수 없다. 사람이 앱에서 붙인다. 없으면 `unknown`
+- `label.note`는 사람이 입력하는 자유 텍스트다. **좌표가 숨을 수 있는 유일한 자리이므로
+  fixture로 복사하지 않는다** (§8에 자리도 없다)
 - **크기 제한.** 롤링 상한을 두고 오래된 세션부터 버린다. 하루 종일 켜둬도
   저장소를 채우지 않아야 한다
 - 회수 경로는 진단 파일과 동일하다 — iOS `devicectl copy`, Android `run-as`.
@@ -199,3 +218,14 @@ trace를 fixture로 **변환**한다. 반대는 없다. 기록 메타데이터�
 - `label`을 근거로 `expected`를 채우되, **사람이 확인하기 전에는 TODO로 남긴다.**
   기록이 곧 정답은 아니다 — 엔진이 무엇을 해야 했는지는 판단이 필요하다
 - `initialState`는 세션 시작 시점의 상태
+- **세션이 쪼개질 수 있다.** 주유소 정차처럼 중간에 세션이 끊기면 trace가 2개가 된다
+  (`docs/05_PARKING_DETECTION_ENGINE.md` §17 fixture 3이 그 케이스다). 재진입 윈도우는
+  detection policy이지 recorder의 책임이 아니므로, 합치는 것은 변환 시 사람의 판단이다
+
+### 아직 표현할 수 없는 것 (M3)
+`docs/05_PARKING_DETECTION_ENGINE.md` §17의 필수 10종 중 **#7~#10은 현재 §8 어휘로
+표현이 불가능하다**: 프로세스 사망/재시작, 권한 회수, 저전력 모드, 위젯 동시 편집.
+전부 이벤트 스트림 밖의 사건이다.
+
+어휘를 임의로 늘리지 않는다. M3에서 `restore(checkpoint)` 의미론과 함께 계약을 확장할 때
+같이 설계한다. 그때까지 이 4종은 fixture로 만들 수 없다.

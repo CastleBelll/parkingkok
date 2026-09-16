@@ -15,8 +15,8 @@ import Foundation
 /// coordinate-bearing ones are deliberately absent, and a test on the encoded bytes
 /// enforces it. **Adding a coordinate here is never the fix for a failing test.**
 struct DiagnosticsReport: Sendable, Equatable, Codable {
-    /// Bumped to 2 by M0A-2's bounded-session fields.
-    static let schemaVersion = 2
+    /// Bumped to 3 by M1's trace-recording summary.
+    static let schemaVersion = 3
 
     var schemaVersion: Int = DiagnosticsReport.schemaVersion
     var generatedAt: Date
@@ -68,6 +68,17 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
     var lastVehicleEvidenceConfidence: String?
     var captureFailure: String?
 
+    // Trace recording (docs/05 §9). Counts only — the traces themselves are separate
+    // files, and the point of these four numbers is to tell whether recording is working
+    // without retrieving any of them.
+    var traceSessionCount: Int
+    var traceEventCount: Int
+    /// Sessions the rolling cap discarded. §9 requires the eviction to be visible; a
+    /// silently shrinking history would look like recording that never happened.
+    var traceDroppedSessionCount: Int
+    var traceUnlabeledSessionCount: Int
+    var traceFailure: String?
+
     // Location quality
     var significantChangeCount: Int
     var lastLocationAccuracy: Double?
@@ -92,7 +103,8 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
         isMotionHistoryAvailable: Bool,
         isMonitoringSignificantChanges: Bool,
         isSmartDetectionEnabled: Bool,
-        storeSetupFailure: String?
+        storeSetupFailure: String?,
+        traceSummary: TraceSummary
     ) {
         generatedAt = now
 
@@ -137,6 +149,12 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
         lastVehicleEvidenceAt = snapshot.lastVehicleEvidenceAt
         lastVehicleEvidenceConfidence = snapshot.lastVehicleEvidenceConfidence?.rawValue
         captureFailure = snapshot.captureFailure
+
+        traceSessionCount = traceSummary.sessionCount
+        traceEventCount = traceSummary.eventCount
+        traceDroppedSessionCount = traceSummary.droppedSessionCount
+        traceUnlabeledSessionCount = traceSummary.unlabeledSessionCount
+        traceFailure = snapshot.traceFailure
 
         significantChangeCount = snapshot.significantChangeCount
         lastLocationAccuracy = snapshot.lastLocationAccuracy

@@ -8,14 +8,17 @@ import Foundation
 /// table. The transition rules that move between these states are M0A-2; this
 /// milestone only needs to persist and restore the value.
 ///
-/// Note: `docs/05_PARKING_DETECTION_ENGINE.md` §3 lists `PARKING_TRANSITION` and
-/// `CANDIDATE_PENDING` where the cross-platform contract lists `PARKING_CANDIDATE`.
-/// CLAUDE.md ranks the contract above the engine spec, so the contract wins here.
+/// `PARKING_TRANSITION` and `CANDIDATE_PENDING` are separate states because they behave
+/// differently: the first waits for a confirmation signal with nothing shown to the user,
+/// the second has already persisted a candidate and raised a notification and is counting
+/// down its 45-minute expiry. The contract briefly collapsed them into one
+/// `PARKING_CANDIDATE`; the product flow and the engine spec never did.
 enum DetectionState: String, Sendable, Codable, CaseIterable {
     case idle = "IDLE"
     case drivingCandidate = "DRIVING_CANDIDATE"
     case driving = "DRIVING"
-    case parkingCandidate = "PARKING_CANDIDATE"
+    case parkingTransition = "PARKING_TRANSITION"
+    case candidatePending = "CANDIDATE_PENDING"
     case parked = "PARKED"
     case departureCandidate = "DEPARTURE_CANDIDATE"
 }

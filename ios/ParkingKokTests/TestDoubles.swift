@@ -202,3 +202,110 @@ enum TestGeo {
         )
     }
 }
+
+/// In-memory trace store. Keeps every session so a test can assert on what recording
+/// actually produced, and counts prune calls so "the cap ran" is observable.
+final class StubTraceStore: TraceStoring, @unchecked Sendable {
+    private let lock = NSLock()
+    private var sessions: [UUID: TraceSession] = [:]
+    private var order: [UUID] = []
+    private var writeError: TraceStoreError?
+    private var prunes: [UUID?] = []
+
+    init(writeError: TraceStoreError? = nil) {
+        self.writeError = writeError
+    }
+
+    var storedSessions: [TraceSession] {
+        lock.withLock { order.compactMap { sessions[$0] } }
+    }
+
+    var latestSession: TraceSession? {
+        lock.withLock { order.last.flatMap { sessions[$0] } }
+    }
+
+    var pruneProtectedIds: [UUID?] {
+        lock.withLock { prunes }
+    }
+
+    func write(_ session: TraceSession) throws {
+        try lock.withLock {
+            if let writeError {
+                throw writeError
+            }
+            if sessions[session.sessionId] == nil {
+                order.append(session.sessionId)
+            }
+            sessions[session.sessionId] = session
+        }
+    }
+
+    func prune(protecting sessionId: UUID?) {
+        lock.withLock { prunes.append(sessionId) }
+    }
+
+    func summaries() -> [TraceSessionSummary] {
+        storedSessions.reversed().map(TraceSessionSummary.init)
+    }
+
+    func load(id: UUID) -> TraceSession? {
+        lock.withLock { sessions[id] }
+    }
+
+    func updateLabel(_ label: TraceLabel, for id: UUID) throws {
+        try lock.withLock {
+            guard var session = sessions[id] else { throw TraceStoreError.sessionNotFound }
+            session.label = label
+            sessions[id] = session
+        }
+    }
+
+    func summary() -> TraceSummary {
+        let stored = storedSessions
+        return TraceSummary(
+            sessionCount: stored.count,
+            eventCount: stored.reduce(0) { $0 + $1.events.count },
+            droppedSessionCount: 0,
+            unlabeledSessionCount: stored.filter { !$0.label.isLabeled }.count
+        )
+    }
+}
+
+/// Unique scratch directory per test, removed on deinit.
+final class TemporaryTraceDirectory {
+    let url: URL
+
+    init() {
+        url = FileManager.default.temporaryDirectory
+            .appending(path: "pk-traces-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    }
+
+    deinit {
+        try? FileManager.default.removeItem(at: url)
+    }
+}
+
+enum TestTrace {
+    static let metadata = TraceDeviceMetadata(
+        deviceModel: "iPhone15,3",
+        osVersion: "26.6",
+        appVersion: "0.1.0 (12)"
+    )
+
+    static func session(
+        startedAt: Date = TestTime.offset(0),
+        endedAt: Date = TestTime.offset(60),
+        label: TraceLabel = .unlabeled,
+        events: [TraceEvent] = []
+    ) -> TraceSession {
+        TraceSession(
+            sessionId: UUID(),
+            metadata: metadata,
+            startedAt: startedAt,
+            endedAt: endedAt,
+            label: label,
+            events: events
+        )
+    }
+}

@@ -17,7 +17,7 @@ class DetectionCheckpointTest {
     fun fullyPopulatedCheckpoint_roundTripsUnchanged() {
         // Arrange — every field from docs/04_IOS_IMPLEMENTATION.md §6 populated.
         val original = DetectionCheckpoint(
-            state = DetectionState.PARKING_CANDIDATE,
+            state = DetectionState.PARKING_TRANSITION,
             stateEnteredAtMillis = 1_700_000_000_000L,
             lastAutomotiveAtMillis = 1_699_999_000_000L,
             lastReliableLocation = ReliableLocation(37.5665, 126.9780, 12.5f, 1_699_999_500_000L),

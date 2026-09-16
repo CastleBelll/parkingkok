@@ -9,6 +9,7 @@ import com.parkingkok.app.domain.location.LocationDropReason
 import com.parkingkok.app.domain.location.LocationQualityEntry
 import com.parkingkok.app.domain.location.LocationQualitySample
 import com.parkingkok.app.domain.location.LocationSessionState
+import com.parkingkok.app.domain.trace.TraceSummary
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -37,6 +38,7 @@ class DiagnosticsReportTest {
         sessionState: LocationSessionState = LocationSessionState(),
         qualityHistory: List<LocationQualityEntry> = emptyList(),
         transitions: List<MotionDomainEvent> = emptyList(),
+        trace: TraceSummary = TraceSummary(),
     ) = DiagnosticsReport.from(
         nowMillis = now,
         checkpoint = checkpoint,
@@ -48,10 +50,11 @@ class DiagnosticsReportTest {
         backgroundLocationGranted = false,
         smartDetectionEnabled = true,
         transitionRegistration = RegistrationStatus.Active(specVersion = 1, registeredAtMillis = now),
+        trace = trace,
     )
 
     private fun locatedCheckpoint() = DetectionCheckpoint(
-        state = com.parkingkok.app.domain.detection.DetectionState.PARKING_CANDIDATE,
+        state = com.parkingkok.app.domain.detection.DetectionState.PARKING_TRANSITION,
         stateEnteredAtMillis = now,
         lastReliableLocation = ReliableLocation(
             latitude = 37.123_456_7,
@@ -136,6 +139,27 @@ class DiagnosticsReportTest {
         assertEquals(1, exported.transitionEventCount)
         assertEquals("walking_enter", exported.recentTransitions[0].kind)
         assertEquals(8_772L, exported.recentTransitions[0].deliveryDelayMillis)
+    }
+
+    @Test
+    fun `the trace recorder's losses are reported, not hidden`() {
+        // Arrange — docs/05_CROSS_PLATFORM_DOMAIN_CONTRACT.md §9 requires a rolling cap,
+        // and a field run that looks thin because the cap ate half of it has to say so.
+        val trace = TraceSummary(
+            sessionCount = 8,
+            eventCount = 412,
+            discardedSessionCount = 12,
+            unlabelledSessionCount = 5,
+        )
+
+        // Act
+        val exported = report(trace = trace)
+
+        // Assert
+        assertEquals(8, exported.trace.sessionCount)
+        assertEquals(412, exported.trace.eventCount)
+        assertEquals(12, exported.trace.discardedSessionCount)
+        assertEquals(5, exported.trace.unlabelledSessionCount)
     }
 
     @Test

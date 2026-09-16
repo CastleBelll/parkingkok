@@ -147,6 +147,48 @@ xcrun devicectl device copy from --device <device-udid> \
    'latitude\|longitude'` returns nothing, and no number in the file falls in the
    device's lat/lon range.
 
+## M1 field-data checklist — trace recording
+
+`docs/05_CROSS_PLATFORM_DOMAIN_CONTRACT.md` §9. The point of recording is that ordinary
+movement becomes fixture material, so the checklist is mostly "go somewhere and come back".
+Bus, subway and taxi rides count, and so does a passenger seat.
+
+A trace session is one bounded driving session. Nothing is recorded outside one — a walk
+that never opened a session is not a case the engine got wrong.
+
+Retrieve the whole recording directory the same way as `diagnostics.json`, no `sudo`:
+
+```sh
+xcrun devicectl device copy from --device <device-udid> \
+  --domain-type appDataContainer --domain-identifier com.parkingkok.app.dev --user mobile \
+  --source "Library/Application Support/Detection/traces" --destination ./traces
+```
+
+1. **Plumbing, without a car.** Launch with `PK_FORCE_DRIVING_SESSION=1` (see the M0A-2
+   checklist). Within a minute, `감지 진단 → 이동 기록 (trace)` must show `세션 수` ≥ 1 and a
+   rising `이벤트 수`. Retrieve the directory and confirm the file contains `location`
+   events with `accuracy`, and `distanceFromPreviousM` on all but the first.
+2. **Motion vocabulary on device.** Walk, sit still, ride something. The trace must contain
+   `vehicle_enter` / `vehicle_exit` / `walking_enter` / `stationary_enter` /
+   `stationary_exit` — no Core Motion enum names. Record which ones your phone actually
+   produced; a missing `vehicle_exit` is the inference in `TraceRecorder.transitions`
+   failing, not the contract being wrong.
+3. **Quality transitions.** Drive into an underground car park or a tunnel. The trace must
+   contain `location_quality_degraded` with `fromBucket`/`toBucket` drawn from
+   `good`/`fair`/`poor`.
+4. **Privacy.** Every retrieved trace file must contain no coordinate. `grep -i
+   'latitude\|longitude\|coordinate'` returns nothing, and no number in the file falls in
+   the device's lat/lon range. `distanceFromPreviousM` is metres, never a position.
+5. **Labelling.** Tag a ride from `이동 기록 → 세션 목록`. Retrieve again and confirm the
+   `label` object is in the file and that `라벨 없음` dropped by one. Label a ride *while
+   still on it* and confirm the next event does not wipe the label.
+6. **Rolling cap.** `상한으로 버림` must stay 0 in ordinary use and must become non-zero
+   rather than the directory growing without bound. Check the directory size after a week
+   of commuting: 40 sessions and 4 MB are the ceilings.
+7. **Process death mid-trip.** Force-quit during a drive. The abandoned file must already
+   have a sensible `endedAt` (no repair pass runs), and the resumed session must appear as
+   a second trace rather than corrupting the first.
+
 ## Lint
 
 ```sh

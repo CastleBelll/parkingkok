@@ -21,16 +21,16 @@ object LocationCaptureModePolicy {
             else -> LocationSessionMode.DRIVING_CANDIDATE
         }
 
-        // Vehicle ended. Capture the last reliable points, then stop (§2 PARKING_CANDIDATE).
-        MotionEventKind.EXITED_VEHICLE -> LocationSessionMode.PARKING_CANDIDATE
+        // Vehicle ended. Capture the last reliable points, then stop (§2 PARKING_TRANSITION).
+        MotionEventKind.EXITED_VEHICLE -> LocationSessionMode.PARKING_TRANSITION
 
         // Walking only matters as an end-of-drive confirmation. Walking with no vehicle
         // session behind it is someone on foot, and must not start a location request.
         MotionEventKind.STARTED_WALKING -> when (current) {
             LocationSessionMode.DRIVING,
             LocationSessionMode.DRIVING_CANDIDATE,
-            LocationSessionMode.PARKING_CANDIDATE,
-            -> LocationSessionMode.PARKING_CANDIDATE
+            LocationSessionMode.PARKING_TRANSITION,
+            -> LocationSessionMode.PARKING_TRANSITION
 
             LocationSessionMode.IDLE -> LocationSessionMode.IDLE
         }
