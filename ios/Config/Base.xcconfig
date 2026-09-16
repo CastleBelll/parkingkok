@@ -1,0 +1,28 @@
+// Shared build settings for every configuration (docs/04_IOS_IMPLEMENTATION.md §17).
+// Environment-specific overrides live in Dev/Staging/Prod.xcconfig.
+
+// ── Platform baseline (ADR-002, docs/04 §1) ─────────────────────────────────
+IPHONEOS_DEPLOYMENT_TARGET = 18.0
+TARGETED_DEVICE_FAMILY = 1
+SDKROOT = iphoneos
+
+// ── Swift 6 language mode + strict concurrency (docs/04 §18, docs/16 §1) ────
+SWIFT_VERSION = 6.0
+SWIFT_STRICT_CONCURRENCY = complete
+SWIFT_UPCOMING_FEATURE_EXISTENTIAL_ANY = YES
+
+// CI treats Swift 6 concurrency warnings as errors (docs/04 §18).
+SWIFT_TREAT_WARNINGS_AS_ERRORS = YES
+GCC_TREAT_WARNINGS_AS_ERRORS = YES
+
+// ── Product identity ────────────────────────────────────────────────────────
+PK_BUNDLE_ID_BASE = com.parkingkok.app
+MARKETING_VERSION = 0.1.0
+CURRENT_PROJECT_VERSION = 1
+
+// ── Signing: simulator builds need no identity; CI injects the rest ─────────
+CODE_SIGN_STYLE = Automatic
+CODE_SIGNING_ALLOWED[sdk=iphonesimulator*] = NO
+CODE_SIGNING_REQUIRED[sdk=iphonesimulator*] = NO
+
+ENABLE_USER_SCRIPT_SANDBOXING = YES

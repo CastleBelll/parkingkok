@@ -1,0 +1,67 @@
+# XcodeGen manifest — the .xcodeproj is a build artifact, never committed.
+# Regenerate with: cd ios && xcodegen generate
+name: ParkingKok
+
+options:
+  bundleIdPrefix: com.parkingkok
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+# docs/04_IOS_IMPLEMENTATION.md §17: DEV / STAGING / PROD.
+configs:
+  DEV: debug
+  STAGING: release
+  PROD: release
+
+configFiles:
+  DEV: Config/Dev.xcconfig
+  STAGING: Config/Staging.xcconfig
+  PROD: Config/Prod.xcconfig
+
+fileGroups:
+  - Config
+
+targets:
+  ParkingKok:
+    type: application
+    platform: iOS
+    sources:
+      - path: ParkingKok
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(PK_BUNDLE_ID)
+        INFOPLIST_FILE: ParkingKok/Resources/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+
+  ParkingKokTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: ParkingKokTests
+    dependencies:
+      - target: ParkingKok
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  ParkingKok:
+    build:
+      targets:
+        ParkingKok: all
+        ParkingKokTests: [test]
+    run:
+      config: DEV
+    test:
+      config: DEV
+      targets:
+        - ParkingKokTests
+    analyze:
+      config: DEV
+    profile:
+      config: PROD
+    archive:
+      config: PROD
