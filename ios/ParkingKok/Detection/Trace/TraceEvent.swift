@@ -15,6 +15,16 @@ enum TraceEventType: String, Sendable, Equatable, Codable, CaseIterable {
     case stationaryExit = "stationary_exit"
     case location
     case locationQualityDegraded = "location_quality_degraded"
+
+    /// Whether the event came from Core Motion rather than Core Location. The recorder
+    /// reads its motion edges back out of a restored session, and a `location` event says
+    /// nothing about what the user was doing.
+    var isMotion: Bool {
+        switch self {
+        case .vehicleEnter, .vehicleExit, .walkingEnter, .stationaryEnter, .stationaryExit: true
+        case .location, .locationQualityDegraded: false
+        }
+    }
 }
 
 /// Coarse horizontal-accuracy band, the only form in which location quality is recorded.

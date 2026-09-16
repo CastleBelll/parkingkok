@@ -211,6 +211,7 @@ final class StubTraceStore: TraceStoring, @unchecked Sendable {
     private var order: [UUID] = []
     private var writeError: TraceStoreError?
     private var prunes: [UUID?] = []
+    private var openId: UUID?
 
     init(writeError: TraceStoreError? = nil) {
         self.writeError = writeError
@@ -238,6 +239,14 @@ final class StubTraceStore: TraceStoring, @unchecked Sendable {
             }
             sessions[session.sessionId] = session
         }
+    }
+
+    var openSessionId: UUID? {
+        lock.withLock { openId }
+    }
+
+    func setOpenSessionId(_ id: UUID?) {
+        lock.withLock { openId = id }
     }
 
     func prune(protecting sessionId: UUID?) {

@@ -7,17 +7,17 @@ enum TraceStoreError: Error, Equatable {
 
 /// The rolling cap docs/05 §9 requires: "하루 종일 켜둬도 저장소를 채우지 않아야 한다."
 ///
-/// Three bounds rather than one, because they fail differently. The session count bounds
-/// ordinary use, the per-session event count bounds a single runaway trip that the count
-/// cap would never notice, and the byte ceiling is the backstop that holds even if both
-/// other estimates turn out wrong. All three are field-tuning starting points in the same
-/// spirit as the §8 evidence weights.
+/// Two bounds rather than one, because they fail differently: the session count bounds
+/// ordinary use, and the byte ceiling is the backstop that holds even if that estimate
+/// turns out wrong. Both are field-tuning starting points in the same spirit as the §8
+/// evidence weights. A runaway single trip is not this type's problem —
+/// `TraceSessionBoundaryPolicy` rotates it into bounded sessions before the cap ever sees
+/// it, which is what makes evicting "the oldest session" meaningful.
 ///
 /// A value rather than a set of global constants so a test can drive an eviction without
 /// having to first write four megabytes of JSON to prove the byte ceiling works.
 struct TraceRetentionPolicy: Sendable, Equatable {
     var maximumSessionCount = 40
-    var maximumEventsPerSession = 1500
     var maximumTotalBytes = 4 * 1024 * 1024
 
     /// What the app ships with.
@@ -29,6 +29,14 @@ struct TraceRetentionPolicy: Sendable, Equatable {
 protocol TraceStoring: Sendable {
     /// Creates or replaces the session's file.
     func write(_ session: TraceSession) throws
+    /// The session the recorder may still append to, `nil` when none is open.
+    ///
+    /// Survives process death, which is the whole point: §9's boundary is a property of
+    /// the event stream, so a relaunch inside the idle gap continues the trip rather than
+    /// starting a new one. It is not part of the §9 file schema — a trace on disk says
+    /// nothing about whether anyone still holds it open.
+    var openSessionId: UUID? { get }
+    func setOpenSessionId(_ id: UUID?)
     /// Applies the rolling cap, oldest first. `sessionId` is the session currently being
     /// recorded, which is never evicted out from under the recorder.
     func prune(protecting sessionId: UUID?)
@@ -54,8 +62,9 @@ protocol TraceStoring: Sendable {
 /// 3. **The aggregate counters are cached in memory.** `exportDiagnostics()` runs after
 ///    every detection callback — at ~1 Hz during a drive — so decoding every session to
 ///    answer "how many events are on disk" would be a battery cost the §19 gate exists to
-///    catch. The index is built once per process and maintained incrementally; only
-///    `droppedSessionCount` needs to outlive the process, so only it is persisted.
+///    catch. The index is built once per process and maintained incrementally. Only the
+///    two values that must outlive the process are written to `_state.json`: the dropped
+///    count, and the open-session pointer §9's boundary needs after a relaunch.
 final class FileTraceStore: TraceStoring, @unchecked Sendable {
     private static let directoryName = "traces"
     private static let filePrefix = "trace-"
@@ -68,6 +77,7 @@ final class FileTraceStore: TraceStoring, @unchecked Sendable {
     /// `nil` until the first access builds it from disk.
     private var index: [UUID: IndexEntry]?
     private var droppedSessionCount = 0
+    private var openSessionIdValue: UUID?
     private var hasLoadedState = false
 
     init(directory: URL, retention: TraceRetentionPolicy = .standard) {
@@ -106,6 +116,24 @@ final class FileTraceStore: TraceStoring, @unchecked Sendable {
                 eventCount: session.events.count,
                 isLabeled: session.label.isLabeled
             )
+        }
+    }
+
+    var openSessionId: UUID? {
+        lock.withLock {
+            loadStateIfNeeded()
+            return openSessionIdValue
+        }
+    }
+
+    /// Written only when the pointer actually moves — a session runs for a whole trip, so
+    /// this costs one small write per boundary rather than one per event.
+    func setOpenSessionId(_ id: UUID?) {
+        lock.withLock {
+            loadStateIfNeeded()
+            guard openSessionIdValue != id else { return }
+            openSessionIdValue = id
+            persistState()
         }
     }
 
@@ -264,6 +292,9 @@ final class FileTraceStore: TraceStoring, @unchecked Sendable {
     private struct StoredState: Codable {
         var schemaVersion = 1
         var droppedSessionCount = 0
+        /// Absent in files written before the §9 session boundary landed; a missing key
+        /// simply means nothing was open, which is the safe reading either way.
+        var openSessionId: UUID?
     }
 
     private var stateURL: URL {
@@ -277,11 +308,12 @@ final class FileTraceStore: TraceStoring, @unchecked Sendable {
               let state = try? JSONDecoder().decode(StoredState.self, from: data)
         else { return }
         droppedSessionCount = state.droppedSessionCount
+        openSessionIdValue = state.openSessionId
     }
 
     /// Best-effort: losing the counter costs one number in diagnostics, never a trace.
     private func persistState() {
-        let state = StoredState(droppedSessionCount: droppedSessionCount)
+        let state = StoredState(droppedSessionCount: droppedSessionCount, openSessionId: openSessionIdValue)
         guard let data = try? JSONEncoder().encode(state) else { return }
         try? data.write(to: stateURL, options: [.atomic])
     }
