@@ -20,7 +20,7 @@ enum class LocationSessionMode {
     DRIVING,
 
     /** Vehicle session ended; capture the last reliable points, then stop. */
-    PARKING_CANDIDATE,
+    PARKING_TRANSITION,
 }
 
 /** Accuracy tier, mapped to a Play services `Priority` constant at the adapter boundary. */
@@ -75,7 +75,7 @@ object LocationSessionProfiles {
         LocationSessionMode.IDLE -> 0L
         LocationSessionMode.DRIVING_CANDIDATE -> 10 * 60_000L
         LocationSessionMode.DRIVING -> 120 * 60_000L
-        LocationSessionMode.PARKING_CANDIDATE -> 3 * 60_000L
+        LocationSessionMode.PARKING_TRANSITION -> 3 * 60_000L
     }
 
     fun configFor(mode: LocationSessionMode, remainingMillis: Long): LocationSessionConfig? = when (mode) {
@@ -117,7 +117,7 @@ object LocationSessionProfiles {
 
         // The one moment accuracy is worth full price, and the one mode with a hard update
         // budget: a handful of fixes at the kerb, then stop.
-        LocationSessionMode.PARKING_CANDIDATE -> LocationSessionConfig(
+        LocationSessionMode.PARKING_TRANSITION -> LocationSessionConfig(
             tier = LocationAccuracyTier.HIGH,
             intervalMillis = 5_000L,
             minUpdateIntervalMillis = 3_000L,
@@ -219,7 +219,7 @@ object LocationSessionPlanner {
         val config = LocationSessionProfiles.configFor(desiredMode, current.hardDeadlineAtMillis - nowMillis)
             ?: return LocationSessionAction.Stop(LocationSessionStopReason.DEADLINE_REACHED)
 
-        // PARKING_CANDIDATE is the mode with a fixed update budget: a handful of fixes at
+        // PARKING_TRANSITION is the mode with a fixed update budget: a handful of fixes at
         // the kerb, then stop. Spending it is a normal, successful end to a session.
         val budget = config.maxUpdates
         if (budget != null && current.deliveredUpdateCount >= budget) {

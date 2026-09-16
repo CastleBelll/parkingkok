@@ -126,7 +126,7 @@ node tools/lib/cli.js validate platform-tests/drafts --allow-draft   # 리뷰 �
   ],
   "expected": {                                  // 필수
     "candidate": true,                           //   필수
-    "finalState": "PARKING_CANDIDATE",           //   필수, 계약 §3 state
+    "finalState": "CANDIDATE_PENDING",           //   필수, 계약 §3 state
     "confidence": "high",                        //   선택, 계약 §5 bucket
     "requiredReasons": ["recent_vehicle_activity"]  // 선택, 계약 §4 코드만
   }

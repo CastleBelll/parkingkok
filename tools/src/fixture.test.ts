@@ -18,7 +18,7 @@ function validFixture(): Record<string, unknown> {
       { type: 'vehicle_exit', t: 240 },
       { type: 'walking_enter', t: 270 },
     ],
-    expected: { candidate: true, confidence: 'high', finalState: 'PARKING_CANDIDATE' },
+    expected: { candidate: true, confidence: 'high', finalState: 'CANDIDATE_PENDING' },
   };
 }
 
@@ -107,8 +107,10 @@ describe('parseFixture', () => {
   });
 
   it('rejects a state that is not in contract §3', () => {
-    // Arrange — the engine doc lists CANDIDATE_PENDING; the parity contract does not.
-    const document = { ...validFixture(), initialState: 'CANDIDATE_PENDING' };
+    // Arrange — PARKING_CANDIDATE was the contract's name before the state was split
+    // into PARKING_TRANSITION and CANDIDATE_PENDING, so a fixture still using it is
+    // stale rather than merely misspelled.
+    const document = { ...validFixture(), initialState: 'PARKING_CANDIDATE' };
 
     // Act / Assert
     assert.throws(() => parseFixture(document), /expected one of/);

@@ -54,7 +54,7 @@ class DiagnosticsReportTest {
     )
 
     private fun locatedCheckpoint() = DetectionCheckpoint(
-        state = com.parkingkok.app.domain.detection.DetectionState.PARKING_CANDIDATE,
+        state = com.parkingkok.app.domain.detection.DetectionState.PARKING_TRANSITION,
         stateEnteredAtMillis = now,
         lastReliableLocation = ReliableLocation(
             latitude = 37.123_456_7,

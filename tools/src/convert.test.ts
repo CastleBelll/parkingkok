@@ -193,7 +193,7 @@ describe('suggestExpectation', () => {
     const suggestion = suggestExpectation({ mode: 'car', parked: true });
 
     // Assert
-    assert.deepEqual(suggestion.proposal, { candidate: true, finalState: 'PARKING_CANDIDATE' });
+    assert.deepEqual(suggestion.proposal, { candidate: true, finalState: 'CANDIDATE_PENDING' });
   });
 
   it('refuses to propose for a taxi, which is the documented known limitation', () => {

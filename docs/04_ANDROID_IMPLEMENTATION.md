@@ -37,7 +37,7 @@ Recommended conceptual modes:
 - IDLE: no continuous high-rate request
 - DRIVING_CANDIDATE: coarse/limited confirmation request if needed
 - DRIVING: bounded balanced/high accuracy based on speed/quality
-- PARKING_CANDIDATE: capture last reliable points then stop
+- PARKING_TRANSITION: capture last reliable points then stop
 
 ## 3. Background Location
 If automatic detection requires location when app is not visible:

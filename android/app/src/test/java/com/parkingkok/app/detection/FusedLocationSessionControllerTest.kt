@@ -84,10 +84,10 @@ class FusedLocationSessionControllerTest {
         f.controller.onMotionEvent(motion(MotionEventKind.ENTERED_VEHICLE, startMillis))
         f.clock.epochMillis = startMillis + 200_000L
         f.controller.onMotionEvent(motion(MotionEventKind.EXITED_VEHICLE, f.clock.epochMillis))
-        assertEquals(LocationSessionMode.PARKING_CANDIDATE, f.controller.reconcile().mode)
+        assertEquals(LocationSessionMode.PARKING_TRANSITION, f.controller.reconcile().mode)
 
         val budget = requireNotNull(
-            LocationSessionProfiles.configFor(LocationSessionMode.PARKING_CANDIDATE, 60_000L)?.maxUpdates,
+            LocationSessionProfiles.configFor(LocationSessionMode.PARKING_TRANSITION, 60_000L)?.maxUpdates,
         )
 
         // Act — deliver exactly the budget.

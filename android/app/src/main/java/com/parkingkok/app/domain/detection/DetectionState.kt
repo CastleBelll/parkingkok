@@ -9,7 +9,13 @@ enum class DetectionState {
     IDLE,
     DRIVING_CANDIDATE,
     DRIVING,
-    PARKING_CANDIDATE,
+
+    /** Vehicle activity ended; waiting for a confirmation signal. Nothing shown yet. */
+    PARKING_TRANSITION,
+
+    /** Candidate persisted and notified; counting down its 45-minute expiry. */
+    CANDIDATE_PENDING,
+
     PARKED,
     DEPARTURE_CANDIDATE,
 }

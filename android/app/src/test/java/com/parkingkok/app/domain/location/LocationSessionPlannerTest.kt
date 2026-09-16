@@ -123,19 +123,19 @@ class LocationSessionPlannerTest {
     }
 
     @Test
-    fun `PARKING_CANDIDATE stops once its update budget is spent`() {
+    fun `PARKING_TRANSITION stops once its update budget is spent`() {
         // Arrange — docs/04 §2: capture the last reliable points, then stop.
         val budget = requireNotNull(
-            LocationSessionProfiles.configFor(LocationSessionMode.PARKING_CANDIDATE, 60_000L)?.maxUpdates,
+            LocationSessionProfiles.configFor(LocationSessionMode.PARKING_TRANSITION, 60_000L)?.maxUpdates,
         )
         val spent = record(
-            mode = LocationSessionMode.PARKING_CANDIDATE,
+            mode = LocationSessionMode.PARKING_TRANSITION,
             hardDeadlineInMillis = 60_000L,
             deliveredUpdateCount = budget,
         )
 
         // Act
-        val action = plan(spent, LocationSessionMode.PARKING_CANDIDATE)
+        val action = plan(spent, LocationSessionMode.PARKING_TRANSITION)
 
         // Assert
         assertEquals(LocationSessionStopReason.UPDATE_BUDGET_SPENT, (action as LocationSessionAction.Stop).reason)

@@ -124,7 +124,7 @@ export function suggestExpectation(label: TraceLabel): Suggestion {
 
   if (mode === 'car' && parked === true) {
     return {
-      proposal: { candidate: true, finalState: 'PARKING_CANDIDATE' },
+      proposal: { candidate: true, finalState: 'CANDIDATE_PENDING' },
       rationale:
         'The label says a car trip that ended in a parking, so a candidate is the expected ' +
         'outcome. Check the events actually carry all three of contract §6 — a meaningful ' +

@@ -12,7 +12,7 @@
   "expected": {
     "candidate": true,
     "confidence":"high",
-    "finalState":"PARKING_CANDIDATE",
+    "finalState":"CANDIDATE_PENDING",
     "requiredReasons":["recent_vehicle_activity","walking_after_vehicle","reliable_location_captured"]
   }
 }
