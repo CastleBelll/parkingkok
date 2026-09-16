@@ -116,4 +116,27 @@ struct PermissionPolicyTests {
         // And the app can ask again, because When-In-Use is a re-promptable rung.
         #expect(PermissionRequestPolicy.nextRequest(location: .whenInUse, smartDetectionEnabled: true) == .always)
     }
+
+    /// Regression: the first query is the only way the motion prompt ever appears, so
+    /// gating it on `.authorized` deadlocked — no query, no prompt, permanently
+    /// `notDetermined`. Observed on a real iPhone as a button that did nothing.
+    @Test("notDetermined still permits a history query, or the prompt never appears")
+    func notDeterminedPermitsQuery() {
+        // Arrange / Act / Assert
+        #expect(MotionAuthorization.notDetermined.allowsHistoryQuery)
+        #expect(MotionAuthorization.authorized.allowsHistoryQuery)
+        #expect(!MotionAuthorization.denied.allowsHistoryQuery)
+        #expect(!MotionAuthorization.restricted.allowsHistoryQuery)
+    }
+
+    @Test("Only a refusal the user must undo in Settings short-circuits the query")
+    func onlySettingsRefusalsShortCircuit() {
+        // Arrange / Act / Assert
+        for status in MotionAuthorization.allCases {
+            #expect(status.allowsHistoryQuery == !status.requiresSettingsChange)
+        }
+        #expect(MotionAuthorization.denied.requiresSettingsChange)
+        #expect(MotionAuthorization.restricted.requiresSettingsChange)
+        #expect(!MotionAuthorization.notDetermined.requiresSettingsChange)
+    }
 }

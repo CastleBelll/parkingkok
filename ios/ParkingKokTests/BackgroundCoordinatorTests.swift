@@ -168,4 +168,41 @@ struct BackgroundCoordinatorTests {
         #expect(!invalid.isValid)
         #expect(valid.isValid)
     }
+
+    /// Regression: the permission path used to query on the side with `try?`, so a
+    /// refusal vanished and the screen showed nothing while the button looked broken.
+    @Test("Requesting motion access records the refusal instead of discarding it")
+    func motionRefusalReachesTheSnapshot() async {
+        // Arrange
+        let motion = StubMotionHistoryProvider(
+            result: .failure(.notAuthorized),
+            authorization: .denied
+        )
+        let coordinator = makeCoordinator(store: StubCheckpointStore(), motion: motion)
+
+        // Act
+        await coordinator.requestMotionHistoryAccess()
+
+        // Assert
+        let snapshot = await coordinator.currentSnapshot()
+        #expect(snapshot.motionFailure == MotionHistoryError.notAuthorized.diagnosticDescription)
+        #expect(snapshot.motionSamples.isEmpty)
+    }
+
+    /// The window must stay open. Anchoring on a just-seeded checkpoint collapses it to
+    /// zero, `samples(in:)` returns early without touching Core Motion, and the prompt
+    /// never appears — the same deadlock by a different route.
+    @Test("Requesting motion access queries a non-empty window")
+    func motionRequestUsesOpenWindow() async throws {
+        // Arrange
+        let motion = StubMotionHistoryProvider(authorization: .notDetermined)
+        let coordinator = makeCoordinator(store: StubCheckpointStore(), motion: motion)
+
+        // Act
+        await coordinator.requestMotionHistoryAccess()
+
+        // Assert
+        let window = try #require(motion.requestedWindow)
+        #expect(window.start < window.end)
+    }
 }

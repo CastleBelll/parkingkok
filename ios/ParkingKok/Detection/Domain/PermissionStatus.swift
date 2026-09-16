@@ -31,8 +31,20 @@ enum MotionAuthorization: String, Sendable, Codable, CaseIterable {
     case denied
     case authorized
 
+    /// Whether it is worth issuing a history query at all.
+    ///
+    /// `notDetermined` must be allowed through. Core Motion has no separate request
+    /// API — running `queryActivityStarting` *is* how the prompt appears — so gating
+    /// the query on `.authorized` deadlocks: no query, no prompt, and the status can
+    /// never leave `notDetermined`. Only a refusal we already know about is worth
+    /// short-circuiting.
     var allowsHistoryQuery: Bool {
-        self == .authorized
+        !requiresSettingsChange
+    }
+
+    /// A refusal only the user can undo in Settings.
+    var requiresSettingsChange: Bool {
+        self == .denied || self == .restricted
     }
 }
 

@@ -114,9 +114,12 @@ final class DetectionRuntime {
     }
 
     /// Motion permission is granted by the first query, so this doubles as the prompt.
+    ///
+    /// Routed through the coordinator so a refusal is recorded instead of discarded.
+    /// Querying here with `try?` swallowed the one error that explains an unresponsive
+    /// button, which is exactly the silent recovery the checkpoint path forbids.
     func requestMotionPermission() async {
-        let window = MotionHistoryWindowPolicy.window(now: Date(), checkpointDate: nil)
-        _ = try? await motionHistory.samples(in: window)
+        await coordinator.requestMotionHistoryAccess()
         refreshAuthorizationStatuses()
     }
 

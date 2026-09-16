@@ -122,6 +122,17 @@ actor BackgroundCoordinator {
         snapshot.locationFailure = description
     }
 
+    /// Asking for motion permission *is* running a query, so this shares the
+    /// reconstruction path rather than querying on the side: whatever comes back —
+    /// samples or the reason it failed — lands in the snapshot and reaches the screen.
+    ///
+    /// Anchored on nothing on purpose. Anchoring on the live checkpoint would collapse
+    /// the window to zero right after a seed, `samples(in:)` would return early without
+    /// touching Core Motion, and the prompt would never appear.
+    func requestMotionHistoryAccess() async {
+        await reconstructMotionHistory(now: dateProvider.now, anchor: nil)
+    }
+
     private func reconstructMotionHistory(now: Date, anchor: Date?) async {
         let window = MotionHistoryWindowPolicy.window(now: now, checkpointDate: anchor)
         snapshot.motionWindow = window
