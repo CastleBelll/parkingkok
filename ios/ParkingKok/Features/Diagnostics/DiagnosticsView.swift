@@ -24,6 +24,7 @@ struct DiagnosticsView: View {
             permissionSection
             checkpointSection
             drivingSessionSection
+            traceSection
             motionSection
         }
         .navigationTitle("감지 진단")
@@ -160,6 +161,23 @@ struct DiagnosticsView: View {
             }
             if let failure = model.snapshot.captureFailure {
                 LabeledContent("캡처 오류", value: failure).foregroundStyle(.red)
+            }
+        }
+    }
+
+    /// docs/05 §9. Four numbers, so the answer to "is recording working?" does not need a
+    /// `devicectl copy` first.
+    private var traceSection: some View {
+        Section("이동 기록 (trace)") {
+            LabeledContent("세션 수", value: "\(model.traceSummary.sessionCount)개")
+            LabeledContent("이벤트 수", value: "\(model.traceSummary.eventCount)개")
+            LabeledContent("상한으로 버림", value: "\(model.traceSummary.droppedSessionCount)개")
+            LabeledContent("라벨 없음", value: "\(model.traceSummary.unlabeledSessionCount)개")
+            if let failure = model.snapshot.traceFailure {
+                LabeledContent("기록 실패", value: failure).foregroundStyle(.orange)
+            }
+            NavigationLink("세션 목록 · 라벨 붙이기") {
+                TraceLabelingView()
             }
         }
     }

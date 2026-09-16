@@ -16,6 +16,7 @@ final class DiagnosticsModel {
     private(set) var isMotionHistoryAvailable = false
     private(set) var isMonitoring = false
     private(set) var storeSetupFailure: String?
+    private(set) var traceSummary: TraceSummary = .empty
     var isSmartDetectionEnabled = false
 
     init(runtime: DetectionRuntime = .shared) {
@@ -37,6 +38,7 @@ final class DiagnosticsModel {
         isMonitoring = runtime.isMonitoringSignificantChanges
         isSmartDetectionEnabled = runtime.isSmartDetectionEnabled
         storeSetupFailure = runtime.storeSetupFailure
+        traceSummary = runtime.traceStore?.summary() ?? .empty
         snapshot = await runtime.snapshot()
     }
 
