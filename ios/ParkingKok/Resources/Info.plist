@@ -28,6 +28,16 @@
 	<string>차량 이동과 도보 전환을 구분해 주차 시점을 추정하기 위해 동작 및 피트니스 데이터를 사용합니다. 이 데이터는 기기에만 저장됩니다.</string>
 	<key>PKAppEnvironment</key>
 	<string>$(PK_APP_ENV)</string>
+	<!-- docs/04_IOS_IMPLEMENTATION.md §4: "Location updates only if implementation
+	     needs it." M0A-1 needed nothing here — significant-change monitoring relaunches
+	     the app without a background mode. M0A-2's bounded driving session does:
+	     CLServiceSession + CLBackgroundActivitySession only keep CLLocationUpdate
+	     .liveUpdates alive in the background when the app declares this. The session
+	     stays bounded by DrivingSessionTimeoutPolicy, not by the entitlement. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
