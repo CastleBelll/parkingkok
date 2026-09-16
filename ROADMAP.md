@@ -90,13 +90,20 @@ Coordinator (이 세션)
 - `.nvmrc` = 22, `nvm install 22`
 - `backend/` TypeScript strict 스캐폴드 (아직 배포 안 함)
 
-### 🚦 Gate G-1
-- [ ] `git log` 존재, worktree 생성 테스트 통과
-- [ ] `xcodebuild -version` + 빈 iOS 프로젝트 시뮬레이터 빌드 성공
-- [ ] `sdkmanager --list` 동작 + 빈 Compose 프로젝트 `./gradlew assembleDebug` 성공
-- [ ] `adb devices` 동작
-- [ ] `node -v` = v22.x
-- [ ] 위 4개를 **QA worker가 clean worktree에서 재현**
+### 🚦 Gate G-1 — ✅ 통과 (2026-09-16, main `bf6bdb7`)
+- [x] `git log` 존재, worktree 생성/제거 테스트 통과
+- [x] iOS: `xcodegen generate` + `xcodebuild build` = BUILD SUCCEEDED, 소스 경고 0, 테스트 4/4
+- [x] Android: `./gradlew assembleDebug` = BUILD SUCCESSFUL (캐시 배제 36/36 실행), APK 28.78MiB
+- [x] `adb version` 동작, `platforms;android-36` 설치됨
+- [x] `node -v` = v22.23.2, backend ci/build/lint/test 전부 exit 0, 15/15
+- [x] **QA worker가 clean worktree에서 16/16 재현**, dev worker 보고와 불일치 0건
+- [x] 위생: 3개 빌드 후에도 `git status` clean, 커밋된 시크릿 0건, 더미 시크릿 7종 능동 차단 확인
+
+**후속 조치 완료**: QA 결함 #1(Medium, Node 핀 미강제) → `backend/.npmrc` `engine-strict=true`
++ 런타임 SDK 정확 고정 + `docs/16` §10 규칙 명문화. Node 24 = EBADENGINE 차단 검증.
+
+**잔여 Info 결함**: CI 워크플로 yml 미구현(#5, 최우선), `sdkmanager` deprecated(#4),
+`ANDROID_HOME` 환경변수 의존(#6).
 
 ---
 
