@@ -1,0 +1,221 @@
+# PR CI — docs/18_CI_CD_AUTOMATED_RELEASE.md §4 / §9, CLAUDE.md "Quality Gate".
+#
+# Verification only. No signing, no upload, no store or Firebase deployment, and
+# no reference to any repository secret: GitHub hands a fork PR none at all, and this
+# workflow has to be green on a fork PR like on any other.
+#
+# Every toolchain version is pinned (docs/16_CODING_STANDARDS.md §10). Runner
+# images move under us, so each pinned component is asserted before it is used:
+# a missing pin fails loudly with the runner's actual inventory printed.
+name: PR CI
+
+on:
+  pull_request:
+    branches: [main]
+
+# Least privilege. The default token would otherwise be write-all on some repos.
+permissions:
+  contents: read
+
+# A new push to the same PR supersedes the previous, still-running validation.
+concurrency:
+  group: pr-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  ios:
+    name: iOS build + test
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      # macos-26 ships Xcode 26.0.1 … 26.6; 26.6 is the image default and the
+      # version the team builds with locally. iOS 26.5 is its newest simulator
+      # runtime. Deployment target stays 18.0 (ios/Config/Base.xcconfig).
+      XCODE_VERSION: "26.6"
+      IOS_SIMULATOR_NAME: iPhone 17 Pro
+      IOS_SIMULATOR_OS: "26.5"
+      # ios/README.md toolchain table.
+      XCODEGEN_VERSION: "2.46.0"
+      XCODEGEN_SHA256: 4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Select the pinned Xcode
+        run: |
+          set -euo pipefail
+          XCODE_APP="/Applications/Xcode_${XCODE_VERSION}.app"
+          if [ ! -d "${XCODE_APP}" ]; then
+            echo "::error::Xcode ${XCODE_VERSION} is not on this runner image. Re-pin XCODE_VERSION."
+            echo "Xcode versions present:"
+            ls -d /Applications/Xcode*.app
+            exit 1
+          fi
+          sudo xcode-select --switch "${XCODE_APP}/Contents/Developer"
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: |
+          set -euo pipefail
+          ARCHIVE="${RUNNER_TEMP}/xcodegen.zip"
+          curl --fail --silent --show-error --location --retry 3 \
+            --output "${ARCHIVE}" \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip"
+          echo "${XCODEGEN_SHA256}  ${ARCHIVE}" | shasum --algorithm 256 --check --strict
+          unzip -q "${ARCHIVE}" -d "${RUNNER_TEMP}/xcodegen"
+          # bin/ and share/ must stay side by side or XcodeGen silently drops its
+          # SettingPresets and generates a project with no platform settings.
+          echo "${RUNNER_TEMP}/xcodegen/xcodegen/bin" >> "${GITHUB_PATH}"
+
+      - name: Generate the Xcode project
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          xcodegen --version
+          xcodegen generate
+
+      # No SPM cache: the project has no package dependencies yet. Add one here
+      # when it does — never cache DerivedData, which would hide compile failures.
+      - name: Build for testing
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          xcodebuild build-for-testing \
+            -project ParkingKok.xcodeproj \
+            -scheme ParkingKok \
+            -configuration DEV \
+            -destination "platform=iOS Simulator,OS=${IOS_SIMULATOR_OS},name=${IOS_SIMULATOR_NAME}" \
+            -derivedDataPath "${RUNNER_TEMP}/DerivedData" \
+            SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
+            GCC_TREAT_WARNINGS_AS_ERRORS=YES
+
+      - name: Run unit tests
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          xcodebuild test-without-building \
+            -project ParkingKok.xcodeproj \
+            -scheme ParkingKok \
+            -configuration DEV \
+            -destination "platform=iOS Simulator,OS=${IOS_SIMULATOR_OS},name=${IOS_SIMULATOR_NAME}" \
+            -derivedDataPath "${RUNNER_TEMP}/DerivedData"
+
+      - name: Show available simulators on failure
+        if: failure()
+        run: xcrun simctl list devices available
+
+  android:
+    name: Android assemble + unit test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # AGP 9.4 (android/gradle/libs.versions.toml) needs JDK 17+; the team builds
+      # on 21, which ubuntu-24.04 preinstalls, so nothing is downloaded here.
+      JAVA_MAJOR_VERSION: "21"
+      # Must match android/app/build.gradle.kts compileSdk.
+      ANDROID_COMPILE_SDK: "36"
+      ANDROID_BUILD_TOOLS_VERSION: "36.0.0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Select the pinned JDK
+        run: |
+          set -euo pipefail
+          JDK_HOME_VAR="JAVA_HOME_${JAVA_MAJOR_VERSION}_X64"
+          JDK_HOME="${!JDK_HOME_VAR:-}"
+          if [ -z "${JDK_HOME}" ] || [ ! -d "${JDK_HOME}" ]; then
+            echo "::error::JDK ${JAVA_MAJOR_VERSION} is not preinstalled on this runner image."
+            env | grep '^JAVA_HOME' | sort || true
+            exit 1
+          fi
+          echo "JAVA_HOME=${JDK_HOME}" >> "${GITHUB_ENV}"
+          echo "${JDK_HOME}/bin" >> "${GITHUB_PATH}"
+          "${JDK_HOME}/bin/java" -version
+
+      - name: Verify the pinned Android SDK components
+        run: |
+          set -euo pipefail
+          : "${ANDROID_HOME:?ANDROID_HOME is not set on this runner image}"
+          MISSING=0
+          for COMPONENT in \
+            "platforms/android-${ANDROID_COMPILE_SDK}" \
+            "build-tools/${ANDROID_BUILD_TOOLS_VERSION}"; do
+            if [ ! -d "${ANDROID_HOME}/${COMPONENT}" ]; then
+              echo "::error::${COMPONENT} is missing from ${ANDROID_HOME}."
+              MISSING=1
+            fi
+          done
+          if [ "${MISSING}" -ne 0 ]; then
+            echo "Installed platforms:"; ls "${ANDROID_HOME}/platforms"
+            echo "Installed build-tools:"; ls "${ANDROID_HOME}/build-tools"
+            exit 1
+          fi
+
+      - name: Cache Gradle dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          # Downloaded artifacts and the wrapper distribution only. The Gradle
+          # build cache (caches/build-cache-1), the configuration cache and every
+          # build/ directory are deliberately excluded, so a green run always
+          # means this runner really compiled and ran the code.
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/wrapper
+          # No restore-keys: any change to the pinned dependency set misses the
+          # cache and re-resolves from scratch instead of reusing a stale tree.
+          key: gradle-${{ runner.os }}-${{ hashFiles('android/gradle/libs.versions.toml', 'android/gradle/wrapper/gradle-wrapper.properties', 'android/gradle.properties', 'android/settings.gradle.kts', 'android/build.gradle.kts', 'android/app/build.gradle.kts') }}
+
+      - name: Assemble debug and run unit tests
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace assembleDebug testDebugUnitTest
+
+  backend:
+    name: Backend build + lint + test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node from .nvmrc
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          # Single source of truth for the runtime (docs/16 §10 "Runtime pinning").
+          node-version-file: .nvmrc
+          # npm's download cache only; `npm ci` still installs from the lockfile,
+          # so a cache hit cannot hide a broken or drifted dependency tree.
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Verify the Node runtime matches .nvmrc
+        run: |
+          set -euo pipefail
+          EXPECTED_MAJOR="$(tr -d '[:space:]' < .nvmrc | cut -d. -f1)"
+          ACTUAL_MAJOR="$(node --version | sed 's/^v//' | cut -d. -f1)"
+          if [ "${ACTUAL_MAJOR}" != "${EXPECTED_MAJOR}" ]; then
+            echo "::error::.nvmrc asks for Node ${EXPECTED_MAJOR}, runner has $(node --version)."
+            exit 1
+          fi
+          node --version
+          npm --version
+
+      - name: Install dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Build
+        working-directory: backend
+        run: npm run build
+
+      - name: Lint
+        working-directory: backend
+        run: npm run lint
+
+      - name: Test
+        working-directory: backend
+        run: npm test
