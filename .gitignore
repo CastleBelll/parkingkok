@@ -1,0 +1,80 @@
+# ── Secrets — never commit (docs/09, CLAUDE.md RELEASE AUTOMATION) ──────────
+# Store credentials, signing keys, service accounts
+*.p8
+*.p12
+*.mobileprovision
+*.jks
+*.keystore
+**/service-account*.json
+**/*-service-account.json
+google-play-service-account.json
+appstore-connect-key*.json
+.env
+.env.*
+!.env.example
+secrets/
+
+# Firebase per-project config (injected by CI, not committed)
+GoogleService-Info.plist
+google-services.json
+.firebaserc
+firebase-debug.log
+.firebase/
+
+# ── macOS ───────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+
+# ── Xcode / Swift ───────────────────────────────────────────────────────────
+build/
+DerivedData/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+xcuserdata/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+.swiftpm/
+Packages/
+Package.resolved.bak
+*.playground/playground.xcworkspace
+
+# ── Android / Gradle ────────────────────────────────────────────────────────
+.gradle/
+local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+android/build/
+android/**/build/
+release/
+
+# ── Android Studio / IntelliJ ───────────────────────────────────────────────
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# ── Node / Firebase Functions ───────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+backend/lib/
+backend/functions/lib/
+*.tsbuildinfo
+coverage/
+
+# ── Tooling / local scratch ─────────────────────────────────────────────────
+.tool-versions.local
+*.log
+.orca/

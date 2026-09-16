@@ -1,0 +1,15 @@
+* text=auto eol=lf
+
+# Binary assets — never diff or normalize
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.heic  binary
+*.pdf   binary
+*.jks   binary
+*.keystore binary
+
+# Generated / vendored — collapse in PR diffs
+gradlew        text eol=lf
+gradlew.bat    text eol=crlf
+*.pbxproj      -text merge=union linguist-generated=true

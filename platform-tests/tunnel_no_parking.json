@@ -1,0 +1,14 @@
+{
+  "name": "gps_degradation_in_tunnel_not_parking",
+  "initialState": "DRIVING",
+  "events": [
+    {"type":"location","t":0,"accuracy":8,"speed":18.0},
+    {"type":"location","t":15,"accuracy":120,"speed":17.0},
+    {"type":"location_quality_degraded","t":20},
+    {"type":"location","t":90,"accuracy":10,"speed":16.0}
+  ],
+  "expected": {
+    "candidate": false,
+    "finalState":"DRIVING"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "vehicle_then_walk_high_confidence",
+  "initialState": "IDLE",
+  "events": [
+    {"type":"vehicle_enter","t":0},
+    {"type":"location","t":30,"accuracy":8,"speed":9.0},
+    {"type":"location","t":150,"accuracy":11,"speed":6.2},
+    {"type":"location","t":210,"accuracy":24,"speed":1.0},
+    {"type":"vehicle_exit","t":240},
+    {"type":"walking_enter","t":270}
+  ],
+  "expected": {
+    "candidate": true,
+    "confidence":"high",
+    "finalState":"PARKING_CANDIDATE",
+    "requiredReasons":["recent_vehicle_activity","walking_after_vehicle","reliable_location_captured"]
+  }
+}
