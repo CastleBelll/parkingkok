@@ -21,6 +21,11 @@ MARKETING_VERSION = 0.1.0
 CURRENT_PROJECT_VERSION = 1
 
 // ── Signing: simulator builds need no identity; CI injects the rest ─────────
+// Team ID is never committed (docs/18_CI_CD_AUTOMATED_RELEASE.md keeps it in
+// APPLE_TEAM_ID). Device builds pass it in:
+//   xcodebuild ... PK_DEVELOPMENT_TEAM=<team> -allowProvisioningUpdates
+PK_DEVELOPMENT_TEAM =
+DEVELOPMENT_TEAM = $(PK_DEVELOPMENT_TEAM)
 CODE_SIGN_STYLE = Automatic
 CODE_SIGNING_ALLOWED[sdk=iphonesimulator*] = NO
 CODE_SIGNING_REQUIRED[sdk=iphonesimulator*] = NO
