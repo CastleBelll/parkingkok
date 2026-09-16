@@ -29,6 +29,9 @@ struct RehydrationSnapshot: Sendable, Equatable {
     var significantChangeCount = 0
     var lastLocationAt: Date?
     var lastLocationAccuracy: Double?
+    /// Cached fixes rejected as too old to be live evidence.
+    var staleLocationDropCount = 0
+    var lastStaleLocationAge: TimeInterval?
     var lastPersistError: String?
 }
 
@@ -107,11 +110,24 @@ actor BackgroundCoordinator {
     /// A significant change arrived. M0A-1 records that it happened and how good the fix
     /// was; interpreting it is M0A-2.
     func handleSignificantChange(_ sample: LocationQualitySample) {
+        let now = dateProvider.now
+
+        // Core Location replays its cached fix when monitoring starts. Persisting that
+        // as a live arrival walks lastLocationAt backwards and, once M0A-2 fills
+        // lastReliableLocation, would surface an hours-old point as the parking spot.
+        // Counted rather than dropped quietly: a rising count with no fresh samples is
+        // the signal that the freshness bound is set wrong.
+        guard LocationFreshnessPolicy.isFresh(sample, now: now) else {
+            snapshot.staleLocationDropCount += 1
+            snapshot.lastStaleLocationAge = now.timeIntervalSince(sample.timestamp)
+            return
+        }
+
         snapshot.significantChangeCount += 1
         snapshot.lastLocationAt = sample.timestamp
         snapshot.lastLocationAccuracy = sample.horizontalAccuracy
 
-        var updated = checkpoint ?? DetectionCheckpoint.initial(at: dateProvider.now)
+        var updated = checkpoint ?? DetectionCheckpoint.initial(at: now)
         updated.lastLocationAt = sample.timestamp
         updated.revision += 1
         persist(updated)

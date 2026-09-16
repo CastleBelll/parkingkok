@@ -108,6 +108,12 @@ struct DiagnosticsView: View {
             if let accuracy = model.snapshot.lastLocationAccuracy {
                 LabeledContent("마지막 수평 정확도", value: "\(Int(accuracy)) m")
             }
+            if model.snapshot.staleLocationDropCount > 0 {
+                LabeledContent("오래된 위치 무시", value: "\(model.snapshot.staleLocationDropCount)회")
+                if let age = model.snapshot.lastStaleLocationAge {
+                    LabeledContent("무시한 위치 경과", value: Self.duration(age))
+                }
+            }
             if let failure = model.storeSetupFailure {
                 LabeledContent("저장소 초기화 실패", value: failure).foregroundStyle(.red)
             }

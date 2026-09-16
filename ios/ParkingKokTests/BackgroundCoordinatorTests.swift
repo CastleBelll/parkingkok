@@ -205,4 +205,67 @@ struct BackgroundCoordinatorTests {
         let window = try #require(motion.requestedWindow)
         #expect(window.start < window.end)
     }
+
+    /// Regression, straight off the device: Core Location replayed a cached fix from
+    /// 08:51 into an app installed at 12:12, and it was persisted as a live arrival.
+    /// The fix was perfectly accurate — only old — so `isValid` let it through.
+    @Test("A cached fix older than the freshness bound never reaches the checkpoint")
+    func rejectsStaleSignificantChange() async {
+        // Arrange — 3h20m stale, exactly the gap observed on the iPhone.
+        let store = StubCheckpointStore()
+        let coordinator = makeCoordinator(
+            store: store,
+            motion: StubMotionHistoryProvider(),
+            now: TestTime.offset(12000)
+        )
+        let cached = LocationQualitySample(timestamp: TestTime.offset(0), horizontalAccuracy: 8)
+
+        // Act
+        await coordinator.handleSignificantChange(cached)
+
+        // Assert
+        let snapshot = await coordinator.currentSnapshot()
+        #expect(snapshot.significantChangeCount == 0)
+        #expect(snapshot.lastLocationAt == nil)
+        #expect(snapshot.staleLocationDropCount == 1)
+        #expect(snapshot.lastStaleLocationAge == 12000)
+        #expect(snapshot.currentCheckpoint?.lastLocationAt == nil)
+    }
+
+    @Test("A fresh fix still lands, so the guard does not swallow real movement")
+    func acceptsFreshSignificantChange() async {
+        // Arrange
+        let coordinator = makeCoordinator(
+            store: StubCheckpointStore(),
+            motion: StubMotionHistoryProvider(),
+            now: TestTime.offset(60)
+        )
+        let fresh = LocationQualitySample(timestamp: TestTime.offset(30), horizontalAccuracy: 8)
+
+        // Act
+        await coordinator.handleSignificantChange(fresh)
+
+        // Assert
+        let snapshot = await coordinator.currentSnapshot()
+        #expect(snapshot.significantChangeCount == 1)
+        #expect(snapshot.lastLocationAt == TestTime.offset(30))
+        #expect(snapshot.staleLocationDropCount == 0)
+        #expect(snapshot.currentCheckpoint?.lastLocationAt == TestTime.offset(30))
+    }
+
+    @Test("The freshness bound covers delivery delay but not a cached replay")
+    func freshnessBoundary() {
+        // Arrange / Act / Assert — docs/05_PARKING_DETECTION_ENGINE.md §5.
+        let now = TestTime.offset(1000)
+        func sample(age: TimeInterval) -> LocationQualitySample {
+            LocationQualitySample(timestamp: now.addingTimeInterval(-age), horizontalAccuracy: 8)
+        }
+        #expect(LocationFreshnessPolicy.isFresh(sample(age: 0), now: now))
+        #expect(LocationFreshnessPolicy.isFresh(sample(age: 299), now: now))
+        #expect(LocationFreshnessPolicy.isFresh(sample(age: 300), now: now))
+        #expect(!LocationFreshnessPolicy.isFresh(sample(age: 301), now: now))
+        // Clock skew a little ahead is ordinary; far ahead is not.
+        #expect(LocationFreshnessPolicy.isFresh(sample(age: -4), now: now))
+        #expect(!LocationFreshnessPolicy.isFresh(sample(age: -60), now: now))
+    }
 }
