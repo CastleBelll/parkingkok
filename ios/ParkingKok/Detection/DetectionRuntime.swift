@@ -80,7 +80,7 @@ final class DetectionRuntime {
         startMonitoringIfPermitted()
         hasBootstrapped = true
 
-        AppLog.lifecycle.info("bootstrap reason=\(launchReason.rawValue, privacy: .public)")
+        AppLog.lifecycle.notice("bootstrap reason=\(launchReason.rawValue, privacy: .public)")
 
         Task { [coordinator] in
             await coordinator.rehydrate(launchReason: launchReason)

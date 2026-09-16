@@ -157,7 +157,7 @@ actor BackgroundCoordinator {
             let samples = try await motionHistory.samples(in: window)
             snapshot.motionSamples = samples
             snapshot.motionFailure = nil
-            AppLog.detection.info("motion history restored: \(samples.count, privacy: .public) samples")
+            AppLog.detection.notice("motion history restored: \(samples.count, privacy: .public) samples")
         } catch let error as MotionHistoryError {
             snapshot.motionSamples = []
             snapshot.motionFailure = error.diagnosticDescription
