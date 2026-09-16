@@ -6,11 +6,10 @@ import Foundation
 /// Never leaves the device: not to Firebase, not to analytics, not to a log line
 /// (CLAUDE.md Hard Constraints, docs/00_CORE_RULES.md Privacy).
 ///
-/// **M0A-1 defines this field and never fills it.** Selecting a reliable fix needs the
-/// bounded driving session and the accuracy/freshness policy from
-/// `docs/05_PARKING_DETECTION_ENGINE.md` §6, which is M0A-2. Until then the
-/// significant-change adapter maps `CLLocation` down to accuracy and timestamp only, so
-/// no coordinate enters the app at all.
+/// Filled only by `ReliableLocationPolicy` from a bounded-session `LocationFix`
+/// (`docs/05_PARKING_DETECTION_ENGINE.md` §6). The significant-change path still maps
+/// `CLLocation` down to accuracy and timestamp only (`LocationQualitySample`), so a
+/// low-power wake never puts a coordinate in memory at all.
 struct LastReliableLocation: Sendable, Equatable, Codable {
     let latitude: Double
     let longitude: Double
@@ -19,8 +18,10 @@ struct LastReliableLocation: Sendable, Equatable, Codable {
     let capturedAt: Date
 }
 
-/// What a significant-change callback contributes in M0A-1: when it arrived and how good
-/// the fix was. Coordinates are intentionally absent — see `LastReliableLocation`.
+/// What a significant-change callback contributes: when it arrived and how good the fix
+/// was. Coordinates are intentionally absent — that path only has to answer "did the
+/// device move", and the fix it delivers is far too coarse and too late to be the parking
+/// spot. The bounded session's `LocationFix` is the type that carries one.
 struct LocationQualitySample: Sendable, Equatable {
     let timestamp: Date
     /// Metres.
@@ -42,10 +43,13 @@ struct LocationQualitySample: Sendable, Equatable {
 /// *good* fix, just not a current one — so it passed `isValid` and was persisted as if
 /// the user had just moved.
 ///
-/// §6's 20s freshness governs the bounded driving session and is deliberately not reused
-/// here. A genuine significant change can reach a suspended app minutes late through no
-/// fault of the fix, so this bound only rejects samples that predate the wake by more
-/// than any plausible delivery delay.
+/// §6's 20s freshness — implemented in `ReliableLocationPolicy.maximumAge` — governs the
+/// bounded driving session and is deliberately not reused here. A genuine significant
+/// change can reach a suspended app minutes late through no fault of the fix, so this
+/// bound only rejects samples that predate the wake by more than any plausible delivery
+/// delay. The two bounds answer different questions on different paths: this one asks
+/// "is this fix evidence that the device moved recently", the other asks "is this fix
+/// good enough to remember as the parking spot".
 ///
 /// The threshold is a starting default for field tuning, in the same spirit as the
 /// evidence weights in §8 — not a value the spec derives.

@@ -8,13 +8,15 @@ import Foundation
 /// it comes off the device over the same path the checkpoint already uses, with no root.
 ///
 /// **A hand-written projection, never an encoding of the live types.** `DetectionCheckpoint`
-/// is `Codable` and carries `lastReliableLocation`, which holds real coordinates from
-/// M0A-2 onward. This file is copied off the device by design, so encoding the checkpoint
-/// wholesale would walk parking coordinates straight past
+/// is `Codable` and carries `lastReliableLocation`, which holds real coordinates now that
+/// M0A-2 selects one. This file is copied off the device by design, so encoding the
+/// checkpoint wholesale would walk parking coordinates straight past
 /// `docs/00_CORE_RULES.md` Privacy. Every field below is listed by hand; the
-/// coordinate-bearing ones are deliberately absent, and a test enforces it.
+/// coordinate-bearing ones are deliberately absent, and a test on the encoded bytes
+/// enforces it. **Adding a coordinate here is never the fix for a failing test.**
 struct DiagnosticsReport: Sendable, Equatable, Codable {
-    static let schemaVersion = 1
+    /// Bumped to 2 by M0A-2's bounded-session fields.
+    static let schemaVersion = 2
 
     var schemaVersion: Int = DiagnosticsReport.schemaVersion
     var generatedAt: Date
@@ -45,6 +47,26 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
     var motionSampleCount: Int
     var motionFailure: String?
     var motionSamples: [MotionSample]
+
+    // Bounded driving session (docs/04 §3 DRIVING, docs/05 §7)
+    var isCapturingDrivingLocation: Bool
+    var drivingSessionStartedAt: Date?
+    var drivingSessionCount: Int
+    var drivingSessionResumedFromCheckpoint: Bool
+    var drivingConfirmedAt: Date?
+    var lastDrivingSessionEndReason: String?
+    var lastDrivingSessionEndedAt: Date?
+    var drivingFixCount: Int
+    var drivingMovingSampleCount: Int
+    var drivingOutlierDropCount: Int
+    var drivingDistanceMeters: Double
+    /// How often a fix was accepted as `lastReliableLocation` — never which fix.
+    var reliableLocationUpdateCount: Int
+    var reliableLocationRejectCount: Int
+    var lastReliableLocationRejection: String?
+    var lastVehicleEvidenceAt: Date?
+    var lastVehicleEvidenceConfidence: String?
+    var captureFailure: String?
 
     // Location quality
     var significantChangeCount: Int
@@ -97,6 +119,24 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
         motionSampleCount = snapshot.motionSamples.count
         motionFailure = snapshot.motionFailure
         motionSamples = snapshot.motionSamples
+
+        isCapturingDrivingLocation = snapshot.isCapturingDrivingLocation
+        drivingSessionStartedAt = snapshot.drivingSessionStartedAt
+        drivingSessionCount = snapshot.drivingSessionCount
+        drivingSessionResumedFromCheckpoint = snapshot.drivingSessionResumedFromCheckpoint
+        drivingConfirmedAt = snapshot.drivingConfirmedAt
+        lastDrivingSessionEndReason = snapshot.lastDrivingSessionEndReason?.rawValue
+        lastDrivingSessionEndedAt = snapshot.lastDrivingSessionEndedAt
+        drivingFixCount = snapshot.drivingFixCount
+        drivingMovingSampleCount = snapshot.drivingMovingSampleCount
+        drivingOutlierDropCount = snapshot.drivingOutlierDropCount
+        drivingDistanceMeters = snapshot.drivingDistanceMeters
+        reliableLocationUpdateCount = snapshot.reliableLocationUpdateCount
+        reliableLocationRejectCount = snapshot.reliableLocationRejectCount
+        lastReliableLocationRejection = snapshot.lastReliableLocationRejection?.rawValue
+        lastVehicleEvidenceAt = snapshot.lastVehicleEvidenceAt
+        lastVehicleEvidenceConfidence = snapshot.lastVehicleEvidenceConfidence?.rawValue
+        captureFailure = snapshot.captureFailure
 
         significantChangeCount = snapshot.significantChangeCount
         lastLocationAccuracy = snapshot.lastLocationAccuracy
