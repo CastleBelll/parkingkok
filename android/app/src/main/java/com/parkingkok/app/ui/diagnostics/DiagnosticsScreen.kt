@@ -3,6 +3,8 @@ package com.parkingkok.app.ui.diagnostics
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,14 +14,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -31,6 +40,9 @@ import com.parkingkok.app.domain.detection.DetectionCheckpoint
 import com.parkingkok.app.domain.detection.MotionDomainEvent
 import com.parkingkok.app.domain.location.LocationSessionMode
 import com.parkingkok.app.domain.location.LocationSessionState
+import com.parkingkok.app.domain.trace.TraceLabel
+import com.parkingkok.app.domain.trace.TraceMode
+import com.parkingkok.app.domain.trace.TraceSession
 import com.parkingkok.app.theme.ParkingkokTheme
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -56,8 +68,13 @@ fun DiagnosticsScreen(
     onCaptureModeChange: (LocationSessionMode) -> Unit,
     onExportDiagnostics: () -> Unit,
     onClearEvents: () -> Unit,
+    onTraceLabelChange: (String, TraceLabel) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Which recorded session has its label controls open. Purely presentational, so it
+    // lives here rather than in the ViewModel.
+    var expandedTraceId by remember { mutableStateOf<String?>(null) }
+
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         LazyColumn(
             modifier = Modifier.fillMaxSize().safeDrawingPadding().padding(16.dp),
@@ -74,6 +91,22 @@ fun DiagnosticsScreen(
             item { SessionCard(state.sessionState, onCaptureModeChange) }
             item { CheckpointCard(state.checkpoint) }
             item { ExportCard(state, onExportDiagnostics) }
+            item { TraceHeader(state.traceSessions.size) }
+            if (state.traceSessions.isEmpty()) {
+                item { Text(stringResource(R.string.diagnostics_trace_empty)) }
+            } else {
+                items(state.traceSessions, key = { it.sessionId }) { session ->
+                    TraceSessionCard(
+                        session = session,
+                        expanded = expandedTraceId == session.sessionId,
+                        onToggle = {
+                            expandedTraceId =
+                                if (expandedTraceId == session.sessionId) null else session.sessionId
+                        },
+                        onLabelChange = { onTraceLabelChange(session.sessionId, it) },
+                    )
+                }
+            }
             item { EventLogHeader(state.events.size, onClearEvents) }
             if (state.events.isEmpty()) {
                 item { Text(stringResource(R.string.diagnostics_events_empty)) }
@@ -282,6 +315,136 @@ private fun ExportCard(state: DiagnosticsUiState, onExportDiagnostics: () -> Uni
 }
 
 @Composable
+private fun TraceHeader(count: Int) {
+    Column {
+        Text(
+            text = stringResource(R.string.diagnostics_trace_title, count),
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Text(
+            text = stringResource(R.string.diagnostics_trace_path),
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
+}
+
+/**
+ * One recorded session, with the label docs/05_CROSS_PLATFORM_DOMAIN_CONTRACT.md §9 leaves
+ * to a person.
+ *
+ * Deliberately the smallest thing that makes a trace convertible: without a mode, the
+ * converter cannot tell a bus ride from a drive, and the recording is evidence of nothing.
+ * It is instrumentation, not product UI (CLAUDE.md Development Order).
+ *
+ * No coordinate is rendered here, because the session holds none to render.
+ */
+@Composable
+private fun TraceSessionCard(
+    session: TraceSession,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    onLabelChange: (TraceLabel) -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.clickable(onClick = onToggle).padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            LabelledValue(
+                label = "${session.startedAt.formatTime()} → ${session.endedAt.formatTime()}",
+                value = stringResource(modeLabel(session.label.mode)),
+            )
+            Text(
+                text = stringResource(
+                    R.string.diagnostics_trace_detail,
+                    session.events.size,
+                    session.sessionId.take(SESSION_ID_PREFIX_LENGTH),
+                    parkedSymbol(session.label.parked),
+                ),
+                style = MaterialTheme.typography.bodySmall,
+            )
+
+            if (!expanded) return@Column
+
+            ChipRow {
+                TraceMode.entries.forEach { mode ->
+                    FilterChip(
+                        selected = session.label.mode == mode,
+                        onClick = { onLabelChange(session.label.copy(mode = mode)) },
+                        label = { Text(stringResource(modeLabel(mode))) },
+                    )
+                }
+            }
+            ChipRow {
+                ParkedChoice.entries.forEach { choice ->
+                    FilterChip(
+                        selected = session.label.parked == choice.value,
+                        onClick = { onLabelChange(session.label.copy(parked = choice.value)) },
+                        label = { Text(stringResource(choice.label)) },
+                    )
+                }
+            }
+            NoteEditor(session, onLabelChange)
+        }
+    }
+}
+
+/**
+ * The note is committed on an explicit press rather than on every keystroke: each commit
+ * rewrites the session file, and doing that per character would turn labelling into a
+ * write storm.
+ */
+@Composable
+private fun NoteEditor(session: TraceSession, onLabelChange: (TraceLabel) -> Unit) {
+    var note by remember(session.sessionId) { mutableStateOf(session.label.note.orEmpty()) }
+    OutlinedTextField(
+        value = note,
+        onValueChange = { note = it },
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text(stringResource(R.string.diagnostics_trace_note)) },
+        singleLine = true,
+    )
+    OutlinedButton(onClick = { onLabelChange(session.label.copy(note = note.ifBlank { null })) }) {
+        Text(stringResource(R.string.diagnostics_trace_note_save))
+    }
+}
+
+@Composable
+private fun ChipRow(content: @Composable () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        content()
+    }
+}
+
+/** `parked` is three-valued: §9 keeps "not yet known" distinct from "did not park". */
+private enum class ParkedChoice(val value: Boolean?, val label: Int) {
+    YES(true, R.string.diagnostics_trace_parked_yes),
+    NO(false, R.string.diagnostics_trace_parked_no),
+    UNKNOWN(null, R.string.diagnostics_trace_parked_unknown),
+}
+
+private fun parkedSymbol(parked: Boolean?): String = when (parked) {
+    true -> "P"
+    false -> "—"
+    null -> "?"
+}
+
+private fun modeLabel(mode: TraceMode): Int = when (mode) {
+    TraceMode.CAR -> R.string.diagnostics_trace_mode_car
+    TraceMode.BUS -> R.string.diagnostics_trace_mode_bus
+    TraceMode.SUBWAY -> R.string.diagnostics_trace_mode_subway
+    TraceMode.TAXI -> R.string.diagnostics_trace_mode_taxi
+    TraceMode.WALK -> R.string.diagnostics_trace_mode_walk
+    TraceMode.STILL -> R.string.diagnostics_trace_mode_still
+    TraceMode.UNKNOWN -> R.string.diagnostics_trace_mode_unknown
+}
+
+private const val SESSION_ID_PREFIX_LENGTH = 8
+
+@Composable
 private fun EventLogHeader(count: Int, onClearEvents: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -373,6 +536,7 @@ private fun DiagnosticsScreenPreview() {
             onCaptureModeChange = {},
             onExportDiagnostics = {},
             onClearEvents = {},
+            onTraceLabelChange = { _, _ -> },
         )
     }
 }

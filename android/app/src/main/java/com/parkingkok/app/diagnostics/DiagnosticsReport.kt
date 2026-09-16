@@ -6,6 +6,7 @@ import com.parkingkok.app.domain.detection.MotionDomainEvent
 import com.parkingkok.app.domain.location.LocationDiagnosticsCounters
 import com.parkingkok.app.domain.location.LocationQualityEntry
 import com.parkingkok.app.domain.location.LocationSessionState
+import com.parkingkok.app.domain.trace.TraceSummary
 import kotlinx.serialization.Serializable
 
 /**
@@ -77,6 +78,17 @@ data class DiagnosticsReport(
     // Motion transitions
     val transitionEventCount: Int,
     val recentTransitions: List<TransitionSummary>,
+
+    /**
+     * What the trace recorder has on disk
+     * (docs/05_CROSS_PLATFORM_DOMAIN_CONTRACT.md §9).
+     *
+     * Here rather than only in the traces directory because this is the file a field run
+     * is read from: "40 sessions, 12 discarded, 31 still unlabelled" is the difference
+     * between a recording that is ready to convert and one that needs an evening of
+     * labelling, and neither number is visible from a directory listing.
+     */
+    val trace: TraceSummary = TraceSummary(),
 ) {
     /** One ring-buffer entry, projected. */
     @Serializable
@@ -99,7 +111,7 @@ data class DiagnosticsReport(
 
     companion object {
         /** Bump whenever the shape changes, so an older payload is rejected, not half-read. */
-        const val SCHEMA_VERSION: Int = 1
+        const val SCHEMA_VERSION: Int = 2
 
         @Suppress("LongParameterList")
         fun from(
@@ -113,6 +125,7 @@ data class DiagnosticsReport(
             backgroundLocationGranted: Boolean,
             smartDetectionEnabled: Boolean,
             transitionRegistration: RegistrationStatus,
+            trace: TraceSummary,
         ): DiagnosticsReport {
             val record = sessionState.record
             val evidence = sessionState.evidence
@@ -164,6 +177,7 @@ data class DiagnosticsReport(
                         deliveryDelayMillis = event.receivedAtMillis - event.atMillis,
                     )
                 },
+                trace = trace,
             )
         }
 

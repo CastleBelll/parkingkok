@@ -6,11 +6,14 @@ import com.parkingkok.app.data.DetectionStateStore
 import com.parkingkok.app.domain.detection.DetectionCheckpoint
 import com.parkingkok.app.domain.detection.MotionDomainEvent
 import com.parkingkok.app.domain.detection.MotionEventKind
+import com.parkingkok.app.domain.detection.ReliableLocation
 import com.parkingkok.app.domain.location.DrivingConfirmationGuard
+import com.parkingkok.app.domain.location.GeoDistance
 import com.parkingkok.app.domain.location.DrivingSessionEvidence
 import com.parkingkok.app.domain.location.LocationCaptureModePolicy
 import com.parkingkok.app.domain.location.LocationQualityEntry
 import com.parkingkok.app.domain.location.LocationQualityRing
+import com.parkingkok.app.domain.location.LocationQualitySample
 import com.parkingkok.app.domain.location.LocationSample
 import com.parkingkok.app.domain.location.LocationSessionAction
 import com.parkingkok.app.domain.location.LocationSessionMode
@@ -18,6 +21,8 @@ import com.parkingkok.app.domain.location.LocationSessionPlanner
 import com.parkingkok.app.domain.location.LocationSessionState
 import com.parkingkok.app.domain.location.ReliableLocationDecision
 import com.parkingkok.app.domain.location.ReliableLocationSelector
+import com.parkingkok.app.trace.NoOpTraceRecording
+import com.parkingkok.app.trace.TraceRecording
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.math.max
@@ -44,6 +49,7 @@ class FusedLocationSessionController(
     private val registrar: LocationSessionRegistrar,
     private val clock: Clock,
     private val ring: LocationQualityRing = LocationQualityRing(),
+    private val traceRecorder: TraceRecording = NoOpTraceRecording,
 ) {
 
     private val mutex = Mutex()
@@ -113,12 +119,24 @@ class FusedLocationSessionController(
         // Filled by the fold and applied afterwards: a DataStore transform may be retried,
         // and the ring is a side effect that must not be applied twice.
         var observed: List<LocationQualityEntry> = emptyList()
+        var traced: List<TracedFix> = emptyList()
         val ingested = store.updateLocationSessionAndCheckpoint { stored, checkpoint ->
             val fold = ingest(stored, checkpoint, samples, now)
             observed = fold.observed
+            traced = fold.traced
             fold.state to fold.checkpoint
         }
         observed.forEach { ring.record(it.sample, it.dropReason) }
+        // Best-effort and after the durable write, for the same reason the transition path
+        // records last: the trace is field evidence, not part of detection.
+        traced.forEach {
+            traceRecorder.recordLocation(
+                atMillis = it.sample.atMillis,
+                accuracyM = it.sample.horizontalAccuracyM,
+                speedMps = it.sample.speedMps,
+                distanceFromPreviousM = it.distanceFromPreviousM,
+            )
+        }
 
         // §7's guard is the only thing that promotes a confirmation window to a real
         // driving session. One transition never does (docs/05 §7).
@@ -135,6 +153,21 @@ class FusedLocationSessionController(
         val state: LocationSessionState,
         val checkpoint: DetectionCheckpoint?,
         val observed: List<LocationQualityEntry>,
+        val traced: List<TracedFix>,
+    )
+
+    /**
+     * One fix as the trace records it — quality and a distance, never a position
+     * (docs/05_CROSS_PLATFORM_DOMAIN_CONTRACT.md §9).
+     *
+     * The projection happens inside the fold because this is the only place that holds two
+     * coordinates at the same time, and it is where they can be turned into a scalar and
+     * dropped. Nothing downstream of here can leak a position, because nothing downstream
+     * of here has one.
+     */
+    private data class TracedFix(
+        val sample: LocationQualitySample,
+        val distanceFromPreviousM: Double?,
     )
 
     /**
@@ -160,6 +193,14 @@ class FusedLocationSessionController(
         var working = storedCheckpoint ?: DetectionCheckpoint.initial(nowMillis)
         var checkpointChanged = false
         val observed = mutableListOf<LocationQualityEntry>()
+        val traced = mutableListOf<TracedFix>()
+
+        // What the trace measures `distanceFromPreviousM` from: the previous fix in this
+        // recording, whatever the admission guards made of it. It starts at the reliable
+        // fix the checkpoint already holds, but only inside an active session — between
+        // trips that point belongs to the last parking spot, and anchoring on it would
+        // open every recording with the whole distance travelled since then.
+        var traceAnchor: ReliableLocation? = working.lastReliableLocation.takeIf { stored.record != null }
 
         // A batch describes the window ending at its newest fix, not the instant it was
         // handed over, so that is what its interior is judged fresh against. Clamped to
@@ -178,6 +219,16 @@ class FusedLocationSessionController(
                 sample.quality,
                 (decision as? ReliableLocationDecision.Rejected)?.reason,
             )
+            traced += TracedFix(
+                sample = sample.quality,
+                distanceFromPreviousM = traceAnchor?.let {
+                    GeoDistance.meters(it.latitude, it.longitude, sample.latitude, sample.longitude)
+                },
+            )
+            // Rejected fixes still anchor the next distance — the trace describes what the
+            // device actually saw, and the converter decides what the engine owed it. An
+            // invalid accuracy does not: Fused Location is saying that is not a fix at all.
+            if (sample.quality.isValid) traceAnchor = sample.toReliableLocation()
             counters = counters.copy(
                 lastSampleAccuracyM = sample.horizontalAccuracyM,
                 lastSampleAtMillis = sample.atMillis,
@@ -230,7 +281,7 @@ class FusedLocationSessionController(
             drivingConfirmed = confirmation?.confirmed ?: stored.drivingConfirmed,
             drivingReasonCodes = confirmation?.reasonCodes?.map { it.wire } ?: stored.drivingReasonCodes,
         )
-        return IngestResult(updated, working.takeIf { checkpointChanged }, observed)
+        return IngestResult(updated, working.takeIf { checkpointChanged }, observed, traced)
     }
 
     private fun evidenceAfter(

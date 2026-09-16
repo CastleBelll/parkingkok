@@ -9,12 +9,16 @@ import com.parkingkok.app.domain.detection.DetectionCheckpoint
 import com.parkingkok.app.domain.detection.MotionDomainEvent
 import com.parkingkok.app.domain.location.LocationSessionMode
 import com.parkingkok.app.domain.location.LocationSessionState
+import com.parkingkok.app.domain.trace.TraceLabel
+import com.parkingkok.app.domain.trace.TraceSession
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Permission state the P0 screen renders and requests against. */
 data class DiagnosticsPermissions(
@@ -31,6 +35,8 @@ data class DiagnosticsUiState(
     val checkpoint: DetectionCheckpoint? = null,
     val events: List<MotionDomainEvent> = emptyList(),
     val sessionState: LocationSessionState = LocationSessionState(),
+    /** Recorded trace sessions, newest first (docs/05_CROSS_PLATFORM_DOMAIN_CONTRACT.md §9). */
+    val traceSessions: List<TraceSession> = emptyList(),
     /** Result of the last manual export: null before one has run, a reason string on failure. */
     val lastExportFailure: String? = null,
     val lastExportSucceeded: Boolean = false,
@@ -47,6 +53,13 @@ class DiagnosticsViewModel(private val container: AppContainer) : ViewModel() {
 
     private val permissions = MutableStateFlow(readPermissions())
     private val exportResult = MutableStateFlow<ExportResult?>(null)
+
+    /**
+     * Re-read rather than observed: traces are files, not a Flow, and they only change when
+     * this screen is open or an event arrives. Polling them would be exactly the standing
+     * cost §9 rules out.
+     */
+    private val traceSessions = MutableStateFlow<List<TraceSession>>(emptyList())
 
     /** null before an export has been asked for; [failure] null means the last one wrote. */
     private data class ExportResult(val failure: String?)
@@ -72,7 +85,8 @@ class DiagnosticsViewModel(private val container: AppContainer) : ViewModel() {
         container.registrationCoordinator.status,
         storedState,
         exportResult,
-    ) { grantedPermissions, registration, stored, export ->
+        traceSessions,
+    ) { grantedPermissions, registration, stored, export, traces ->
         DiagnosticsUiState(
             permissions = grantedPermissions,
             detectionEnabled = stored.detectionEnabled,
@@ -80,6 +94,7 @@ class DiagnosticsViewModel(private val container: AppContainer) : ViewModel() {
             checkpoint = stored.checkpoint,
             events = stored.events.asReversed(),
             sessionState = stored.sessionState,
+            traceSessions = traces,
             lastExportFailure = export?.failure,
             lastExportSucceeded = export != null && export.failure == null,
         )
@@ -95,6 +110,7 @@ class DiagnosticsViewModel(private val container: AppContainer) : ViewModel() {
             container.registrationCoordinator.reconcile()
             container.locationSessionController.reconcile()
             container.diagnosticsExporter.export()
+            reloadTraces()
         }
     }
 
@@ -103,9 +119,27 @@ class DiagnosticsViewModel(private val container: AppContainer) : ViewModel() {
             container.registrationCoordinator.setDetectionEnabled(enabled)
             // Turning detection off must also tear down any bounded capture; leaving one
             // running past the opt-out is exactly the leak the battery gate rejects.
-            if (!enabled) container.locationSessionController.setDesiredMode(LocationSessionMode.IDLE)
+            if (!enabled) {
+                container.locationSessionController.setDesiredMode(LocationSessionMode.IDLE)
+                // The user-facing boundary: whatever was being recorded is finished, so
+                // the next trip starts its own file instead of appending to this one.
+                container.traceRecorder.closeOpenSession()
+            }
             container.diagnosticsExporter.export()
+            reloadTraces()
         }
+    }
+
+    /** Applies the human label §9 leaves to a person, then re-reads what landed. */
+    fun setTraceLabel(sessionId: String, label: TraceLabel) {
+        viewModelScope.launch {
+            container.traceRecorder.setLabel(sessionId, label)
+            reloadTraces()
+        }
+    }
+
+    private suspend fun reloadTraces() {
+        traceSessions.value = withContext(Dispatchers.IO) { container.traceRecorder.sessions() }
     }
 
     /** Manual bounded capture, so the no-foreground-service path can be exercised without driving. */
@@ -119,6 +153,11 @@ class DiagnosticsViewModel(private val container: AppContainer) : ViewModel() {
     fun exportDiagnostics() {
         viewModelScope.launch {
             exportResult.value = ExportResult(container.diagnosticsExporter.export())
+            // Also the manual refresh for the trace list. Traces are files, so a session
+            // recorded while this screen stayed in the foreground is otherwise invisible
+            // until the next resume — and the export button is already the "show me the
+            // current state" control.
+            reloadTraces()
         }
     }
 

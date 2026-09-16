@@ -4,6 +4,7 @@ import com.parkingkok.app.core.Clock
 import com.parkingkok.app.data.DetectionStateStore
 import com.parkingkok.app.detection.DetectionRegistrationCoordinator
 import com.parkingkok.app.detection.FusedLocationSessionController
+import com.parkingkok.app.trace.TraceRecorder
 import kotlinx.coroutines.flow.first
 
 /**
@@ -24,6 +25,7 @@ class DiagnosticsExporter(
     private val hasActivityRecognitionPermission: () -> Boolean,
     private val reportStore: DiagnosticsReportStore,
     private val clock: Clock,
+    private val traceRecorder: TraceRecorder,
 ) {
 
     /** @return null on success, or a short, coordinate-free reason string on failure. */
@@ -39,6 +41,7 @@ class DiagnosticsExporter(
             backgroundLocationGranted = sessionController.hasBackgroundLocationPermission(),
             smartDetectionEnabled = store.readDesiredEnabledOnce(),
             transitionRegistration = registrationCoordinator.status.value,
+            trace = traceRecorder.summary(),
         )
         return reportStore.write(report)
     }

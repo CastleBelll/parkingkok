@@ -96,6 +96,40 @@ class DetectionStateStore(
     }
 
     /**
+     * Which trace session is currently being appended to, or null when none is open.
+     *
+     * Kept here rather than in the trace directory so it lands in the same atomic edit
+     * discipline as the rest of the detection state: receivers run in a process that can
+     * die between two events, and a pointer that disagreed with the checkpoint about
+     * whether recording was in progress would split one trip across two files on every
+     * restart. The sessions themselves are files — see
+     * [com.parkingkok.app.trace.FileTraceStore] — because the rolling cap evicts whole
+     * sessions.
+     */
+    suspend fun readTraceOpenSessionIdOnce(): String? = dataStore.data.first()[KEY_TRACE_OPEN_SESSION]
+
+    suspend fun setTraceOpenSessionId(sessionId: String?) {
+        dataStore.edit {
+            if (sessionId == null) it.remove(KEY_TRACE_OPEN_SESSION) else it[KEY_TRACE_OPEN_SESSION] = sessionId
+        }
+    }
+
+    suspend fun readTraceDiscardedSessionCountOnce(): Int = dataStore.data.first()[KEY_TRACE_DISCARDED] ?: 0
+
+    /**
+     * Records that the rolling cap threw sessions away.
+     *
+     * Cumulative and never reset: docs/05_CROSS_PLATFORM_DOMAIN_CONTRACT.md §9 requires a
+     * cap, and a field run that looks thin because the cap quietly ate half of it has to be
+     * able to say so. Read back inside an `edit` so two concurrent prunes cannot lose an
+     * increment the way a read-then-write pair would.
+     */
+    suspend fun addTraceDiscardedSessions(count: Int) {
+        if (count <= 0) return
+        dataStore.edit { it[KEY_TRACE_DISCARDED] = (it[KEY_TRACE_DISCARDED] ?: 0) + count }
+    }
+
+    /**
      * Reads, transforms, and writes the location session state inside one [androidx.datastore.core.DataStore.updateData]
      * transform, so two location batches arriving back to back cannot lose each other's
      * counter increments the way a read-then-write pair would.
@@ -170,5 +204,7 @@ class DetectionStateStore(
         val KEY_REGISTERED_SPEC_VERSION = intPreferencesKey("registration_spec_version")
         val KEY_REGISTERED_AT = longPreferencesKey("registration_registered_at")
         val KEY_LOCATION_SESSION = stringPreferencesKey("location_session")
+        val KEY_TRACE_OPEN_SESSION = stringPreferencesKey("trace_open_session_id")
+        val KEY_TRACE_DISCARDED = intPreferencesKey("trace_discarded_session_count")
     }
 }

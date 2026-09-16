@@ -45,6 +45,7 @@ class MainActivity : ComponentActivity() {
                     onCaptureModeChange = viewModel::setCaptureMode,
                     onExportDiagnostics = viewModel::exportDiagnostics,
                     onClearEvents = viewModel::clearEventLog,
+                    onTraceLabelChange = viewModel::setTraceLabel,
                 )
             }
         }
