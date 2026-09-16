@@ -23,6 +23,10 @@ class ParkingkokApplication : Application() {
         // resolves to "already registered" and issues no call at all.
         created.applicationScope.launch {
             created.registrationCoordinator.reconcile()
+            // The third leak guard: a session record left behind by a process that died
+            // mid-drive is stopped here once its deadline has passed.
+            created.locationSessionController.reconcile()
+            created.diagnosticsExporter.export()
         }
     }
 

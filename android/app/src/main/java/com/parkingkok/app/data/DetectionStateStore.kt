@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.parkingkok.app.domain.detection.DetectionCheckpoint
 import com.parkingkok.app.domain.detection.MotionDomainEvent
+import com.parkingkok.app.domain.location.LocationSessionState
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -46,9 +47,13 @@ class DetectionStateStore(
 
     val recentEvents: Flow<List<MotionDomainEvent>> = dataStore.data.map { it.readEvents() }
 
+    val locationSessionState: Flow<LocationSessionState> = dataStore.data.map { it.readSessionState() }
+
     suspend fun readCheckpointOnce(): DetectionCheckpoint? = dataStore.data.first().readCheckpoint()
 
     suspend fun readRegistrationRecordOnce(): RegistrationRecord? = dataStore.data.first().readRecord()
+
+    suspend fun readLocationSessionStateOnce(): LocationSessionState = dataStore.data.first().readSessionState()
 
     suspend fun readDesiredEnabledOnce(): Boolean = dataStore.data.first()[KEY_DESIRED_ENABLED] ?: false
 
@@ -90,8 +95,47 @@ class DetectionStateStore(
         dataStore.edit { it.remove(KEY_EVENT_LOG) }
     }
 
+    /**
+     * Reads, transforms, and writes the location session state inside one [androidx.datastore.core.DataStore.updateData]
+     * transform, so two location batches arriving back to back cannot lose each other's
+     * counter increments the way a read-then-write pair would.
+     */
+    suspend fun updateLocationSessionState(
+        transform: (LocationSessionState) -> LocationSessionState,
+    ): LocationSessionState {
+        var updated = LocationSessionState()
+        dataStore.edit { prefs ->
+            updated = transform(prefs.readSessionState())
+            prefs[KEY_LOCATION_SESSION] = json.encodeToString(updated)
+        }
+        return updated
+    }
+
+    /**
+     * Writes the session state and the checkpoint together.
+     *
+     * A location delivery updates both, and they must not disagree: a checkpoint holding a
+     * reliable fix the session state never counted would make the P0 numbers unreadable.
+     */
+    suspend fun updateLocationSessionAndCheckpoint(
+        transform: (LocationSessionState, DetectionCheckpoint?) -> Pair<LocationSessionState, DetectionCheckpoint?>,
+    ): LocationSessionState {
+        var updated = LocationSessionState()
+        dataStore.edit { prefs ->
+            val (state, checkpoint) = transform(prefs.readSessionState(), prefs.readCheckpoint())
+            updated = state
+            prefs[KEY_LOCATION_SESSION] = json.encodeToString(state)
+            if (checkpoint != null) prefs[KEY_CHECKPOINT] = json.encodeToString(checkpoint)
+        }
+        return updated
+    }
+
     private fun Preferences.readCheckpoint(): DetectionCheckpoint? =
         decode(this[KEY_CHECKPOINT]) { json.decodeFromString<DetectionCheckpoint>(it) }
+
+    private fun Preferences.readSessionState(): LocationSessionState =
+        decode(this[KEY_LOCATION_SESSION]) { json.decodeFromString<LocationSessionState>(it) }
+            ?: LocationSessionState()
 
     private fun Preferences.readEvents(): List<MotionDomainEvent> =
         decode(this[KEY_EVENT_LOG]) { json.decodeFromString<List<MotionDomainEvent>>(it) }
@@ -125,5 +169,6 @@ class DetectionStateStore(
         val KEY_DESIRED_ENABLED = booleanPreferencesKey("registration_desired_enabled")
         val KEY_REGISTERED_SPEC_VERSION = intPreferencesKey("registration_spec_version")
         val KEY_REGISTERED_AT = longPreferencesKey("registration_registered_at")
+        val KEY_LOCATION_SESSION = stringPreferencesKey("location_session")
     }
 }

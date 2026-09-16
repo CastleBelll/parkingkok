@@ -42,6 +42,8 @@ class MainActivity : ComponentActivity() {
                     state = state,
                     onDetectionEnabledChange = viewModel::setDetectionEnabled,
                     onPermissionResult = viewModel::refresh,
+                    onCaptureModeChange = viewModel::setCaptureMode,
+                    onExportDiagnostics = viewModel::exportDiagnostics,
                     onClearEvents = viewModel::clearEventLog,
                 )
             }

@@ -8,11 +8,15 @@ import com.parkingkok.app.ParkingkokApplication
 import kotlinx.coroutines.launch
 
 /**
- * Restores the transition registration after a reboot or an app update.
+ * Restores the detection registrations after a reboot or an app update.
  *
- * Both events drop the system-side subscription while our DataStore record survives, so
- * recovery clears the record first and lets reconciliation re-register exactly once
- * (docs/04_ANDROID_IMPLEMENTATION.md §6).
+ * Both events drop the system-side subscriptions while our DataStore records survive, so
+ * recovery clears the transition record first and lets reconciliation re-register exactly
+ * once (docs/04_ANDROID_IMPLEMENTATION.md §6).
+ *
+ * The location session is reconciled too, for the opposite reason: a reboot drops the
+ * Fused Location request as well, so a session record that outlived it describes a
+ * registration that no longer exists and has to be cleared rather than trusted.
  */
 class RegistrationRecoveryReceiver : BroadcastReceiver() {
 
@@ -27,6 +31,8 @@ class RegistrationRecoveryReceiver : BroadcastReceiver() {
         container.applicationScope.launch {
             try {
                 container.registrationCoordinator.reconcileAfterSystemReset()
+                container.locationSessionController.reconcile()
+                container.diagnosticsExporter.export()
             } finally {
                 pendingResult.finish()
             }

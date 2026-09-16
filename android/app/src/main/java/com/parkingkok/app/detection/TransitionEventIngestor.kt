@@ -11,15 +11,17 @@ import com.parkingkok.app.domain.detection.TransitionKind
 
 /**
  * Application-layer handler for received transitions: normalize, persist, update
- * checkpoint. The BroadcastReceiver does nothing but call this
- * (docs/16_CODING_STANDARDS.md §2: no business logic in receivers).
+ * checkpoint, then let the location session react. The BroadcastReceiver does nothing but
+ * call this (docs/16_CODING_STANDARDS.md §2: no business logic in receivers).
  *
- * Deliberately not the detection engine. Once the engine lands in M0B-2 it consumes the
- * events this writes; M0B-1 stops at durable, ordered ingestion.
+ * Deliberately not the detection engine. Once the engine lands in M3 it consumes the
+ * events this writes; here ingestion stops at durable, ordered evidence plus the bounded
+ * capture decision (docs/04_ANDROID_IMPLEMENTATION.md §2).
  */
 class TransitionEventIngestor(
     private val store: DetectionStateStore,
     private val clock: Clock,
+    private val locationSessionController: FusedLocationSessionController,
 ) {
 
     /** One raw transition, already decoded off the SDK types. */
@@ -40,7 +42,12 @@ class TransitionEventIngestor(
                     receivedAtMillis = receivedAtMillis,
                 )
             }
-            .forEach { event -> persist(event) }
+            .forEach { event ->
+                persist(event)
+                // After persisting, never before: if the process dies here the evidence
+                // survives and the next reconcile re-derives the session from it.
+                locationSessionController.onMotionEvent(event)
+            }
     }
 
     private suspend fun persist(event: MotionDomainEvent) {
