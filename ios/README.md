@@ -153,8 +153,12 @@ xcrun devicectl device copy from --device <device-udid> \
 movement becomes fixture material, so the checklist is mostly "go somewhere and come back".
 Bus, subway and taxi rides count, and so does a passenger seat.
 
-A trace session is one bounded driving session. Nothing is recorded outside one — a walk
-that never opened a session is not a case the engine got wrong.
+A trace session is a run of events with no long silence in it (§9: 30 min idle gap, 4 h and
+1000 events as ceilings, judged when the next event arrives — no timer). **It is not tied to
+the bounded driving session**: a walk, a subway ride and a lone significant-change wake open
+a session just as a drive does, which is what makes the negative cases collectable without a
+car. Turning Smart Detection off closes the open session immediately; nothing is recorded
+while it is off.
 
 Retrieve the whole recording directory the same way as `diagnostics.json`, no `sudo`:
 
@@ -164,10 +168,13 @@ xcrun devicectl device copy from --device <device-udid> \
   --source "Library/Application Support/Detection/traces" --destination ./traces
 ```
 
-1. **Plumbing, without a car.** Launch with `PK_FORCE_DRIVING_SESSION=1` (see the M0A-2
-   checklist). Within a minute, `감지 진단 → 이동 기록 (trace)` must show `세션 수` ≥ 1 and a
-   rising `이벤트 수`. Retrieve the directory and confirm the file contains `location`
-   events with `accuracy`, and `distanceFromPreviousM` on all but the first.
+1. **Plumbing, without a car.** Turn Smart Detection on and walk for five minutes with the
+   app backgrounded. `감지 진단 → 이동 기록 (trace)` must show `세션 수` ≥ 1 and a rising
+   `이벤트 수` — **with no drive anywhere in it**. Retrieve the directory and confirm the file
+   contains `walking_enter` and at least one `location`. This is the case the bounded-session
+   boundary used to drop entirely, so an empty directory here is the regression.
+   `PK_FORCE_DRIVING_SESSION=1` (see the M0A-2 checklist) additionally exercises the 1 Hz fix
+   path: `location` events with `accuracy`, and `distanceFromPreviousM` on all but the first.
 2. **Motion vocabulary on device.** Walk, sit still, ride something. The trace must contain
    `vehicle_enter` / `vehicle_exit` / `walking_enter` / `stationary_enter` /
    `stationary_exit` — no Core Motion enum names. Record which ones your phone actually
@@ -186,8 +193,13 @@ xcrun devicectl device copy from --device <device-udid> \
    rather than the directory growing without bound. Check the directory size after a week
    of commuting: 40 sessions and 4 MB are the ceilings.
 7. **Process death mid-trip.** Force-quit during a drive. The abandoned file must already
-   have a sensible `endedAt` (no repair pass runs), and the resumed session must appear as
-   a second trace rather than corrupting the first.
+   have a sensible `endedAt` (no repair pass runs). On the next wake **inside the idle gap
+   the same file must keep growing** — §9's boundary belongs to the event stream, not to the
+   process — with no second `vehicle_enter` restating a drive that never stopped, and no
+   `distanceFromPreviousM` on the first fix after the relaunch.
+8. **The boundary itself.** After a commute and half an hour at the desk, the return trip
+   must be a *separate* file starting at its own first event. One file spanning both is the
+   boundary failing; a file per wake is the open-session pointer failing.
 
 ## Lint
 

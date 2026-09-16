@@ -112,7 +112,11 @@ final class DetectionRuntime {
 
         AppLog.lifecycle.notice("bootstrap reason=\(launchReason.rawValue, privacy: .public)")
 
+        let isOptedIn = preference.isEnabled
         Task { [weak self, coordinator] in
+            // Before rehydration, because rehydration replays motion history and docs/05 §9
+            // records nothing while the user is opted out.
+            await coordinator.setTraceRecordingEnabled(isOptedIn)
             await coordinator.rehydrate(launchReason: launchReason)
             #if PK_DEV
                 // Field-test hook, DEV only. See `startDrivingSessionForFieldTest`.
@@ -207,12 +211,17 @@ final class DetectionRuntime {
         if enabled {
             requestNextLocationPermission()
             startMonitoringIfPermitted()
-            Task { await exportDiagnostics() }
+            Task { [weak self, coordinator] in
+                await coordinator.setTraceRecordingEnabled(true)
+                await self?.exportDiagnostics()
+            }
         } else {
             monitor.stopMonitoring()
-            // The bounded session must not outlive the opt-in that authorized it.
+            // Neither the bounded session nor the open trace may outlive the opt-in that
+            // authorized them (docs/05 §9).
             Task { [weak self, coordinator] in
                 await coordinator.stopDrivingSessionForOptOut()
+                await coordinator.setTraceRecordingEnabled(false)
                 await self?.exportDiagnostics()
             }
         }
