@@ -100,3 +100,61 @@ JSON fixture schema example:
 ```
 
 Both projects must run equivalent fixture suite in CI.
+
+## 9. Trace Recording
+
+필드 데이터를 수집하는 유일한 경로다. 실주행을 20회 반복하는 대신, **평소 이동을
+자동으로 기록**해 fixture로 굳힌다. 버스·지하철·택시 negative 케이스는 차 없이
+모을 수 있고, 조수석 탑승도 유효한 세션이다.
+
+### 두 포맷을 분리한다
+- **trace**: 기기가 기록하는 원본. 절대 시각, 세션 메타데이터, 사람이 붙인 라벨 포함
+- **fixture**: §8의 parity 계약. 상대 시각과 `expected`만. 최소로 유지한다
+
+trace를 fixture로 **변환**한다. 반대는 없다. 기록 메타데이터가 parity 계약을
+오염시키면 안 되고, fixture로 먼저 기록하면 정보를 잃는다.
+
+### trace 스키마
+```json
+{
+  "schemaVersion": 1,
+  "sessionId": "uuid",
+  "platform": "ios" | "android",
+  "deviceModel": "iPhone15,3",
+  "osVersion": "26.6",
+  "appVersion": "0.1.0 (12)",
+  "startedAt": 1789530905483,
+  "endedAt": 1789531049990,
+  "label": {
+    "mode": "car" | "bus" | "subway" | "taxi" | "walk" | "still" | "unknown",
+    "parked": true | false | null,
+    "note": "지하 3층, 진입 후 GPS 소실"
+  },
+  "events": [
+    {"type":"vehicle_enter","atMillis":1789530905483,"confidence":"high"},
+    {"type":"location","atMillis":1789530935483,"accuracy":8.0,"speed":9.2,"distanceFromPreviousM":41.0},
+    {"type":"location_quality_degraded","atMillis":1789531000000,"fromBucket":"good","toBucket":"poor"},
+    {"type":"vehicle_exit","atMillis":1789531045483,"confidence":"medium"},
+    {"type":"walking_enter","atMillis":1789531049831,"confidence":"high"}
+  ]
+}
+```
+
+### 규칙
+- **좌표 금지.** `type`/`atMillis`/`accuracy`/`speed`/`distanceFromPreviousM`/
+  `confidence`/버킷만 쓴다. §8 fixture 어휘가 이미 좌표를 갖지 않으므로 구조적으로
+  안전하다. 위도·경도 필드를 추가하는 순간 이 파일은 주차 위치 기록이 된다
+- **이벤트 타입은 §2 정규화 이벤트와 §8 fixture 어휘를 그대로 쓴다.** 플랫폼 SDK
+  enum을 노출하지 않는다
+- `label`은 기기가 알 수 없다. 사람이 앱에서 붙인다. 없으면 `unknown`
+- **크기 제한.** 롤링 상한을 두고 오래된 세션부터 버린다. 하루 종일 켜둬도
+  저장소를 채우지 않아야 한다
+- 회수 경로는 진단 파일과 동일하다 — iOS `devicectl copy`, Android `run-as`.
+  sudo/root 불필요
+
+### 변환
+`trace → platform-tests/<name>.json`:
+- `atMillis`를 첫 이벤트 기준 상대 초(`t`)로 환산
+- `label`을 근거로 `expected`를 채우되, **사람이 확인하기 전에는 TODO로 남긴다.**
+  기록이 곧 정답은 아니다 — 엔진이 무엇을 해야 했는지는 판단이 필요하다
+- `initialState`는 세션 시작 시점의 상태
