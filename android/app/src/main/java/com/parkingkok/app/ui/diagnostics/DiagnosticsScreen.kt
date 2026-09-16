@@ -29,6 +29,8 @@ import com.parkingkok.app.R
 import com.parkingkok.app.detection.RegistrationStatus
 import com.parkingkok.app.domain.detection.DetectionCheckpoint
 import com.parkingkok.app.domain.detection.MotionDomainEvent
+import com.parkingkok.app.domain.location.LocationSessionMode
+import com.parkingkok.app.domain.location.LocationSessionState
 import com.parkingkok.app.theme.ParkingkokTheme
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -38,142 +40,277 @@ import java.util.Locale
  * P0 instrumentation screen, not product UI
  * (CLAUDE.md Development Order: UI is not completed first).
  *
- * Shows permission state, registration state, the persisted checkpoint, and the received
- * transition log so real-device behaviour — especially Samsung's delivery delays, see
- * docs/04_ANDROID_IMPLEMENTATION.md §20 — is observable without a debugger.
+ * Shows permission state, registration state, the bounded location session, the persisted
+ * checkpoint, and the received transition log so real-device behaviour — especially
+ * Samsung's delivery delays, see docs/04_ANDROID_IMPLEMENTATION.md §20 — is observable
+ * without a debugger.
  *
  * It deliberately shows diagnostic state instead of nagging the user to disable battery
- * optimisation, which §20 rules out.
+ * optimisation, which §20 rules out. No coordinate is rendered anywhere on it.
  */
 @Composable
 fun DiagnosticsScreen(
     state: DiagnosticsUiState,
     onDetectionEnabledChange: (Boolean) -> Unit,
     onPermissionResult: () -> Unit,
+    onCaptureModeChange: (LocationSessionMode) -> Unit,
+    onExportDiagnostics: () -> Unit,
     onClearEvents: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission(),
-        // Denial is not an app failure: manual parking stays available either way.
-        onResult = { onPermissionResult() },
-    )
-
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        Column(
+        LazyColumn(
             modifier = Modifier.fillMaxSize().safeDrawingPadding().padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(
-                text = stringResource(R.string.diagnostics_title),
-                style = MaterialTheme.typography.headlineSmall,
-            )
-
-            DiagnosticsCard(title = stringResource(R.string.diagnostics_permission_title)) {
-                LabelledValue(
-                    stringResource(R.string.diagnostics_permission_activity_recognition),
-                    stringResource(
-                        if (state.permissionGranted) R.string.diagnostics_granted else R.string.diagnostics_denied,
-                    ),
-                )
-                if (!state.permissionGranted) {
-                    Text(
-                        text = stringResource(R.string.diagnostics_permission_optional_note),
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    OutlinedButton(
-                        onClick = { permissionLauncher.launch(Manifest.permission.ACTIVITY_RECOGNITION) },
-                    ) {
-                        Text(stringResource(R.string.diagnostics_request_permission))
-                    }
-                }
-            }
-
-            DiagnosticsCard(title = stringResource(R.string.diagnostics_registration_title)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(stringResource(R.string.diagnostics_smart_detection))
-                    Switch(checked = state.detectionEnabled, onCheckedChange = onDetectionEnabledChange)
-                }
-                LabelledValue(
-                    stringResource(R.string.diagnostics_registration_state),
-                    state.registrationStatus.describe(),
+            item {
+                Text(
+                    text = stringResource(R.string.diagnostics_title),
+                    style = MaterialTheme.typography.headlineSmall,
                 )
             }
+            item { PermissionsCard(state.permissions, onPermissionResult) }
+            item { RegistrationCard(state, onDetectionEnabledChange) }
+            item { SessionCard(state.sessionState, onCaptureModeChange) }
+            item { CheckpointCard(state.checkpoint) }
+            item { ExportCard(state, onExportDiagnostics) }
+            item { EventLogHeader(state.events.size, onClearEvents) }
+            if (state.events.isEmpty()) {
+                item { Text(stringResource(R.string.diagnostics_events_empty)) }
+            } else {
+                items(state.events) { event -> EventRow(event) }
+            }
+        }
+    }
+}
 
-            DiagnosticsCard(title = stringResource(R.string.diagnostics_checkpoint_title)) {
-                val checkpoint = state.checkpoint
-                if (checkpoint == null) {
-                    Text(stringResource(R.string.diagnostics_checkpoint_absent))
-                } else {
-                    LabelledValue(
-                        stringResource(R.string.diagnostics_checkpoint_state),
-                        checkpoint.state.name,
-                    )
-                    LabelledValue(
-                        stringResource(R.string.diagnostics_checkpoint_revision),
-                        checkpoint.revision.toString(),
-                    )
-                    LabelledValue(
-                        stringResource(R.string.diagnostics_checkpoint_last_automotive),
-                        checkpoint.lastAutomotiveAtMillis.formatTime(),
-                    )
-                    // Coordinates are never rendered — presence only.
-                    LabelledValue(
-                        stringResource(R.string.diagnostics_checkpoint_reliable_location),
-                        stringResource(
-                            if (checkpoint.lastReliableLocation == null) {
-                                R.string.diagnostics_absent
-                            } else {
-                                R.string.diagnostics_present
-                            },
+/**
+ * The staged ladder from docs/04_ANDROID_IMPLEMENTATION.md §19: motion, then foreground
+ * location, then background location — each only once the previous one is granted, and
+ * never all at onboarding start. Denial is not an app failure at any rung.
+ */
+@Composable
+private fun PermissionsCard(permissions: DiagnosticsPermissions, onPermissionResult: () -> Unit) {
+    val singleLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+        onResult = { onPermissionResult() },
+    )
+    val multipleLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions(),
+        onResult = { onPermissionResult() },
+    )
+
+    DiagnosticsCard(title = stringResource(R.string.diagnostics_permission_title)) {
+        LabelledValue(
+            stringResource(R.string.diagnostics_permission_activity_recognition),
+            grantedLabel(permissions.activityRecognitionGranted),
+        )
+        LabelledValue(
+            stringResource(R.string.diagnostics_permission_location_foreground),
+            grantedLabel(permissions.foregroundLocationGranted),
+        )
+        LabelledValue(
+            stringResource(R.string.diagnostics_permission_location_background),
+            grantedLabel(permissions.backgroundLocationGranted),
+        )
+        Text(
+            text = stringResource(R.string.diagnostics_permission_optional_note),
+            style = MaterialTheme.typography.bodySmall,
+        )
+
+        if (!permissions.activityRecognitionGranted) {
+            OutlinedButton(onClick = { singleLauncher.launch(Manifest.permission.ACTIVITY_RECOGNITION) }) {
+                Text(stringResource(R.string.diagnostics_request_permission))
+            }
+        }
+        if (!permissions.foregroundLocationGranted) {
+            OutlinedButton(
+                onClick = {
+                    multipleLauncher.launch(
+                        arrayOf(
+                            Manifest.permission.ACCESS_FINE_LOCATION,
+                            Manifest.permission.ACCESS_COARSE_LOCATION,
                         ),
                     )
-                }
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
+                },
             ) {
-                Text(
-                    text = stringResource(R.string.diagnostics_events_title, state.events.size),
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                OutlinedButton(onClick = onClearEvents) {
-                    Text(stringResource(R.string.diagnostics_clear))
-                }
+                Text(stringResource(R.string.diagnostics_request_location_foreground))
             }
-            EventLog(events = state.events, modifier = Modifier.fillMaxWidth())
+        } else if (!permissions.backgroundLocationGranted) {
+            // Android only offers "Allow all the time" as a separate prompt, and only
+            // after foreground location is already granted (§3).
+            OutlinedButton(
+                onClick = { singleLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION) },
+            ) {
+                Text(stringResource(R.string.diagnostics_request_location_background))
+            }
+            Text(
+                text = stringResource(R.string.diagnostics_permission_background_note),
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
     }
 }
 
 @Composable
-private fun EventLog(events: List<MotionDomainEvent>, modifier: Modifier = Modifier) {
-    if (events.isEmpty()) {
-        Text(stringResource(R.string.diagnostics_events_empty))
-        return
+private fun RegistrationCard(state: DiagnosticsUiState, onDetectionEnabledChange: (Boolean) -> Unit) {
+    DiagnosticsCard(title = stringResource(R.string.diagnostics_registration_title)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(stringResource(R.string.diagnostics_smart_detection))
+            Switch(checked = state.detectionEnabled, onCheckedChange = onDetectionEnabledChange)
+        }
+        LabelledValue(
+            stringResource(R.string.diagnostics_registration_state),
+            state.registrationStatus.describe(),
+        )
     }
-    LazyColumn(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        items(events) { event ->
-            Column {
-                Text(text = event.kind.wire, style = MaterialTheme.typography.bodyMedium)
-                Text(
-                    text = stringResource(
-                        R.string.diagnostics_event_detail,
-                        event.atMillis.formatTime(),
-                        event.receivedAtMillis - event.atMillis,
-                    ),
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                HorizontalDivider()
+}
+
+/**
+ * The bounded Fused Location session. The two numbers to watch on a real drive are the
+ * deadline — proof the session is bounded — and the cached-fix drop count, which is how a
+ * mis-set freshness threshold shows itself (docs/05_PARKING_DETECTION_ENGINE.md §5).
+ */
+@Composable
+private fun SessionCard(session: LocationSessionState, onCaptureModeChange: (LocationSessionMode) -> Unit) {
+    DiagnosticsCard(title = stringResource(R.string.diagnostics_session_title)) {
+        LabelledValue(stringResource(R.string.diagnostics_session_mode), session.mode.name)
+        LabelledValue(
+            stringResource(R.string.diagnostics_session_deadline),
+            session.record?.hardDeadlineAtMillis.formatTime(),
+        )
+        LabelledValue(
+            stringResource(R.string.diagnostics_session_expires),
+            session.record?.registrationExpiresAtMillis.formatTime(),
+        )
+        LabelledValue(
+            stringResource(R.string.diagnostics_session_deliveries),
+            "${session.counters.deliveryCount} / ${session.counters.sampleCount}",
+        )
+        LabelledValue(
+            stringResource(R.string.diagnostics_session_admitted),
+            session.counters.admittedCount.toString(),
+        )
+        LabelledValue(
+            stringResource(R.string.diagnostics_session_cached_drops),
+            "${session.counters.cachedFixDropCount} (${session.counters.lastCachedFixAgeMillis ?: "—"} ms)",
+        )
+        LabelledValue(
+            stringResource(R.string.diagnostics_session_other_drops),
+            "${session.counters.staleDropCount}/${session.counters.poorAccuracyDropCount}/" +
+                "${session.counters.notNewerDropCount}",
+        )
+        LabelledValue(
+            stringResource(R.string.diagnostics_session_driving_confirmed),
+            if (session.drivingConfirmed) {
+                session.drivingReasonCodes.joinToString(", ").ifEmpty { "true" }
+            } else {
+                stringResource(R.string.diagnostics_absent)
+            },
+        )
+        session.lastStopReason?.let {
+            LabelledValue(stringResource(R.string.diagnostics_session_stop_reason), it.name)
+        }
+        session.lastFailure?.let {
+            LabelledValue(stringResource(R.string.diagnostics_session_failure), it)
+        }
+
+        // Manual capture, so the no-foreground-service path can be exercised on a desk.
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { onCaptureModeChange(LocationSessionMode.DRIVING) }) {
+                Text(stringResource(R.string.diagnostics_session_start))
+            }
+            OutlinedButton(onClick = { onCaptureModeChange(LocationSessionMode.IDLE) }) {
+                Text(stringResource(R.string.diagnostics_session_stop))
             }
         }
+    }
+}
+
+@Composable
+private fun CheckpointCard(checkpoint: DetectionCheckpoint?) {
+    DiagnosticsCard(title = stringResource(R.string.diagnostics_checkpoint_title)) {
+        if (checkpoint == null) {
+            Text(stringResource(R.string.diagnostics_checkpoint_absent))
+            return@DiagnosticsCard
+        }
+        LabelledValue(stringResource(R.string.diagnostics_checkpoint_state), checkpoint.state.name)
+        LabelledValue(
+            stringResource(R.string.diagnostics_checkpoint_revision),
+            checkpoint.revision.toString(),
+        )
+        LabelledValue(
+            stringResource(R.string.diagnostics_checkpoint_last_automotive),
+            checkpoint.lastAutomotiveAtMillis.formatTime(),
+        )
+        LabelledValue(
+            stringResource(R.string.diagnostics_checkpoint_distance),
+            "%.0f m".format(checkpoint.travelDistanceEstimateMeters),
+        )
+        // Coordinates are never rendered — presence, freshness, and accuracy only.
+        LabelledValue(
+            stringResource(R.string.diagnostics_checkpoint_reliable_location),
+            checkpoint.lastReliableLocation?.let {
+                "${it.capturedAtMillis.formatTime()} · ${it.horizontalAccuracyM} m"
+            } ?: stringResource(R.string.diagnostics_absent),
+        )
+    }
+}
+
+@Composable
+private fun ExportCard(state: DiagnosticsUiState, onExportDiagnostics: () -> Unit) {
+    DiagnosticsCard(title = stringResource(R.string.diagnostics_export_title)) {
+        Text(
+            text = stringResource(R.string.diagnostics_export_path),
+            style = MaterialTheme.typography.bodySmall,
+        )
+        val status = when {
+            state.lastExportFailure != null ->
+                stringResource(R.string.diagnostics_export_failed, state.lastExportFailure)
+            state.lastExportSucceeded -> stringResource(R.string.diagnostics_export_ok)
+            else -> stringResource(R.string.diagnostics_registration_unknown)
+        }
+        LabelledValue(stringResource(R.string.diagnostics_registration_state), status)
+        OutlinedButton(onClick = onExportDiagnostics) {
+            Text(stringResource(R.string.diagnostics_export_now))
+        }
+    }
+}
+
+@Composable
+private fun EventLogHeader(count: Int, onClearEvents: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = stringResource(R.string.diagnostics_events_title, count),
+            style = MaterialTheme.typography.titleMedium,
+        )
+        OutlinedButton(onClick = onClearEvents) {
+            Text(stringResource(R.string.diagnostics_clear))
+        }
+    }
+}
+
+@Composable
+private fun EventRow(event: MotionDomainEvent) {
+    Column {
+        Text(text = event.kind.wire, style = MaterialTheme.typography.bodyMedium)
+        Text(
+            text = stringResource(
+                R.string.diagnostics_event_detail,
+                event.atMillis.formatTime(),
+                event.receivedAtMillis - event.atMillis,
+            ),
+            style = MaterialTheme.typography.bodySmall,
+        )
+        HorizontalDivider()
     }
 }
 
@@ -199,6 +336,10 @@ private fun LabelledValue(label: String, value: String) {
 }
 
 @Composable
+private fun grantedLabel(granted: Boolean): String =
+    stringResource(if (granted) R.string.diagnostics_granted else R.string.diagnostics_denied)
+
+@Composable
 private fun RegistrationStatus.describe(): String = when (this) {
     RegistrationStatus.Unknown -> stringResource(R.string.diagnostics_registration_unknown)
     RegistrationStatus.Disabled -> stringResource(R.string.diagnostics_registration_disabled)
@@ -219,13 +360,18 @@ private fun DiagnosticsScreenPreview() {
     ParkingkokTheme {
         DiagnosticsScreen(
             state = DiagnosticsUiState(
-                permissionGranted = true,
+                permissions = DiagnosticsPermissions(
+                    activityRecognitionGranted = true,
+                    foregroundLocationGranted = true,
+                ),
                 detectionEnabled = true,
                 registrationStatus = RegistrationStatus.Active(1, 0L),
                 checkpoint = DetectionCheckpoint.initial(0L),
             ),
             onDetectionEnabledChange = {},
             onPermissionResult = {},
+            onCaptureModeChange = {},
+            onExportDiagnostics = {},
             onClearEvents = {},
         )
     }

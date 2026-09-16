@@ -50,6 +50,7 @@ class ActivityTransitionReceiver : BroadcastReceiver() {
         container.applicationScope.launch {
             try {
                 container.transitionEventIngestor.ingest(transitions)
+                container.diagnosticsExporter.export()
             } finally {
                 pendingResult.finish()
             }

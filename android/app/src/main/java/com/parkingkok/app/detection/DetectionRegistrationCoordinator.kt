@@ -6,6 +6,9 @@ import com.parkingkok.app.data.DetectionStateStore
 import com.parkingkok.app.domain.registration.ReconcileAction
 import com.parkingkok.app.domain.registration.RegistrationReconciler
 import com.parkingkok.app.domain.registration.TransitionRegistrationSpec
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -36,18 +39,25 @@ class DetectionRegistrationCoordinator(
 
     private val mutex = Mutex()
 
+    private val mutableStatus = MutableStateFlow<RegistrationStatus>(RegistrationStatus.Unknown)
+
+    /** Last reconciliation result. Read by the diagnostics export and the P0 screen. */
+    val status: StateFlow<RegistrationStatus> = mutableStatus.asStateFlow()
+
     /**
      * Forgets the recorded registration, then reconciles.
      *
      * Use after reboot or app update: the system-side subscription is gone even though
      * our record survives, so the record must not be trusted as proof of registration.
      */
-    suspend fun reconcileAfterSystemReset(): RegistrationStatus {
+    suspend fun reconcileAfterSystemReset(): RegistrationStatus = mutex.withLock {
         store.clearRegistrationRecord()
-        return reconcile()
+        reconcileLocked()
     }
 
-    suspend fun reconcile(): RegistrationStatus = mutex.withLock {
+    suspend fun reconcile(): RegistrationStatus = mutex.withLock { reconcileLocked() }
+
+    private suspend fun reconcileLocked(): RegistrationStatus {
         val desiredEnabled = store.readDesiredEnabledOnce()
         val record = store.readRegistrationRecordOnce()
         val action = RegistrationReconciler.decide(
@@ -58,7 +68,7 @@ class DetectionRegistrationCoordinator(
         )
         Log.i(TAG, "reconcile desired=$desiredEnabled recorded=${record?.specVersion} -> $action")
 
-        when (action) {
+        return when (action) {
             ReconcileAction.NONE ->
                 if (record == null) {
                     RegistrationStatus.Disabled
@@ -88,12 +98,12 @@ class DetectionRegistrationCoordinator(
                     RegistrationStatus.Active(TransitionRegistrationSpec.VERSION, registeredAt)
                 }
             }
-        }
+        }.also { mutableStatus.value = it }
     }
 
-    suspend fun setDetectionEnabled(enabled: Boolean): RegistrationStatus {
+    suspend fun setDetectionEnabled(enabled: Boolean): RegistrationStatus = mutex.withLock {
         store.setDesiredEnabled(enabled)
-        return reconcile()
+        reconcileLocked()
     }
 
     private companion object {

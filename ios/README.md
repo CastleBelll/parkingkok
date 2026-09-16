@@ -99,6 +99,54 @@ Run each step and record what the screen showed.
 8. **Permission revoked mid-trip.** Downgrade Always to When-In-Use in Settings while
    Smart Detection stays on. Monitoring should read `OFF` and the app must remain usable.
 
+## M0A-2 field-test checklist — bounded driving session
+
+The bounded session (`CLLocationUpdate.liveUpdates(.automotiveNavigation)` +
+`CLServiceSession` + `CLBackgroundActivitySession`) needs the `location` background mode
+and cannot run in the simulator at all. Everything below is device-only, and steps 3–6
+need a real drive.
+
+Recover the evidence with the diagnostics file — no `sudo`, no `log collect`:
+
+```sh
+xcrun devicectl device copy from --device <device-udid> \
+  --domain-type appDataContainer --domain-identifier com.parkingkok.app.dev --user mobile \
+  --source "Library/Application Support/Detection/diagnostics.json" --destination ./diagnostics.json
+```
+
+1. **Plumbing, without a car.** DEV builds honour a launch hook that opens a session
+   immediately, so a failed drive means a detection problem rather than a wiring problem:
+
+   ```sh
+   xcrun devicectl device process launch --device <device-udid> \
+     --environment-variables '{"PK_FORCE_DRIVING_SESSION":"1"}' com.parkingkok.app.dev
+   ```
+
+   After ~30 s the report must show `isCapturingDrivingLocation: true`,
+   `state: DRIVING_CANDIDATE`, a rising `drivingFixCount`, and
+   `reliableLocationUpdateCount > 0`. A stationary phone must **not** confirm:
+   `drivingMovingSampleCount` stays 0 and `drivingConfirmedAt` stays absent.
+2. **The session ends by itself.** Leave that forced session alone for
+   `DrivingSessionTimeoutPolicy.vehicleEvidenceTimeout` (10 min). The report must flip to
+   `isCapturingDrivingLocation: false` with
+   `lastDrivingSessionEndReason: vehicleEvidenceExpired`. A session still capturing here
+   is the leak the §19 battery gate exists to catch.
+3. **A real drive opens a session.** Drive with the app killed. `drivingSessionCount`
+   must reach 1 and `lastVehicleEvidenceAt` must be populated. If it is not, read
+   `lastVehicleEvidenceConfidence` — Core Motion reporting only `low` automotive is a
+   tuning problem, not a wiring one.
+4. **Driving confirmation.** Past 120 s or 800 m, `drivingConfirmedAt` must be set and
+   `state` must read `DRIVING`. Confirm it did **not** fire on the first fix.
+5. **Parking transition.** Park and walk away. `lastDrivingSessionEndReason` must read
+   `walkingDetected`, `state` must return to `IDLE`, and `hasReliableLocation` must be
+   true with `reliableLocationAccuracy` <= 35 m captured within seconds of stopping.
+6. **Process death mid-drive.** Force-quit during a drive, keep driving.
+   `drivingSessionResumedFromCheckpoint` must be true on the next wake — that is the
+   "sessions must be recreated on relevant background relaunch" rule from docs/04 §3.
+7. **Privacy.** Every retrieved `diagnostics.json` must contain no coordinate. `grep -i
+   'latitude\|longitude'` returns nothing, and no number in the file falls in the
+   device's lat/lon range.
+
 ## Lint
 
 ```sh

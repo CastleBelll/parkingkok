@@ -10,6 +10,19 @@
          re-register it (§6). -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!-- Bounded Fused Location capture around a confirmed driving window
+         (docs/04_ANDROID_IMPLEMENTATION.md §2, §19). Coarse is declared alongside fine
+         because the system offers the user an approximate-only choice, and a coarse grant
+         still supports the DRIVING_CANDIDATE confirmation window. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
+    <!-- Without this the OS stops delivering location to the PendingIntent as soon as the
+         app leaves the foreground — which is every real drive (§3). It is requested
+         separately and only after the user opts into Smart Detection, never at first
+         launch, and denial is not an app failure. -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+
     <application
         android:name=".ParkingkokApplication"
         android:allowBackup="true"
@@ -34,6 +47,12 @@
              to be exported to be delivered. -->
         <receiver
             android:name=".detection.ActivityTransitionReceiver"
+            android:exported="false" />
+
+        <!-- Target of the Fused Location PendingIntent. Not exported, for the same
+             reason as the transition receiver. -->
+        <receiver
+            android:name=".detection.LocationUpdateReceiver"
             android:exported="false" />
 
         <!-- Must be exported to receive the system broadcasts. -->

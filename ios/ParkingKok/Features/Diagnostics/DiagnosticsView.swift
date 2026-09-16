@@ -23,6 +23,7 @@ struct DiagnosticsView: View {
             buildSection
             permissionSection
             checkpointSection
+            drivingSessionSection
             motionSection
         }
         .navigationTitle("감지 진단")
@@ -89,10 +90,12 @@ struct DiagnosticsView: View {
                 LabeledContent("마지막 위치 시각", value: Self.optionalTime(checkpoint.lastLocationAt))
                 LabeledContent("이동 거리 추정", value: "\(Int(checkpoint.travelDistanceEstimate)) m")
                 LabeledContent("candidateId", value: checkpoint.candidateId?.uuidString ?? "없음")
-                // Always "없음" in M0A-1: selection is M0A-2.
+                // Presence and quality only — never the place (docs/00 Privacy).
                 LabeledContent(
                     "lastReliableLocation",
-                    value: checkpoint.lastReliableLocation.map { "정확도 \(Int($0.horizontalAccuracy))m" } ?? "없음 (M0A-2)"
+                    value: checkpoint.lastReliableLocation.map {
+                        "정확도 \(Int($0.horizontalAccuracy))m · \(Self.time($0.capturedAt))"
+                    } ?? "없음"
                 )
             }
 
@@ -122,6 +125,41 @@ struct DiagnosticsView: View {
             }
             if let failure = model.snapshot.locationFailure {
                 LabeledContent("위치 오류", value: failure).foregroundStyle(.orange)
+            }
+        }
+    }
+
+    private var drivingSessionSection: some View {
+        Section("주행 세션 (bounded)") {
+            LabeledContent("캡처 중", value: model.snapshot.isCapturingDrivingLocation ? "ON" : "OFF")
+            LabeledContent("세션 시작", value: Self.optionalTime(model.snapshot.drivingSessionStartedAt))
+            LabeledContent("세션 수", value: "\(model.snapshot.drivingSessionCount)회")
+            if model.snapshot.drivingSessionResumedFromCheckpoint {
+                Text("체크포인트에서 세션을 재생성했습니다.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            LabeledContent("주행 확정", value: Self.optionalTime(model.snapshot.drivingConfirmedAt))
+            LabeledContent("fix 수", value: "\(model.snapshot.drivingFixCount)")
+            LabeledContent("이동 샘플", value: "\(model.snapshot.drivingMovingSampleCount)")
+            LabeledContent("누적 거리", value: "\(Int(model.snapshot.drivingDistanceMeters)) m")
+            LabeledContent("이상치 제거", value: "\(model.snapshot.drivingOutlierDropCount)")
+            LabeledContent("reliable 채택", value: "\(model.snapshot.reliableLocationUpdateCount)회")
+            LabeledContent("reliable 거절", value: "\(model.snapshot.reliableLocationRejectCount)회")
+            if let rejection = model.snapshot.lastReliableLocationRejection {
+                LabeledContent("마지막 거절 사유", value: rejection.rawValue)
+            }
+            if let vehicleAt = model.snapshot.lastVehicleEvidenceAt {
+                LabeledContent(
+                    "마지막 automotive 근거",
+                    value: "\(Self.time(vehicleAt)) · \(model.snapshot.lastVehicleEvidenceConfidence?.rawValue ?? "-")"
+                )
+            }
+            if let reason = model.snapshot.lastDrivingSessionEndReason {
+                LabeledContent("세션 종료 사유", value: reason.rawValue)
+            }
+            if let failure = model.snapshot.captureFailure {
+                LabeledContent("캡처 오류", value: failure).foregroundStyle(.red)
             }
         }
     }

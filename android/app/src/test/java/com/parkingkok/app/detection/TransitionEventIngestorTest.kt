@@ -18,7 +18,12 @@ class TransitionEventIngestorTest {
 
     private val clock = MutableTestClock()
     private val store = DetectionStateStore(InMemoryPreferencesDataStore())
-    private val ingestor = TransitionEventIngestor(store, clock)
+    private val locationRegistrar = FakeLocationSessionRegistrar()
+    private val ingestor = TransitionEventIngestor(
+        store,
+        clock,
+        FusedLocationSessionController(store, locationRegistrar, clock),
+    )
 
     @Test
     fun firstEventEver_createsTheCheckpoint() = runTest {

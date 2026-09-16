@@ -12,6 +12,7 @@ final class DetectionRuntime {
     static let shared = DetectionRuntime()
 
     private let monitor: SignificantLocationMonitor
+    private let locationCapture: LiveDrivingLocationCapture
     private let coordinator: BackgroundCoordinator
     private let preference: SmartDetectionPreference
 
@@ -28,12 +29,14 @@ final class DetectionRuntime {
 
     init(
         monitor: SignificantLocationMonitor = SignificantLocationMonitor(),
+        locationCapture: LiveDrivingLocationCapture = LiveDrivingLocationCapture(),
         motionHistory: any MotionHistoryProviding = CoreMotionHistoryProvider(),
         preference: SmartDetectionPreference = SmartDetectionPreference(),
         checkpointStore: (any DetectionCheckpointStoring)? = nil,
         diagnosticsStore: (any DiagnosticsReportStoring)? = nil
     ) {
         self.monitor = monitor
+        self.locationCapture = locationCapture
         self.motionHistory = motionHistory
         self.preference = preference
 
@@ -62,7 +65,11 @@ final class DetectionRuntime {
         self.diagnosticsStore = diagnosticsStore
             ?? (try? FileDiagnosticsReportStore(fileURL: FileDiagnosticsReportStore.defaultFileURL()))
 
-        coordinator = BackgroundCoordinator(checkpointStore: store, motionHistory: motionHistory)
+        coordinator = BackgroundCoordinator(
+            checkpointStore: store,
+            motionHistory: motionHistory,
+            locationCapture: locationCapture
+        )
         locationAuthorization = monitor.authorization
         motionAuthorization = motionHistory.authorization
         isMotionHistoryAvailable = motionHistory.isHistoryAvailable
@@ -76,6 +83,10 @@ final class DetectionRuntime {
         monitor.isMonitoring
     }
 
+    var isCapturingDrivingLocation: Bool {
+        locationCapture.isCapturing
+    }
+
     /// Called from `application(_:didFinishLaunchingWithOptions:)`.
     ///
     /// Everything before the `Task` is synchronous on purpose: docs/04 §3 requires the
@@ -83,6 +94,7 @@ final class DetectionRuntime {
     /// launch call returns, or the event that woke us is lost.
     func bootstrap(launchReason: LaunchReason) {
         monitor.delegate = self
+        locationCapture.delegate = self
         locationAuthorization = monitor.authorization
         startMonitoringIfPermitted()
         hasBootstrapped = true
@@ -91,9 +103,27 @@ final class DetectionRuntime {
 
         Task { [weak self, coordinator] in
             await coordinator.rehydrate(launchReason: launchReason)
+            #if PK_DEV
+                // Field-test hook, DEV only. See `startDrivingSessionForFieldTest`.
+                if Self.isFieldTestDrivingSessionForced {
+                    await coordinator.startDrivingSessionForFieldTest()
+                }
+            #endif
             await self?.exportDiagnostics()
         }
     }
+
+    #if PK_DEV
+        /// Launch with `PK_FORCE_DRIVING_SESSION=1` to open a bounded session immediately:
+        ///
+        /// ```sh
+        /// xcrun devicectl device process launch --device <udid> \
+        ///   --environment-variables '{"PK_FORCE_DRIVING_SESSION":"1"}' com.parkingkok.app.dev
+        /// ```
+        private static var isFieldTestDrivingSessionForced: Bool {
+            ProcessInfo.processInfo.environment["PK_FORCE_DRIVING_SESSION"] == "1"
+        }
+    #endif
 
     func snapshot() async -> RehydrationSnapshot {
         await coordinator.currentSnapshot()
@@ -165,10 +195,15 @@ final class DetectionRuntime {
         if enabled {
             requestNextLocationPermission()
             startMonitoringIfPermitted()
+            Task { await exportDiagnostics() }
         } else {
             monitor.stopMonitoring()
+            // The bounded session must not outlive the opt-in that authorized it.
+            Task { [weak self, coordinator] in
+                await coordinator.stopDrivingSessionForOptOut()
+                await self?.exportDiagnostics()
+            }
         }
-        Task { await exportDiagnostics() }
     }
 
     private func startMonitoringIfPermitted() {
@@ -202,6 +237,41 @@ extension DetectionRuntime: SignificantLocationMonitorDelegate {
     func monitorDidFail(_ description: String) {
         Task { [weak self, coordinator] in
             await coordinator.recordLocationFailure(description)
+            await self?.exportDiagnostics()
+        }
+    }
+}
+
+/// The bounded driving session's callbacks (docs/04_IOS_IMPLEMENTATION.md §3 DRIVING).
+///
+/// Every one of them hands straight to the coordinator: the fix has to be folded into the
+/// durable state under actor isolation, and docs/04 §7 forbids doing anything heavier on
+/// a background callback.
+extension DetectionRuntime: BoundedLocationCaptureDelegate {
+    func captureDidProduce(_ fix: LocationFix) {
+        Task { [weak self, coordinator] in
+            await coordinator.handleDrivingFix(fix)
+            await self?.exportDiagnostics()
+        }
+    }
+
+    func captureDidLoseAuthorization() {
+        Task { [weak self, coordinator] in
+            await coordinator.handleCaptureAuthorizationLost()
+            await self?.exportDiagnostics()
+        }
+    }
+
+    func captureDidFail(_ description: String) {
+        Task { [weak self, coordinator] in
+            await coordinator.handleCaptureFailure(description)
+            await self?.exportDiagnostics()
+        }
+    }
+
+    func captureWatchdogDidTick() {
+        Task { [weak self, coordinator] in
+            await coordinator.evaluateDrivingTimeouts()
             await self?.exportDiagnostics()
         }
     }
