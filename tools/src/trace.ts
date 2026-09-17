@@ -163,7 +163,30 @@ function parseEvent(value: unknown, path: string): TraceEvent {
   return event;
 }
 
-function parseEvents(value: unknown, path: string): TraceEvent[] {
+/**
+ * The ordering rule, on its own so `repair.ts` can hold its own output to it.
+ *
+ * A trace that fails this is a recorder defect or a clock adjustment mid-session, and
+ * saying so is the whole value of the check — `trace2fixture convert --repair` is the
+ * deliberate, reported exception, never a default.
+ */
+export function assertOrderedByTime(events: readonly TraceEvent[], path: string): void {
+  events.forEach((event, index) => {
+    const previous = events[index - 1];
+    if (previous !== undefined && event.atMillis < previous.atMillis) {
+      fail(
+        `${path}[${String(index)}].atMillis`,
+        `events must be ordered by time, but ${String(event.atMillis)} follows ` +
+          `${String(previous.atMillis)}. Out-of-order timestamps mean a recorder bug or a ` +
+          'clock adjustment mid-session; fix the recording rather than sorting it here. ' +
+          'A recording that cannot be made again can be rescued with `convert --repair`, ' +
+          'which reports every event it changes',
+      );
+    }
+  });
+}
+
+function parseEvents(value: unknown, path: string, options: ParseTraceOptions): TraceEvent[] {
   const raw = asArray(value, path);
   if (raw.length === 0) {
     fail(path, 'a trace with no events cannot be converted; there is nothing to time-base against');
@@ -177,22 +200,21 @@ function parseEvents(value: unknown, path: string): TraceEvent[] {
   }
 
   const events = raw.map((entry, index) => parseEvent(entry, `${path}[${String(index)}]`));
-  events.forEach((event, index) => {
-    const previous = events[index - 1];
-    if (previous !== undefined && event.atMillis < previous.atMillis) {
-      fail(
-        `${path}[${String(index)}].atMillis`,
-        `events must be ordered by time, but ${String(event.atMillis)} follows ` +
-          `${String(previous.atMillis)}. Out-of-order timestamps mean a recorder bug or a ` +
-          'clock adjustment mid-session; fix the recording rather than sorting it here',
-      );
-    }
-  });
+  if (options.allowOutOfOrder !== true) assertOrderedByTime(events, path);
   return events;
 }
 
+export interface ParseTraceOptions {
+  /**
+   * Let events run backwards, for a caller that is about to hand them to `repairTrace`.
+   * Off by default, and every other check still applies: this loosens the one rule the
+   * repair exists to restore, not the schema.
+   */
+  readonly allowOutOfOrder?: boolean;
+}
+
 /** Parses and validates an already-decoded trace document. */
-export function parseTrace(value: unknown, path = 'trace'): Trace {
+export function parseTrace(value: unknown, path = 'trace', options: ParseTraceOptions = {}): Trace {
   const object = asObject(value, path);
   allowOnlyKeys(object, path, TRACE_KEYS);
 
@@ -220,7 +242,7 @@ export function parseTrace(value: unknown, path = 'trace'): Trace {
     startedAt,
     endedAt,
     label: parseLabel(object['label'], `${path}.label`),
-    events: parseEvents(object['events'], `${path}.events`),
+    events: parseEvents(object['events'], `${path}.events`, options),
   };
 }
 
@@ -230,7 +252,11 @@ export function parseTrace(value: unknown, path = 'trace'): Trace {
  * The coordinate scan runs on the raw text first, so a banned field is reported as the
  * privacy violation it is rather than as a generic unknown key.
  */
-export function parseTraceText(text: string, path = 'trace'): Trace {
+export function parseTraceText(
+  text: string,
+  path = 'trace',
+  options: ParseTraceOptions = {},
+): Trace {
   assertNoCoordinate(text, path);
   let decoded: unknown;
   try {
@@ -240,5 +266,5 @@ export function parseTraceText(text: string, path = 'trace'): Trace {
       `${path}: not valid JSON (${error instanceof Error ? error.message : String(error)})`,
     );
   }
-  return parseTrace(decoded, path);
+  return parseTrace(decoded, path, options);
 }

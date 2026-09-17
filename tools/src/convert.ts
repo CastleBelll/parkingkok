@@ -14,10 +14,12 @@ import {
   TODO_STATUS,
   type DraftFixture,
   type FixtureEvent,
+  type FixtureRepair,
   type FixtureTodo,
   type ProposedExpectation,
 } from './fixture';
 import { assertNoCoordinate } from './privacy';
+import { isRepaired, type TraceRepair } from './repair';
 import { fail } from './schema';
 import type { Trace, TraceEvent, TraceLabel } from './trace';
 
@@ -34,6 +36,11 @@ export interface ConvertOptions {
   /** Fixture name. Falls back to the trace's session id. */
   readonly name?: string | undefined;
   readonly initialState?: DetectionState | undefined;
+  /**
+   * What `repairTrace` changed on the way in, recorded in `_todo` so the draft says it is
+   * a rescued recording. Omitted for an ordinary convert, which is most of them.
+   */
+  readonly repair?: TraceRepair | undefined;
 }
 
 /**
@@ -161,17 +168,42 @@ export function suggestExpectation(label: TraceLabel): Suggestion {
   };
 }
 
-function buildTodo(trace: Trace, assumedInitialState: boolean): FixtureTodo {
+/**
+ * The repair as the fixture records it, or `undefined` when there is nothing to record.
+ *
+ * Only the indices survive: they point back into the source trace, which is where a
+ * reviewer has to look anyway, and they cannot carry anything the §9 file did not.
+ */
+function toFixtureRepair(repair: TraceRepair | undefined): FixtureRepair | undefined {
+  if (repair === undefined || !isRepaired(repair)) return undefined;
+  return {
+    droppedReplayIndices: repair.droppedReplays.map((dropped) => dropped.index),
+    reorderedIndices: repair.movedEvents.map((moved) => moved.index),
+  };
+}
+
+function buildTodo(
+  trace: Trace,
+  assumedInitialState: boolean,
+  repair: TraceRepair | undefined,
+): FixtureTodo {
   const suggestion = suggestExpectation(trace.label);
   const assumption = assumedInitialState
     ? ` A trace carries no engine state, so initialState was assumed to be ` +
       `${DEFAULT_INITIAL_STATE}; correct it if the recording started mid-trip.`
     : '';
+  const repaired = toFixtureRepair(repair);
+  const rescue = repaired === undefined
+    ? ''
+    : ' This draft was converted with --repair: the recording contradicted itself and was ' +
+      'rescued rather than re-made. See `repair` for which source events were dropped or ' +
+      'reordered, and check them against the trace before trusting anything nearby.';
 
   return {
     status: TODO_STATUS,
     proposedExpected: suggestion.proposal,
-    rationale: `${suggestion.rationale}${assumption}`,
+    rationale: `${suggestion.rationale}${assumption}${rescue}`,
+    repair: repaired,
     source: {
       sessionId: trace.sessionId,
       platform: trace.platform,
@@ -203,7 +235,7 @@ export function convertTrace(trace: Trace, options: ConvertOptions = {}): DraftF
     name,
     initialState: options.initialState ?? DEFAULT_INITIAL_STATE,
     events: trace.events.map((event) => toFixtureEvent(event, first.atMillis)),
-    todo: buildTodo(trace, options.initialState === undefined),
+    todo: buildTodo(trace, options.initialState === undefined, options.repair),
   };
 }
 

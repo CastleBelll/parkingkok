@@ -126,6 +126,94 @@ describe('parseFixture', () => {
   });
 });
 
+describe('the repair provenance a rescued draft carries', () => {
+  function draft(repair: unknown): Record<string, unknown> {
+    const todo: Record<string, unknown> = {
+      status: 'needs_human_review',
+      proposedExpected: { candidate: false },
+      rationale: 'subway ride, rescued with --repair',
+      source: {
+        sessionId: 'x',
+        platform: 'ios',
+        labelMode: 'subway',
+        labelParked: false,
+        durationSeconds: 300,
+        eventCount: 4,
+      },
+    };
+    if (repair !== undefined) todo['repair'] = repair;
+    return { ...validFixture(), expected: null, _todo: todo };
+  }
+
+  it('accepts a draft that names the source events it dropped and moved', () => {
+    // Arrange
+    const document = draft({ droppedReplayIndices: [53, 54], reorderedIndices: [] });
+
+    // Act
+    const parsed = parseFixture(document, 'fixture', { allowDraft: true });
+
+    // Assert
+    assert.equal(parsed.kind, 'draft');
+    assert.deepEqual(parsed.todo.repair, { droppedReplayIndices: [53, 54], reorderedIndices: [] });
+  });
+
+  it('survives the round trip the converter writes it through', () => {
+    // Arrange
+    const document = parseFixture(
+      draft({ droppedReplayIndices: [53], reorderedIndices: [7] }),
+      'fixture',
+      { allowDraft: true },
+    );
+
+    // Act
+    const reparsed = parseFixtureText(formatFixture(document), 'round-trip', { allowDraft: true });
+
+    // Assert
+    assert.deepEqual(reparsed, document);
+  });
+
+  it('rejects a repair block that claims nothing was changed', () => {
+    // Arrange — provenance for a repair that did not happen is noise, not evidence.
+    const document = draft({ droppedReplayIndices: [], reorderedIndices: [] });
+
+    // Act / Assert
+    assert.throws(
+      () => parseFixture(document, 'fixture', { allowDraft: true }),
+      /changed nothing/,
+    );
+  });
+
+  it('rejects an index that could not point into a trace', () => {
+    // Arrange
+    const document = draft({ droppedReplayIndices: [-1], reorderedIndices: [] });
+
+    // Act / Assert
+    assert.throws(
+      () => parseFixture(document, 'fixture', { allowDraft: true }),
+      /non-negative integer/,
+    );
+  });
+
+  it('rejects an unknown key inside the repair block', () => {
+    // Arrange
+    const document = draft({ droppedReplayIndices: [1], reorderedIndices: [], latitude: 37.1 });
+
+    // Act / Assert
+    assert.throws(
+      () => parseFixture(document, 'fixture', { allowDraft: true }),
+      /unknown key/,
+    );
+  });
+
+  it('leaves the block off a draft that needed no rescue', () => {
+    // Arrange / Act
+    const parsed = parseFixture(draft(undefined), 'fixture', { allowDraft: true });
+
+    // Assert
+    assert.equal(parsed.kind === 'draft' ? parsed.todo.repair : 'not a draft', undefined);
+  });
+});
+
 describe('formatFixture', () => {
   it('round-trips through the parser unchanged', () => {
     // Arrange
