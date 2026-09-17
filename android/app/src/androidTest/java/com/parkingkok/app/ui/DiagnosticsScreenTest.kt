@@ -27,6 +27,7 @@ class DiagnosticsScreenTest {
                 onExportDiagnostics = {},
                 onClearEvents = {},
                 onTraceLabelChange = { _, _ -> },
+                onTraceSplit = { _, _ -> },
             )
         }
     }

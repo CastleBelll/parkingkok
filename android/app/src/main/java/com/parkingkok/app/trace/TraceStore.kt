@@ -30,6 +30,28 @@ interface TraceStore {
      * @return how many sessions were discarded.
      */
     fun prune(keepSessionId: String?): Int
+
+    /**
+     * Removes one session's file.
+     *
+     * Idempotent and never an error: the caller is on a path that must not be able to
+     * break a detection callback, and a file already gone is the wanted outcome.
+     *
+     * @return true when this call is the one that removed it, so a counter cannot move
+     *   twice for the same session.
+     */
+    fun delete(sessionId: String): Boolean
+
+    /**
+     * Swaps a closed session for the fragments a human cut it into
+     * (docs/05_CROSS_PLATFORM_DOMAIN_CONTRACT.md §9 "원본은 조각으로 대체된다").
+     *
+     * Openness is not this layer's to judge — which session is being appended to is
+     * recorded beside the detection state, so [TraceRecorder] checks it before calling.
+     *
+     * @return null on success, or a short, coordinate-free reason on failure.
+     */
+    fun replace(sessionId: String, fragments: List<TraceSession>): String?
 }
 
 /**
@@ -125,6 +147,29 @@ class FileTraceStore(
         }
         if (discarded > 0) Log.i(TAG, "trace rolling cap discarded $discarded session(s)")
         return discarded
+    }
+
+    override fun delete(sessionId: String): Boolean {
+        val file = fileFor(sessionId) ?: return false
+        return file.exists() && deleteQuietly(file)
+    }
+
+    /**
+     * Fragments first, parent second. A process death between the two leaves the events on
+     * disk twice, which a person can see and undo; the other order would lose a recorded
+     * trip outright, which nobody can.
+     *
+     * The rolling cap is re-applied by the caller rather than here, because one session
+     * became two and the eviction that follows has to be counted the same way every other
+     * eviction is.
+     */
+    override fun replace(sessionId: String, fragments: List<TraceSession>): String? {
+        if (read(sessionId) == null) return "NotFound"
+        fragments.forEach { fragment ->
+            val failure = write(fragment)
+            if (failure != null) return failure
+        }
+        return if (delete(sessionId)) null else "DeleteFailed"
     }
 
     private fun sessionFiles(): List<File> =

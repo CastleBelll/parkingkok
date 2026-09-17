@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -24,6 +25,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,9 +42,14 @@ import com.parkingkok.app.domain.detection.DetectionCheckpoint
 import com.parkingkok.app.domain.detection.MotionDomainEvent
 import com.parkingkok.app.domain.location.LocationSessionMode
 import com.parkingkok.app.domain.location.LocationSessionState
+import com.parkingkok.app.domain.trace.TraceEvent
+import com.parkingkok.app.domain.trace.TraceGapStats
 import com.parkingkok.app.domain.trace.TraceLabel
 import com.parkingkok.app.domain.trace.TraceMode
 import com.parkingkok.app.domain.trace.TraceSession
+import com.parkingkok.app.domain.trace.TraceSessionBoundaryPolicy
+import com.parkingkok.app.domain.trace.TraceSplitResult
+import com.parkingkok.app.domain.trace.TraceSummary
 import com.parkingkok.app.theme.ParkingkokTheme
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -69,11 +76,14 @@ fun DiagnosticsScreen(
     onExportDiagnostics: () -> Unit,
     onClearEvents: () -> Unit,
     onTraceLabelChange: (String, TraceLabel) -> Unit,
+    onTraceSplit: (String, Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // Which recorded session has its label controls open. Purely presentational, so it
-    // lives here rather than in the ViewModel.
+    // Which recorded session has its label controls open, and which has its event list
+    // open for cutting. Purely presentational, so both live here rather than in the
+    // ViewModel.
     var expandedTraceId by remember { mutableStateOf<String?>(null) }
+    var splittingTraceId by remember { mutableStateOf<String?>(null) }
 
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         LazyColumn(
@@ -92,6 +102,7 @@ fun DiagnosticsScreen(
             item { CheckpointCard(state.checkpoint) }
             item { ExportCard(state, onExportDiagnostics) }
             item { TraceHeader(state.traceSessions.size) }
+            item { TraceGapCard(state.traceSummary) }
             if (state.traceSessions.isEmpty()) {
                 item { Text(stringResource(R.string.diagnostics_trace_empty)) }
             } else {
@@ -99,11 +110,26 @@ fun DiagnosticsScreen(
                     TraceSessionCard(
                         session = session,
                         expanded = expandedTraceId == session.sessionId,
+                        isOpen = state.openTraceSessionId == session.sessionId,
+                        splitting = splittingTraceId == session.sessionId,
+                        splitRefusal = state.traceSplitRefusal.takeIf {
+                            splittingTraceId == session.sessionId
+                        },
                         onToggle = {
                             expandedTraceId =
                                 if (expandedTraceId == session.sessionId) null else session.sessionId
                         },
+                        onToggleSplit = {
+                            splittingTraceId =
+                                if (splittingTraceId == session.sessionId) null else session.sessionId
+                        },
                         onLabelChange = { onTraceLabelChange(session.sessionId, it) },
+                        onSplitAt = { index ->
+                            // The session this card shows is about to be replaced by two
+                            // others, so the list it belonged to is the thing to land back
+                            // on. A refused split leaves the list open, with the reason.
+                            onTraceSplit(session.sessionId, index)
+                        },
                     )
                 }
             }
@@ -329,8 +355,65 @@ private fun TraceHeader(count: Int) {
 }
 
 /**
+ * The §9 gap aggregate, kept in its own card because it answers a different question from
+ * the counters above it: not "is recording working" but "what should the 30-minute idle
+ * gap actually be?".
+ *
+ * **Nothing acts on it.** The threshold came from a single day of observation and does not
+ * move until these numbers have accumulated (§9 "이 값들이 모이기 전에는 30분을 바꾸지
+ * 않는다"). The measured count is shown first so the rest reads as a sample size.
+ */
+@Composable
+private fun TraceGapCard(summary: TraceSummary) {
+    DiagnosticsCard(title = stringResource(R.string.diagnostics_trace_gap_title)) {
+        LabelledValue(
+            stringResource(R.string.diagnostics_trace_gap_measured),
+            stringResource(
+                R.string.diagnostics_trace_gap_measured_value,
+                summary.measuredSessionCount,
+                summary.sessionCount,
+            ),
+        )
+        LabelledValue(
+            stringResource(R.string.diagnostics_trace_gap_max),
+            minutesLabel(summary.maxGapMillis),
+        )
+        LabelledValue(
+            stringResource(R.string.diagnostics_trace_gap_over10),
+            summary.sessionsOver10MinGapCount.toString(),
+        )
+        LabelledValue(
+            stringResource(R.string.diagnostics_trace_gap_over20),
+            summary.sessionsOver20MinGapCount.toString(),
+        )
+        // Both drop counters, never one total: the rolling cap climbing means the device
+        // is recording more than it can hold, while the non-viable count climbing means
+        // the boundary is manufacturing single-event sessions (§9 "조용히 버리지 마라").
+        LabelledValue(
+            stringResource(R.string.diagnostics_trace_drop_cap),
+            summary.discardedSessionCount.toString(),
+        )
+        LabelledValue(
+            stringResource(R.string.diagnostics_trace_drop_non_viable),
+            summary.nonViableDropCount.toString(),
+        )
+        LabelledValue(
+            stringResource(R.string.diagnostics_trace_unlabelled),
+            summary.unlabelledSessionCount.toString(),
+        )
+        Text(
+            text = stringResource(
+                R.string.diagnostics_trace_gap_note,
+                TraceSessionBoundaryPolicy.IDLE_GAP_MILLIS / MILLIS_PER_MINUTE,
+            ),
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
+}
+
+/**
  * One recorded session, with the label docs/05_CROSS_PLATFORM_DOMAIN_CONTRACT.md §9 leaves
- * to a person.
+ * to a person, and the cut §9 also leaves to one.
  *
  * Deliberately the smallest thing that makes a trace convertible: without a mode, the
  * converter cannot tell a bus ride from a drive, and the recording is evidence of nothing.
@@ -342,8 +425,13 @@ private fun TraceHeader(count: Int) {
 private fun TraceSessionCard(
     session: TraceSession,
     expanded: Boolean,
+    isOpen: Boolean,
+    splitting: Boolean,
+    splitRefusal: TraceSplitResult.Refusal?,
     onToggle: () -> Unit,
+    onToggleSplit: () -> Unit,
     onLabelChange: (TraceLabel) -> Unit,
+    onSplitAt: (Int) -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -363,6 +451,21 @@ private fun TraceSessionCard(
                 ),
                 style = MaterialTheme.typography.bodySmall,
             )
+            // The gap is on the row because it is the reason to open the split list at
+            // all: a session holding a 28-minute silence is one the boundary nearly cut
+            // and a person probably should.
+            session.gapStats?.takeIf { it.maxGapMillis > 0L }?.let { stats ->
+                Text(
+                    text = stringResource(
+                        R.string.diagnostics_trace_session_gap,
+                        minutesLabel(stats.maxGapMillis),
+                        stats.gapsOver10MinCount,
+                        stats.gapsOver20MinCount,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            TraceSessionMarkers(session, isOpen)
 
             if (!expanded) return@Column
 
@@ -385,9 +488,169 @@ private fun TraceSessionCard(
                 }
             }
             NoteEditor(session, onLabelChange)
+
+            // §9: an open session cannot be cut — more events may still join it, and
+            // replacing the file would pull it out from under the recorder mid-append.
+            if (isOpen) return@Column
+            OutlinedButton(onClick = onToggleSplit) {
+                Text(
+                    stringResource(
+                        if (splitting) R.string.diagnostics_trace_split_close else R.string.diagnostics_trace_split,
+                    ),
+                )
+            }
+            if (splitting) {
+                TraceSplitList(session, splitRefusal, onSplitAt)
+            }
         }
     }
 }
+
+/** What a person has to know about a session before labelling it, beyond its numbers. */
+@Composable
+private fun TraceSessionMarkers(session: TraceSession, isOpen: Boolean) {
+    val markers = buildList {
+        // A fragment is already the result of one human judgement, so the card says so
+        // rather than presenting it as something the device recorded whole.
+        if (session.splitFrom != null) add(stringResource(R.string.diagnostics_trace_fragment))
+        if (isOpen) add(stringResource(R.string.diagnostics_trace_open))
+    }
+    if (markers.isEmpty()) return
+    Text(text = markers.joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+}
+
+/**
+ * Picks the cut point for §9's "사람이 세션을 나눈다".
+ *
+ * **The event list, not a time picker.** What the person is looking for is the boundary
+ * between sitting still and travelling, and it is invisible in a clock: in the September
+ * 2026 subway trace the office wait and the ride were separated by nothing but the meaning
+ * of the events on either side — a `stationary_enter`, then 28.4 minutes of silence, then
+ * a `walking_enter`, with the `vehicle_enter` that starts the actual ride another 18
+ * minutes later. So every event is listed with its type, and the silence before it is
+ * spelled out above it, because the long silences are what the eye is scanning for.
+ *
+ * The first event carries no action — a cut has to leave events on both sides — but it is
+ * still shown, because hiding it would make the list disagree with the trace it shows.
+ */
+@Composable
+private fun TraceSplitList(
+    session: TraceSession,
+    refusal: TraceSplitResult.Refusal?,
+    onSplitAt: (Int) -> Unit,
+) {
+    var pendingIndex by remember(session.sessionId) { mutableStateOf<Int?>(null) }
+
+    Text(
+        text = stringResource(R.string.diagnostics_trace_split_hint),
+        style = MaterialTheme.typography.bodySmall,
+    )
+    refusal?.let {
+        Text(
+            text = it.describe(),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+    }
+    session.events.forEachIndexed { index, event ->
+        TraceSplitRow(
+            event = event,
+            previous = session.events.getOrNull(index - 1),
+            onClick = if (index == 0) null else ({ pendingIndex = index }),
+        )
+    }
+
+    // The parent is replaced and its label is not carried over, so the tap is worth one
+    // confirmation even on a diagnostics screen.
+    pendingIndex?.let { index ->
+        AlertDialog(
+            onDismissRequest = { pendingIndex = null },
+            title = { Text(stringResource(R.string.diagnostics_trace_split_confirm_title)) },
+            text = { Text(stringResource(R.string.diagnostics_trace_split_confirm_message)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingIndex = null
+                        onSplitAt(index)
+                    },
+                ) {
+                    Text(stringResource(R.string.diagnostics_trace_split_confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingIndex = null }) {
+                    Text(stringResource(R.string.diagnostics_trace_split_cancel))
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun TraceSplitRow(event: TraceEvent, previous: TraceEvent?, onClick: (() -> Unit)?) {
+    Column(
+        modifier = if (onClick == null) Modifier.fillMaxWidth() else Modifier.fillMaxWidth().clickable(onClick = onClick),
+    ) {
+        previous?.let {
+            Text(
+                text = stringResource(
+                    R.string.diagnostics_trace_split_event_gap,
+                    minutesLabel(event.atMillis - it.atMillis),
+                ),
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        Text(
+            text = stringResource(
+                R.string.diagnostics_trace_split_event,
+                event.atMillis.formatTime(),
+                event.type.wire,
+            ),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        // Whatever the event carries beyond its type, which is what tells a walk from a
+        // ride when the type alone is ambiguous. Never a coordinate — there is none.
+        event.detail()?.let {
+            Text(text = it, style = MaterialTheme.typography.bodySmall)
+        }
+        HorizontalDivider()
+    }
+}
+
+private fun TraceEvent.detail(): String? = buildList {
+    confidence?.let { add("확신도 ${it.name.lowercase(Locale.US)}") }
+    accuracy?.let { add("정확도 %.0fm".format(Locale.US, it)) }
+    speed?.let { add("%.1fm/s".format(Locale.US, it)) }
+    distanceFromPreviousM?.let { add("이동 %.0fm".format(Locale.US, it)) }
+    if (fromBucket != null && toBucket != null) {
+        add("${fromBucket.name.lowercase(Locale.US)} → ${toBucket.name.lowercase(Locale.US)}")
+    }
+}.ifEmpty { null }?.joinToString(" · ")
+
+/** §9's refusals, spelled out. A refused cut is a normal outcome, so it explains itself. */
+@Composable
+private fun TraceSplitResult.Refusal.describe(): String = when (this) {
+    TraceSplitResult.SessionNotFound -> stringResource(R.string.diagnostics_trace_split_refused_not_found)
+    TraceSplitResult.SessionIsOpen -> stringResource(R.string.diagnostics_trace_split_refused_open)
+    TraceSplitResult.IndexOutOfRange -> stringResource(R.string.diagnostics_trace_split_refused_range)
+    is TraceSplitResult.FragmentNotViable -> stringResource(
+        R.string.diagnostics_trace_split_refused_not_viable,
+        leadingEventCount,
+        trailingEventCount,
+        TraceSessionBoundaryPolicy.MINIMUM_VIABLE_EVENT_COUNT,
+    )
+    is TraceSplitResult.StoreFailure -> stringResource(R.string.diagnostics_trace_split_refused_store, reason)
+}
+
+/**
+ * Minutes to one decimal, agreed in one place: the numbers a person compares against the
+ * 30-minute threshold have to be the same on the aggregate card and in the split list.
+ */
+@Composable
+private fun minutesLabel(millis: Long): String = stringResource(
+    R.string.diagnostics_trace_minutes,
+    "%.1f".format(Locale.US, millis.toDouble() / MILLIS_PER_MINUTE),
+)
 
 /**
  * The note is committed on an explicit press rather than on every keystroke: each commit
@@ -442,6 +705,7 @@ private fun modeLabel(mode: TraceMode): Int = when (mode) {
     TraceMode.UNKNOWN -> R.string.diagnostics_trace_mode_unknown
 }
 
+private const val MILLIS_PER_MINUTE = 60_000L
 private const val SESSION_ID_PREFIX_LENGTH = 8
 
 @Composable
@@ -537,6 +801,7 @@ private fun DiagnosticsScreenPreview() {
             onExportDiagnostics = {},
             onClearEvents = {},
             onTraceLabelChange = { _, _ -> },
+            onTraceSplit = { _, _ -> },
         )
     }
 }
