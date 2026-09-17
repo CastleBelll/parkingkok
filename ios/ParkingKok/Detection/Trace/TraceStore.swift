@@ -3,6 +3,10 @@ import Foundation
 enum TraceStoreError: Error, Equatable {
     case writeFailed(String)
     case sessionNotFound
+    /// A split was asked for on the session still being recorded. §9 allows splitting only
+    /// a closed session: more events may still join an open one, and replacing it would
+    /// pull the file out from under the recorder mid-append.
+    case sessionIsOpen
 }
 
 /// The rolling cap docs/05 §9 requires: "하루 종일 켜둬도 저장소를 채우지 않아야 한다."
@@ -40,6 +44,16 @@ protocol TraceStoring: Sendable {
     /// Applies the rolling cap, oldest first. `sessionId` is the session currently being
     /// recorded, which is never evicted out from under the recorder.
     func prune(protecting sessionId: UUID?)
+    /// Removes a session that rotation found too small to keep (§9 "비생존 세션은 버린다"),
+    /// counting it separately from a rolling-cap eviction.
+    ///
+    /// Idempotent, and never an error: the recorder calls this on a path that must not be
+    /// able to break a detection callback, and a file already gone is the wanted outcome.
+    func discardNonViable(id: UUID)
+    /// Swaps a closed session for the fragments a human cut it into, then re-applies the
+    /// rolling cap — one session in, two out, so the cap has to be given a chance to
+    /// notice. Throws `.sessionIsOpen` for the session still being recorded.
+    func replace(_ id: UUID, with fragments: [TraceSession]) throws
     /// Newest first.
     func summaries() -> [TraceSessionSummary]
     func load(id: UUID) -> TraceSession?
@@ -63,8 +77,10 @@ protocol TraceStoring: Sendable {
 ///    every detection callback — at ~1 Hz during a drive — so decoding every session to
 ///    answer "how many events are on disk" would be a battery cost the §19 gate exists to
 ///    catch. The index is built once per process and maintained incrementally. Only the
-///    two values that must outlive the process are written to `_state.json`: the dropped
-///    count, and the open-session pointer §9's boundary needs after a relaunch.
+///    values that must outlive the process are written to `_state.json`: the two drop
+///    counters, and the open-session pointer §9's boundary needs after a relaunch. The gap
+///    aggregate is not among them — it is derived from the sessions still on disk, so it
+///    rebuilds itself and cannot drift from what a retrieved trace would say.
 final class FileTraceStore: TraceStoring, @unchecked Sendable {
     private static let directoryName = "traces"
     private static let filePrefix = "trace-"
@@ -77,6 +93,7 @@ final class FileTraceStore: TraceStoring, @unchecked Sendable {
     /// `nil` until the first access builds it from disk.
     private var index: [UUID: IndexEntry]?
     private var droppedSessionCount = 0
+    private var nonViableDropCount = 0
     private var openSessionIdValue: UUID?
     private var hasLoadedState = false
 
@@ -112,10 +129,7 @@ final class FileTraceStore: TraceStoring, @unchecked Sendable {
             }
 
             try encodeAndWrite(session)
-            index?[session.sessionId] = IndexEntry(
-                eventCount: session.events.count,
-                isLabeled: session.label.isLabeled
-            )
+            index?[session.sessionId] = IndexEntry(session)
         }
     }
 
@@ -138,30 +152,81 @@ final class FileTraceStore: TraceStoring, @unchecked Sendable {
     }
 
     func prune(protecting sessionId: UUID?) {
+        lock.withLock { pruneLocked(protecting: sessionId) }
+    }
+
+    /// Callers already hold `lock`.
+    private func pruneLocked(protecting sessionId: UUID?) {
+        var files = storedFiles()
+        var totalBytes = files.reduce(0) { $0 + $1.byteSize }
+        var dropped = 0
+
+        // Oldest first: §9 says the cap discards the oldest sessions.
+        files.sort { $0.startedAtMillis < $1.startedAtMillis }
+        for file in files {
+            let isOverCap = files.count - dropped > retention.maximumSessionCount
+                || totalBytes > retention.maximumTotalBytes
+            guard isOverCap else { break }
+            guard file.id != sessionId else { continue }
+            guard (try? FileManager.default.removeItem(at: file.url)) != nil else { continue }
+
+            totalBytes -= file.byteSize
+            dropped += 1
+            index?[file.id] = nil
+        }
+
+        guard dropped > 0 else { return }
+        loadStateIfNeeded()
+        droppedSessionCount += dropped
+        persistState()
+        AppLog.detection.notice("trace rolling cap dropped \(dropped, privacy: .public) session(s)")
+    }
+
+    func discardNonViable(id: UUID) {
         lock.withLock {
-            var files = storedFiles()
-            var totalBytes = files.reduce(0) { $0 + $1.byteSize }
-            var dropped = 0
+            // Removing the file is the whole discard; a missing one means a previous call
+            // already did it, and the counter must not move twice for the same session.
+            guard let file = storedFiles().first(where: { $0.id == id }),
+                  (try? FileManager.default.removeItem(at: file.url)) != nil
+            else { return }
 
-            // Oldest first: §9 says the cap discards the oldest sessions.
-            files.sort { $0.startedAtMillis < $1.startedAtMillis }
-            for file in files {
-                let isOverCap = files.count - dropped > retention.maximumSessionCount
-                    || totalBytes > retention.maximumTotalBytes
-                guard isOverCap else { break }
-                guard file.id != sessionId else { continue }
-                guard (try? FileManager.default.removeItem(at: file.url)) != nil else { continue }
+            index?[id] = nil
+            loadStateIfNeeded()
+            nonViableDropCount += 1
+            // The pointer would otherwise outlive the file it names, and the next launch
+            // would restore an open session that is no longer there.
+            if openSessionIdValue == id {
+                openSessionIdValue = nil
+            }
+            persistState()
+            AppLog.detection.notice("trace discarded a non-viable session")
+        }
+    }
 
-                totalBytes -= file.byteSize
-                dropped += 1
-                index?[file.id] = nil
+    func replace(_ id: UUID, with fragments: [TraceSession]) throws {
+        try lock.withLock {
+            loadStateIfNeeded()
+            guard openSessionIdValue != id else { throw TraceStoreError.sessionIsOpen }
+            guard let file = storedFiles().first(where: { $0.id == id }) else {
+                throw TraceStoreError.sessionNotFound
             }
 
-            guard dropped > 0 else { return }
-            loadStateIfNeeded()
-            droppedSessionCount += dropped
-            persistState()
-            AppLog.detection.notice("trace rolling cap dropped \(dropped, privacy: .public) session(s)")
+            // Fragments first, parent second. A process death between the two leaves the
+            // events on disk twice, which a person can see and undo; the other order would
+            // lose a recorded trip outright, which nobody can.
+            for fragment in fragments {
+                try encodeAndWrite(fragment)
+                index?[fragment.sessionId] = IndexEntry(fragment)
+            }
+
+            if (try? FileManager.default.removeItem(at: file.url)) != nil {
+                index?[id] = nil
+            }
+
+            // One session became two, so the cap is now the thing most likely to be wrong.
+            // Not a `droppedSessionCount` event of its own — splitting evicts nothing; the
+            // cap decides that, and counts it if it happens.
+            pruneLocked(protecting: openSessionIdValue)
         }
     }
 
@@ -189,7 +254,7 @@ final class FileTraceStore: TraceStoring, @unchecked Sendable {
 
             session.label = label
             try encodeAndWrite(session)
-            index?[id] = IndexEntry(eventCount: session.events.count, isLabeled: label.isLabeled)
+            index?[id] = IndexEntry(session)
         }
     }
 
@@ -197,20 +262,36 @@ final class FileTraceStore: TraceStoring, @unchecked Sendable {
         lock.withLock {
             loadStateIfNeeded()
             let entries = loadedIndex().values
+            let measured = entries.compactMap(\.gapStats)
             return TraceSummary(
                 sessionCount: entries.count,
                 eventCount: entries.reduce(0) { $0 + $1.eventCount },
                 droppedSessionCount: droppedSessionCount,
-                unlabeledSessionCount: entries.filter { !$0.isLabeled }.count
+                nonViableDropCount: nonViableDropCount,
+                unlabeledSessionCount: entries.filter { !$0.isLabeled }.count,
+                measuredSessionCount: measured.count,
+                maxGapMillis: measured.map(\.maxGapMillis).max() ?? 0,
+                sessionsOver10MinGapCount: measured.count { $0.gapsOver10MinCount > 0 },
+                sessionsOver20MinGapCount: measured.count { $0.gapsOver20MinCount > 0 }
             )
         }
     }
 
     // MARK: - Index and state
 
+    /// What `summary()` needs, so answering it never decodes a file. `gapStats` rides
+    /// along for the same reason: the aggregate §9 asks for on the diagnostics screen is
+    /// read after every detection callback.
     private struct IndexEntry {
         var eventCount: Int
         var isLabeled: Bool
+        var gapStats: TraceGapStats?
+
+        init(_ session: TraceSession) {
+            eventCount = session.events.count
+            isLabeled = session.label.isLabeled
+            gapStats = session.gapStats
+        }
     }
 
     /// Callers already hold `lock`.
@@ -221,10 +302,7 @@ final class FileTraceStore: TraceStoring, @unchecked Sendable {
         var rebuilt: [UUID: IndexEntry] = [:]
         for file in storedFiles() {
             guard let session = decodeSession(at: file.url) else { continue }
-            rebuilt[session.sessionId] = IndexEntry(
-                eventCount: session.events.count,
-                isLabeled: session.label.isLabeled
-            )
+            rebuilt[session.sessionId] = IndexEntry(session)
         }
         index = rebuilt
         return rebuilt
@@ -295,6 +373,9 @@ final class FileTraceStore: TraceStoring, @unchecked Sendable {
         /// Absent in files written before the §9 session boundary landed; a missing key
         /// simply means nothing was open, which is the safe reading either way.
         var openSessionId: UUID?
+        /// Absent in files written before the viability rule landed, where the honest
+        /// reading is that nothing had been discarded for it yet.
+        var nonViableDropCount: Int?
     }
 
     private var stateURL: URL {
@@ -309,11 +390,16 @@ final class FileTraceStore: TraceStoring, @unchecked Sendable {
         else { return }
         droppedSessionCount = state.droppedSessionCount
         openSessionIdValue = state.openSessionId
+        nonViableDropCount = state.nonViableDropCount ?? 0
     }
 
     /// Best-effort: losing the counter costs one number in diagnostics, never a trace.
     private func persistState() {
-        let state = StoredState(droppedSessionCount: droppedSessionCount, openSessionId: openSessionIdValue)
+        let state = StoredState(
+            droppedSessionCount: droppedSessionCount,
+            openSessionId: openSessionIdValue,
+            nonViableDropCount: nonViableDropCount
+        )
         guard let data = try? JSONEncoder().encode(state) else { return }
         try? data.write(to: stateURL, options: [.atomic])
     }

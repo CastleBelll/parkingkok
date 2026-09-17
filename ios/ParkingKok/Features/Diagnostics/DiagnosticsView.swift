@@ -25,6 +25,7 @@ struct DiagnosticsView: View {
             checkpointSection
             drivingSessionSection
             traceSection
+            traceGapSection
             motionSection
         }
         .navigationTitle("감지 진단")
@@ -175,14 +176,16 @@ struct DiagnosticsView: View {
         }
     }
 
-    /// docs/05 §9. Four numbers, so the answer to "is recording working?" does not need a
+    /// docs/05 §9, so the answer to "is recording working?" does not need a
     /// `devicectl copy` first.
     private var traceSection: some View {
         Section("이동 기록 (trace)") {
-            LabeledContent("세션 수", value: "\(model.traceSummary.sessionCount)개")
-            LabeledContent("이벤트 수", value: "\(model.traceSummary.eventCount)개")
-            LabeledContent("상한으로 버림", value: "\(model.traceSummary.droppedSessionCount)개")
-            LabeledContent("라벨 없음", value: "\(model.traceSummary.unlabeledSessionCount)개")
+            let summary = model.traceSummary
+            LabeledContent("세션 수", value: "\(summary.sessionCount)개")
+            LabeledContent("이벤트 수", value: "\(summary.eventCount)개")
+            LabeledContent("상한으로 버림", value: "\(summary.droppedSessionCount)개")
+            LabeledContent("이벤트 1개 이하로 버림", value: "\(summary.nonViableDropCount)개")
+            LabeledContent("라벨 없음", value: "\(summary.unlabeledSessionCount)개")
             if model.snapshot.traceReplayDropCount > 0 {
                 LabeledContent("재전달 위치 무시", value: "\(model.snapshot.traceReplayDropCount)회")
             }
@@ -192,6 +195,24 @@ struct DiagnosticsView: View {
             NavigationLink("세션 목록 · 라벨 붙이기") {
                 TraceLabelingView()
             }
+        }
+    }
+
+    /// The §9 gap aggregate, kept apart from the recording counters because it answers a
+    /// different question: not "is this working" but "what should the 30-minute idle gap
+    /// actually be?". Nothing acts on it — the threshold does not move until the numbers
+    /// have accumulated over more than one day (§9 "이 값들이 모이기 전에는 30분을 바꾸지
+    /// 않는다"). The measured count is shown first so the rest is read as a sample.
+    private var traceGapSection: some View {
+        Section("세션 gap 분포 (임계값 재조정용)") {
+            let summary = model.traceSummary
+            LabeledContent("계측된 세션", value: "\(summary.measuredSessionCount)/\(summary.sessionCount)개")
+            LabeledContent("최대 gap", value: TraceGapFormat.minutes(summary.maxGapMillis))
+            LabeledContent("10분 초과 gap 있는 세션", value: "\(summary.sessionsOver10MinGapCount)개")
+            LabeledContent("20분 초과 gap 있는 세션", value: "\(summary.sessionsOver20MinGapCount)개")
+            Text("현재 세션 종료 문턱 \(Int(TraceSessionBoundaryPolicy.idleGap / 60))분. 이 값은 관측이 쌓이기 전에는 바꾸지 않는다.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 

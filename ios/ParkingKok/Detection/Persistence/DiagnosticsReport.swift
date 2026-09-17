@@ -84,7 +84,22 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
     /// Sessions the rolling cap discarded. §9 requires the eviction to be visible; a
     /// silently shrinking history would look like recording that never happened.
     var traceDroppedSessionCount: Int
+    /// Sessions discarded at rotation for holding one event or none (§9 "비생존 세션은
+    /// 버린다"). Separate from the rolling-cap count on purpose: a rolling-cap eviction
+    /// means the device is recording more than it can hold, while this climbing means the
+    /// boundary is cutting sessions where there was nothing to cut — five of the nine
+    /// September 2026 field sessions were single events. §9: "조용히 버리지 마라."
+    var traceNonViableDropCount: Int
     var traceUnlabeledSessionCount: Int
+    /// Sessions carrying a gap measurement, so the three numbers below can be read as a
+    /// sample size rather than as a claim about every trace on disk.
+    var traceMeasuredSessionCount: Int
+    /// The §9 gap aggregate, over the sessions still on disk. **Instrumentation for a
+    /// decision not yet taken**: the 30-minute idle gap came from a single day and missed
+    /// by 66 seconds, and it does not move until these have accumulated.
+    var traceMaxGapMillis: Int64
+    var traceSessionsOver10MinGapCount: Int
+    var traceSessionsOver20MinGapCount: Int
     /// Location observations refused as replays of an instant already recorded. Zero is
     /// the expected reading; a climbing count with a growing trace is Core Location
     /// re-delivering cached fixes and being ignored, which is the point.
@@ -169,7 +184,12 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
         traceSessionCount = traceSummary.sessionCount
         traceEventCount = traceSummary.eventCount
         traceDroppedSessionCount = traceSummary.droppedSessionCount
+        traceNonViableDropCount = traceSummary.nonViableDropCount
         traceUnlabeledSessionCount = traceSummary.unlabeledSessionCount
+        traceMeasuredSessionCount = traceSummary.measuredSessionCount
+        traceMaxGapMillis = traceSummary.maxGapMillis
+        traceSessionsOver10MinGapCount = traceSummary.sessionsOver10MinGapCount
+        traceSessionsOver20MinGapCount = traceSummary.sessionsOver20MinGapCount
         traceReplayDropCount = snapshot.traceReplayDropCount
         traceFailure = snapshot.traceFailure
 

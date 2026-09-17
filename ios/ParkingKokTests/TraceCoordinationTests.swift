@@ -83,8 +83,12 @@ struct TraceCoordinationTests {
     @Test("Opting out closes the open trace and stops recording")
     func optingOutClosesTheTrace() async {
         // Arrange
+        // Two samples, so the session the opt-out closes is one §9's viability rule keeps
+        // — a one-event session would be discarded and the count below would be about the
+        // wrong rule.
         let harness = harness(motion: [
-            MotionSample(timestamp: reference.addingTimeInterval(-60), walking: true, confidence: .high)
+            MotionSample(timestamp: reference.addingTimeInterval(-90), walking: true, confidence: .high),
+            MotionSample(timestamp: reference.addingTimeInterval(-60), stationary: true, confidence: .high)
         ])
         await harness.coordinator.rehydrate(launchReason: .userInitiated)
         let openedCount = harness.traces.storedSessions.count
