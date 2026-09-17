@@ -123,6 +123,62 @@ AND
 
 One event alone never confirms full driving session.
 
+### `movement evidence consistent with travel` — speed가 아니다
+
+**관측 사실 (2026-09-16/17, iPhone15,3, iOS 26).** 실기기 trace 9개를 회수했다.
+bounded driving session이 수신한 fix는 **87개**이고, 그중 **speed를 가진 것은 0개**였다.
+`liveUpdates(.automotiveNavigation)`는 정상 동작했고 fix는 계속 들어왔다.
+같은 기간 체크포인트의 `travelDistanceEstimate`는 3178 m까지 쌓였다.
+
+iOS 구현은 이 조항을 `speed >= threshold`로 읽었기 때문에 movement evidence가
+**구조적으로 성립 불가능**했다: speed가 nil이면 카운터가 영원히 0이고
+`minimumMovingSamples`를 넘을 수 없다. 거리는 이미 쌓여 있는데 판정에 쓰이지 않았다.
+
+지하·터널·도심 협곡은 GPS 도플러 속도가 나오지 않는 환경이고, 그게 주차콕의 주 무대다
+(지하주차장, 아파트 지하). §13의 underground parking 패턴 자체가 이 조건을 전제한다.
+
+**따라서 movement evidence는 두 경로를 가진다.**
+
+1. **speed 우선.** fix가 speed를 가지면 그것만으로 판정한다. 기존 의미론 그대로다.
+2. **speed가 nil일 때만 거리 fallback.** anchor fix와 현재 fix의 변위/시간차로
+   평균 속도를 유도한다. 세 관문을 모두 통과해야 인정한다.
+
+| 관문 | 기준 | 근거 |
+|---|---|---|
+| 시간차 하한 | baseline >= 30s | `threshold * T >= 2·sqrt(2)·a`를 good bucket 상한 20m에 풀면 T >= 28.3s. 더 짧으면 정확도 관문이 느린 실주행을 무조건 거부한다 |
+| 시간차 상한 | baseline <= 180s | 그 이상의 평균은 "주행–정차–주행"을 평탄화해 travel을 서술하지 못한다. vehicle evidence 만료 horizon과 같고, significant change 간격보다 훨씬 짧다 |
+| 정확도 | 변위 >= 2·sqrt(a₁² + a₂²) | `horizontalAccuracy`는 1σ 반경이므로 두 fix **변위**의 1σ는 `sqrt(a₁²+a₂²)`다. 2σ는 "실제로 움직였다"의 약 95% 단측 진술 |
+| 거리 | 변위 / baseline >= movingSpeedThreshold | speed 경로와 같은 2 m/s 임계값을 거리로 표현한 것 |
+
+**2σ를 고른 이유는 실데이터다.** 같은 subway trace에 정확도 521 m와 47.9 m인 두 fix가
+23초 만에 928 m 떨어져 기록된 구간이 있다. 액면가로는 145 km/h인데, 그 노선 최고속도는
+80 km/h다 — 노이즈다. 2σ 관문은 `2·sqrt(521² + 47.9²) ≈ 1043 m`이므로 이를 **거부**한다.
+1σ였다면 통과시켜 지하철에서 주행을 확정했을 것이다.
+
+**anchor는 실패 시 유지하고 성공/상한 초과 시에만 교체한다.** 연속 두 fix만 보면 1 Hz에서
+변위가 노이즈 바닥을 결코 넘지 못한다(10 m 정확도 fix 사이 50 km/h 주행은 13.9 m,
+관문은 28 m). anchor를 붙들면 baseline이 길어져 판정이 가능해진다. 위 928 m 구간도
+직전의 깨끗한 24.9 m fix를 anchor로 재면 58초에 928 m, 57 km/h — 그냥 열차다.
+
+**재생 결과 (수정 전 → 후, movingSampleCount).**
+
+| trace | 구간 | bounded fix | speed 있는 fix | 전 | 후 |
+|---|---|---:|---:|---:|---:|
+| `trace-1789544225798` | 지하철 퇴근 | 58 | 0 | **0** | **3** |
+| `trace-1789537784682` | 사무실 도보 (음성 대조군) | 35 | 0 | **0** | **0** |
+
+지하철 구간은 `minimumMovingSamples`(2)를 넘고, 같은 기기·같은 시간대의 도보는 넘지 않는다.
+
+**계측.** `speedAvailableCount` / `speedMissingCount` / `derivedMovingSampleCount` /
+`movementEvidenceRejectReason`(`accuracyTooCoarse` | `intervalTooLong` | `distanceTooShort`)를
+diagnostics에 내보낸다. "확정이 안 됐다"와 "speed가 한 번도 안 왔다"는 밖에서 보면 같아
+보이는데 실제로는 후자였고, 다음 데이터부터는 그 구분이 파일 한 줄로 끝나야 한다.
+
+**이 절의 모든 임계값은 §8 가중치와 같은 성격의 필드 튜닝 출발점이다.** §18 참조 —
+특히 **지상 자동차 주행 데이터가 아직 하나도 없다.**
+
+Android는 동일 의미론을 네이티브로 구현한다(parity 작업은 별건).
+
 ## 8. Parking Evidence Weights — Starting Point
 Positive:
 | Evidence | Weight |
@@ -256,6 +312,21 @@ Before public launch target at least:
 - underground + outdoor
 - taxi/bus negative cases
 - Samsung/Pixel + multiple iPhone generations
+
+### 재검증 대기 항목
+
+**§7 movement evidence 거리 fallback — 지상 주행 데이터로 재검증 필요.**
+현재 §7의 fallback 임계값(`2σ` 노이즈 바닥, 30s 하한, 180s 상한)은 2026-09-16/17
+iPhone15,3 trace 2개에 대해서만 확인됐고, **둘 다 지하철이다. 지상 자동차 주행 trace는
+아직 하나도 없다.** 지상에서는 Core Location이 speed를 정상 보고할 가능성이 높고,
+그렇다면 fallback은 거의 실행되지 않는 경로가 된다. 재검증 시 최소한 다음을 확인한다.
+
+- 지상 주행에서 `speedAvailableCount`가 실제로 채워지는가 (그러면 결함은 "지하 한정"이다)
+- 지상 주행에서 fallback이 실행될 때 `derivedMovingSampleCount`가 오르는가
+- 도심 협곡/터널 진입·진출 경계에서 `movementEvidenceRejectReason` 분포
+- 버스/택시 음성 케이스에서 fallback이 과확정하지 않는가 (§12)
+
+이 네 가지가 채워지기 전까지 위 임계값은 **가설 위에 선 출발점**으로 취급한다.
 
 Production analytics uploads only coarse outcomes.
 

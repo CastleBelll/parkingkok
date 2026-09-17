@@ -34,11 +34,32 @@ struct DrivingEvidence: Sendable, Equatable {
     private(set) var distanceMeters: Double = 0
     /// Fixes that showed the device actually travelling. docs/05 §7 requires movement
     /// evidence *and* forbids confirming on one event, so this is a count, not a flag.
+    ///
+    /// Both routes into this counter are folded together on purpose — §7 asks for
+    /// "movement evidence consistent with travel", not for a speed — and
+    /// `derivedMovingSampleCount` says how much of it the fallback contributed.
     private(set) var movingSampleCount: Int = 0
+    /// Accepted fixes that carried a Core Location speed estimate, and accepted fixes that
+    /// did not. The pair exists because "confirmation never fired" and "no fix ever had a
+    /// speed" look identical from the outside, and on the field device it was the second
+    /// one (see `MovementEvidencePolicy`).
+    private(set) var speedAvailableCount: Int = 0
+    private(set) var speedMissingCount: Int = 0
+    /// The subset of `movingSampleCount` the distance fallback contributed. Zero with a
+    /// large `speedMissingCount` means the fallback is gated wrong, not that the device
+    /// stood still.
+    private(set) var derivedMovingSampleCount: Int = 0
+    /// Why the fallback last declined a fix, or `nil` once it last accepted one.
+    private(set) var movementEvidenceRejection: MovementEvidenceRejection?
     private(set) var fixCount: Int = 0
     private(set) var outlierCount: Int = 0
     /// Retained only to measure the next step. Never leaves the actor.
     private(set) var lastFix: LocationFix?
+    /// The fix the distance fallback measures against. Not the same thing as `lastFix`:
+    /// it is held until a baseline long enough to decide on has accumulated
+    /// (`MovementEvidencePolicy.minimumBaseline`), so at 1 Hz it spans many fixes.
+    /// In memory only, exactly like `lastFix`.
+    private var movementAnchor: LocationFix?
     /// When the guard in `DrivingConfirmationPolicy` fired for this session. Latched so
     /// confirmation is reported — and checkpointed — exactly once.
     private(set) var confirmedAt: Date?
@@ -87,10 +108,170 @@ struct DrivingEvidence: Sendable, Equatable {
         }
         lastFix = fix
 
-        if let speed = fix.speed, speed >= DrivingConfirmationPolicy.movingSpeedThreshold {
-            movingSampleCount += 1
-        }
+        recordMovementEvidence(from: fix)
         return true
+    }
+
+    /// docs/05 §7 "movement evidence consistent with travel", for one accepted fix.
+    ///
+    /// Speed is still the primary signal and its branch is untouched. The fallback below
+    /// it exists because the September 2026 field traces say that branch never runs where
+    /// this product lives: all 87 bounded fixes recovered from two underground sessions
+    /// arrived with `speed == nil`, which pinned `movingSampleCount` at 0 and made
+    /// confirmation structurally impossible while 3.2 km of travel piled up unused.
+    ///
+    /// Outliers never get here — `record(fix:)` returns before this call — so a GPS jump
+    /// cannot become movement evidence, and the counters describe accepted fixes only.
+    private mutating func recordMovementEvidence(from fix: LocationFix) {
+        if let speed = fix.speed {
+            speedAvailableCount += 1
+            if speed >= DrivingConfirmationPolicy.movingSpeedThreshold {
+                movingSampleCount += 1
+            }
+            // A fix that carried a speed is still the freshest anchor available to the
+            // next fix that does not, so the fallback does not have to start cold when
+            // the estimate disappears mid-drive — which is exactly what entering a tunnel
+            // looks like.
+            movementAnchor = fix
+            return
+        }
+
+        speedMissingCount += 1
+        guard let anchor = movementAnchor else {
+            movementAnchor = fix
+            return
+        }
+
+        switch MovementEvidencePolicy.evaluate(from: anchor, to: fix) {
+        case .moving:
+            movingSampleCount += 1
+            derivedMovingSampleCount += 1
+            movementEvidenceRejection = nil
+            movementAnchor = fix
+        case .inconclusive:
+            break
+        case let .rejected(reason):
+            movementEvidenceRejection = reason
+            if reason.invalidatesAnchor {
+                movementAnchor = fix
+            }
+        }
+    }
+}
+
+/// Why the distance fallback declined to call one fix movement evidence.
+///
+/// Reported in diagnostics rather than logged: `speedMissingCount` high with
+/// `derivedMovingSampleCount` at zero is the shape of the original defect, and this is
+/// the field that says whether the gate is set wrong or the device really was not moving.
+enum MovementEvidenceRejection: String, Sendable, Equatable, Codable {
+    /// 정확도 부족 — the displacement is inside the combined positional uncertainty of the
+    /// two fixes, so it is noise rather than travel.
+    case accuracyTooCoarse
+    /// 시간차 초과 — the two fixes are too far apart in time for an average speed between
+    /// them to describe anything.
+    case intervalTooLong
+    /// 거리 부족 — the displacement cleared the noise floor, but the average speed across
+    /// it is below the travel threshold.
+    case distanceTooShort
+
+    /// Whether the *anchor* is what went wrong. A baseline past the ceiling is describing
+    /// two unrelated stretches of travel, so the fix in hand becomes the new anchor. The
+    /// other two keep the anchor: a longer baseline is precisely what turns an
+    /// undecidable displacement into a decidable one.
+    var invalidatesAnchor: Bool {
+        self == .intervalTooLong
+    }
+}
+
+/// The verdict on one fix that arrived without a speed.
+enum MovementEvidenceOutcome: Sendable, Equatable {
+    case moving
+    /// Not yet decidable — the baseline since the anchor is still short. Not a rejection:
+    /// the anchor is kept and the same question is asked again on the next fix, so this
+    /// never reaches diagnostics.
+    case inconclusive
+    case rejected(MovementEvidenceRejection)
+}
+
+/// The distance-based half of docs/05 §7 "movement evidence consistent with travel".
+///
+/// ### Why it exists
+/// §7 never said *speed*. The implementation read it as speed, and the field data says
+/// that reading does not survive contact with the product's main setting: across the
+/// 2026-09-16/17 iOS traces, 87 of 87 bounded fixes carried no speed at all, because
+/// underground and in tunnels there is no GPS Doppler to derive one from. A rule that can
+/// only confirm on speed cannot confirm in an underground car park.
+///
+/// ### Why it is gated this hard
+/// Two fixes taken while standing still can be hundreds of metres apart if they are
+/// inaccurate enough, and the same traces contain exactly that: a pair with accuracies of
+/// 521 m and 47.9 m measured 928 m apart in 23 s. Taken at face value that is 145 km/h on
+/// a subway line whose trains do not exceed 80 — it is noise, and it must not confirm a
+/// drive.
+///
+/// ### Every constant here is a field-tuning starting point
+/// In the same sense as the §8 evidence weights, and with one extra caveat: **there is no
+/// above-ground car data behind any of them yet.** Both sessions the numbers were checked
+/// against are subway rides. Above ground the speed branch probably works and this path
+/// may hardly run. Re-derive these against real driving traces (docs/05 §18).
+enum MovementEvidencePolicy {
+    /// How many standard deviations of positional uncertainty the displacement has to
+    /// clear before it counts as travel.
+    ///
+    /// `horizontalAccuracy` is a 1σ radius, so the 1σ uncertainty of a *displacement*
+    /// between two independent fixes is `sqrt(a₁² + a₂²)`. Requiring two of those is a
+    /// ~95% one-sided statement that the device really moved.
+    ///
+    /// Chosen against the field pair above, not picked round: its gate is
+    /// `2·sqrt(521² + 47.9²) ≈ 1043 m` against a measured 928 m, so it is rejected. One
+    /// sigma would have accepted it and confirmed a drive on a train.
+    static let noiseFloorSigmas: Double = 2
+
+    /// The shortest baseline on which a *threshold-speed* drive can clear the noise floor.
+    ///
+    /// Solving `movingSpeedThreshold · T ≥ noiseFloorSigmas · sqrt(2) · a` at the 20 m
+    /// accuracy that ends the trace format's `good` bucket gives `T ≥ 28.3 s`. Shorter
+    /// than that and the gate would reject slow but real travel however clean the fixes
+    /// were — the same structural dead end the speed-only rule had, one layer down. At
+    /// 1 Hz this means the fallback decides roughly twice a minute, which is ample against
+    /// `minimumMovingSamples`.
+    static let minimumBaseline: TimeInterval = 30
+
+    /// The longest baseline an average speed still describes.
+    ///
+    /// Past this the average hides its own shape: a drive, a five-minute stop and another
+    /// drive average out to something that is not "consistent with travel" at any point in
+    /// between. It is also the horizon on which the vehicle evidence that must accompany
+    /// movement evidence expires (`DrivingConfirmationPolicy.vehicleEvidenceMaxAge`), and
+    /// it is far below the significant-change cadence, which is what a gap this long in a
+    /// bounded session actually means.
+    static let maximumBaseline: TimeInterval = 180
+
+    static func evaluate(from anchor: LocationFix, to fix: LocationFix) -> MovementEvidenceOutcome {
+        let baseline = fix.timestamp.timeIntervalSince(anchor.timestamp)
+        if baseline > maximumBaseline {
+            return .rejected(.intervalTooLong)
+        }
+        // Covers a non-positive baseline too: two fixes at the same instant, or a clock
+        // that stepped backwards, decide nothing and must not divide.
+        guard baseline >= minimumBaseline else { return .inconclusive }
+
+        let displacement = GeoDistance.meters(from: anchor, to: fix)
+        let combinedVariance = anchor.horizontalAccuracy.squared + fix.horizontalAccuracy.squared
+        let noiseFloor = noiseFloorSigmas * combinedVariance.squareRoot()
+        guard displacement >= noiseFloor else { return .rejected(.accuracyTooCoarse) }
+
+        guard displacement / baseline >= DrivingConfirmationPolicy.movingSpeedThreshold else {
+            return .rejected(.distanceTooShort)
+        }
+        return .moving
+    }
+}
+
+private extension Double {
+    var squared: Double {
+        self * self
     }
 }
 

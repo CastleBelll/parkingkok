@@ -15,8 +15,8 @@ import Foundation
 /// coordinate-bearing ones are deliberately absent, and a test on the encoded bytes
 /// enforces it. **Adding a coordinate here is never the fix for a failing test.**
 struct DiagnosticsReport: Sendable, Equatable, Codable {
-    /// Bumped to 3 by M1's trace-recording summary.
-    static let schemaVersion = 3
+    /// Bumped to 4 by the §7 movement-evidence instrumentation.
+    static let schemaVersion = 4
 
     var schemaVersion: Int = DiagnosticsReport.schemaVersion
     var generatedAt: Date
@@ -58,6 +58,14 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
     var lastDrivingSessionEndedAt: Date?
     var drivingFixCount: Int
     var drivingMovingSampleCount: Int
+    /// docs/05 §7 movement evidence, instrumented. `speedMissingCount == fixCount` with
+    /// `movingSampleCount == 0` is the exact signature of the defect these fields were
+    /// added for: the speed-only rule could not confirm a drive underground.
+    var speedAvailableCount: Int
+    var speedMissingCount: Int
+    var derivedMovingSampleCount: Int
+    /// Why the distance fallback last declined a fix, or absent if it never has.
+    var movementEvidenceRejectReason: String?
     var drivingOutlierDropCount: Int
     var drivingDistanceMeters: Double
     /// How often a fix was accepted as `lastReliableLocation` — never which fix.
@@ -141,6 +149,10 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
         lastDrivingSessionEndedAt = snapshot.lastDrivingSessionEndedAt
         drivingFixCount = snapshot.drivingFixCount
         drivingMovingSampleCount = snapshot.drivingMovingSampleCount
+        speedAvailableCount = snapshot.drivingSpeedAvailableCount
+        speedMissingCount = snapshot.drivingSpeedMissingCount
+        derivedMovingSampleCount = snapshot.drivingDerivedMovingSampleCount
+        movementEvidenceRejectReason = snapshot.movementEvidenceRejectReason?.rawValue
         drivingOutlierDropCount = snapshot.drivingOutlierDropCount
         drivingDistanceMeters = snapshot.drivingDistanceMeters
         reliableLocationUpdateCount = snapshot.reliableLocationUpdateCount

@@ -142,7 +142,17 @@ struct DiagnosticsView: View {
             }
             LabeledContent("주행 확정", value: Self.optionalTime(model.snapshot.drivingConfirmedAt))
             LabeledContent("fix 수", value: "\(model.snapshot.drivingFixCount)")
-            LabeledContent("이동 샘플", value: "\(model.snapshot.drivingMovingSampleCount)")
+            LabeledContent(
+                "이동 샘플",
+                value: "\(model.snapshot.drivingMovingSampleCount) (거리 유도 \(model.snapshot.drivingDerivedMovingSampleCount))"
+            )
+            LabeledContent(
+                "speed 유무",
+                value: "있음 \(model.snapshot.drivingSpeedAvailableCount) / 없음 \(model.snapshot.drivingSpeedMissingCount)"
+            )
+            if let reason = model.snapshot.movementEvidenceRejectReason {
+                LabeledContent("이동 근거 거절 사유", value: reason.rawValue)
+            }
             LabeledContent("누적 거리", value: "\(Int(model.snapshot.drivingDistanceMeters)) m")
             LabeledContent("이상치 제거", value: "\(model.snapshot.drivingOutlierDropCount)")
             LabeledContent("reliable 채택", value: "\(model.snapshot.reliableLocationUpdateCount)회")
