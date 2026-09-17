@@ -198,6 +198,9 @@ struct TraceRecorder {
     /// was open. Both watermarks deliberately stay put — opting back in must not replay
     /// the history that is already recorded in the closed session.
     mutating func closeOpenSession() {
+        // Opting out is a rotation in every sense that matters to §9's rule: nothing more
+        // can join this session, so "더 붙을 수 있다" no longer applies to it.
+        discardClosingSessionIfNonViable()
         session = nil
         // Nothing left on disk may be reopened either, so the lazy restore is spent.
         hasRestoredOpenSession = true
@@ -223,12 +226,36 @@ struct TraceRecorder {
         }
         if let rotation = rotationReason(at: date) {
             AppLog.detection.notice("trace session rotated: \(rotation.rawValue, privacy: .public)")
+            discardClosingSessionIfNonViable()
         }
         let opened = OpenSession(id: UUID(), startedAt: date)
         // Make room before recording, never during: eviction mid-trip would compete with
         // the fix stream for IO on the path that must stay cheap.
         store.prune(protecting: opened.id)
         return opened
+    }
+
+    /// Applies §9's viability rule to the session that just stopped growing.
+    ///
+    /// **Rotation is the only moment this may be asked**, which is why it lives here and
+    /// not in `persist()`. Every session passes through one event on its way to two, and a
+    /// recorder that refused to write the first one would have nothing on disk to reopen
+    /// after a process death — iOS is relaunched for every significant change, so a trip
+    /// would be cut into first events that were each discarded in turn.
+    ///
+    /// The file is deleted; the watermarks deliberately are not rewound. Those events were
+    /// seen, and both input streams re-deliver what they have already delivered, so a
+    /// rewind would let Core Motion's history or Core Location's cached fixes walk straight
+    /// back in and rebuild the very session that was just thrown away.
+    private mutating func discardClosingSessionIfNonViable() {
+        guard let closing = session,
+              !TraceSessionBoundaryPolicy.isViable(eventCount: closing.events.count)
+        else { return }
+
+        store.discardNonViable(id: closing.id)
+        if openSessionIdOnDisk == closing.id {
+            openSessionIdOnDisk = nil
+        }
     }
 
     private func rotationReason(at date: Date) -> TraceSessionBoundaryPolicy.RotationReason? {
@@ -361,6 +388,10 @@ struct TraceRecorder {
         let startedAt: Date
         var events: [TraceEvent] = []
         var flags = MotionFlags()
+        /// Measured as events arrive (§9 "gap 계측"), never by walking the array: the
+        /// append path runs inside a detection callback and is the one thing here that
+        /// must stay free.
+        var gapStats = TraceGapStats()
 
         /// **Memory only, never encoded.** Held for exactly one step so the next fix can
         /// be reduced to metres.
@@ -386,6 +417,9 @@ struct TraceRecorder {
             id = stored.sessionId
             startedAt = stored.startDate
             events = stored.events
+            // Recomputed when the file predates gap measurement, so reopening a session
+            // recorded by an older build does not start its tally from zero halfway in.
+            gapStats = stored.gapStats ?? TraceGapStats(events: stored.events)
 
             let lastLocation = stored.events.last { $0.type == .location }
             lastLocationEventAt = lastLocation?.date
@@ -478,6 +512,9 @@ struct TraceRecorder {
         /// truncated trace looks exactly like a trip that ended, which is the one thing a
         /// recording must not lie about.
         mutating func append(_ event: TraceEvent) {
+            if let previous = events.last {
+                gapStats.record(gapMillis: event.atMillis - previous.atMillis)
+            }
             events.append(event)
         }
 
@@ -487,7 +524,8 @@ struct TraceRecorder {
                 metadata: metadata,
                 startedAt: startedAt,
                 endedAt: latestEventDate,
-                events: events
+                events: events,
+                gapStats: gapStats
             )
         }
     }

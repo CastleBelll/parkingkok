@@ -30,6 +30,196 @@ struct TraceRecorderTests {
         (session?.events ?? []).map(\.type.rawValue)
     }
 
+    // MARK: - Non-viable sessions (§9 "비생존 세션은 버린다")
+
+    /// Five of the nine September 2026 field sessions held exactly one event: a lone motion
+    /// edge with half an hour of silence either side. It cannot be replayed as a §8 fixture
+    /// and tells the engine nothing, so rotation throws it away.
+    @Test("A session holding one event is discarded when rotation closes it")
+    func singleEventSessionIsDiscardedAtRotation() {
+        // Arrange
+        let store = StubTraceStore()
+        var recorder = recorder(store)
+
+        // Act — one edge, then silence past the idle gap, then a new trip.
+        recorder.record(motionSamples: [sample(0, stationary: true)])
+        let lonelyId = recorder.openSessionId
+        recorder.record(motionSamples: [
+            sample(TraceSessionBoundaryPolicy.idleGap + 60, automotive: true),
+            sample(TraceSessionBoundaryPolicy.idleGap + 120, walking: true)
+        ])
+
+        // Assert
+        #expect(store.nonViableDiscards == [lonelyId])
+        #expect(store.storedSessions.count == 1)
+        #expect(types(store.latestSession) == ["vehicle_enter", "vehicle_exit", "walking_enter"])
+    }
+
+    /// The boundary between kept and discarded, stated from the other side.
+    @Test("A session holding two events survives the same rotation")
+    func twoEventSessionSurvivesRotation() {
+        // Arrange
+        let store = StubTraceStore()
+        var recorder = recorder(store)
+
+        // Act
+        recorder.record(motionSamples: [sample(0, stationary: true), sample(30, walking: true)])
+        let keptId = recorder.openSessionId
+        recorder.record(motionSamples: [sample(TraceSessionBoundaryPolicy.idleGap + 60, automotive: true)])
+
+        // Assert
+        #expect(store.nonViableDiscards.isEmpty)
+        #expect(store.storedSessions.count == 2)
+        #expect(store.storedSessions.first?.sessionId == keptId)
+    }
+
+    /// §9: "판정은 rotation 시점에만 한다. 열려 있는 세션은 아직 더 붙을 수 있다." Every
+    /// session passes through one event on the way to two, and iOS relaunches for every
+    /// significant change — judging early would leave nothing on disk to reopen.
+    @Test("An open session holding one event is written, not judged")
+    func openSingleEventSessionIsKept() {
+        // Arrange
+        let store = StubTraceStore()
+        var recorder = recorder(store)
+
+        // Act
+        recorder.record(motionSamples: [sample(0, stationary: true)])
+
+        // Assert
+        #expect(store.nonViableDiscards.isEmpty)
+        #expect(store.storedSessions.count == 1)
+        #expect(store.latestSession?.events.count == 1)
+        #expect(store.openSessionId == recorder.openSessionId)
+    }
+
+    /// The events were seen. Both input streams re-deliver what they have delivered, so a
+    /// watermark rewound by the discard would let Core Motion's history walk straight back
+    /// in and rebuild the session that was just thrown away.
+    @Test("Discarding a session does not rewind the watermark")
+    func discardKeepsTheWatermarkAdvanced() {
+        // Arrange
+        let store = StubTraceStore()
+        var recorder = recorder(store)
+        recorder.record(motionSamples: [sample(0, stationary: true)])
+        recorder.record(motionSamples: [
+            sample(TraceSessionBoundaryPolicy.idleGap + 60, automotive: true),
+            sample(TraceSessionBoundaryPolicy.idleGap + 120, walking: true)
+        ])
+        #expect(store.storedSessions.count == 1)
+
+        // Act — Core Motion replays its history, including the discarded sample.
+        recorder.record(motionSamples: [
+            sample(0, stationary: true),
+            sample(TraceSessionBoundaryPolicy.idleGap + 60, automotive: true)
+        ])
+
+        // Assert — nothing re-entered, and the discarded session did not come back.
+        #expect(store.storedSessions.count == 1)
+        #expect(types(store.latestSession) == ["vehicle_enter", "vehicle_exit", "walking_enter"])
+    }
+
+    /// Opting out closes the session immediately (§9), and a closed session can never grow,
+    /// so "더 붙을 수 있다" stops applying to it.
+    @Test("Opting out of Smart Detection discards a one-event session it closes")
+    func optingOutDiscardsANonViableOpenSession() {
+        // Arrange
+        let store = StubTraceStore()
+        var recorder = recorder(store)
+        recorder.record(motionSamples: [sample(0, stationary: true)])
+        let lonelyId = recorder.openSessionId
+
+        // Act
+        recorder.closeOpenSession()
+
+        // Assert
+        #expect(store.nonViableDiscards == [lonelyId])
+        #expect(store.storedSessions.isEmpty)
+        #expect(store.openSessionId == nil)
+    }
+
+    @Test("Opting out keeps a session that reached two events")
+    func optingOutKeepsAViableOpenSession() {
+        // Arrange
+        let store = StubTraceStore()
+        var recorder = recorder(store)
+        recorder.record(motionSamples: [sample(0, stationary: true), sample(30, walking: true)])
+
+        // Act
+        recorder.closeOpenSession()
+
+        // Assert
+        #expect(store.nonViableDiscards.isEmpty)
+        #expect(store.storedSessions.count == 1)
+    }
+
+    // MARK: - Gap measurement (§9 "gap 계측")
+
+    @Test("The recorded session carries the silences observed inside it")
+    func recordedSessionCarriesGapStats() throws {
+        // Arrange
+        let store = StubTraceStore()
+        var recorder = recorder(store)
+
+        // Act — 0s, then +12min, then +21min after that.
+        recorder.record(motionSamples: [sample(0, stationary: true)])
+        recorder.record(motionSamples: [sample(12 * 60, walking: true)])
+        recorder.record(motionSamples: [sample(12 * 60 + 21 * 60, automotive: true)])
+
+        // Assert
+        let gapStats = try #require(store.latestSession?.gapStats)
+        #expect(gapStats.maxGapMillis == 21 * 60 * 1000)
+        #expect(gapStats.gapsOver10MinCount == 2)
+        #expect(gapStats.gapsOver20MinCount == 1)
+    }
+
+    /// The measurement is a property of the event stream, so a rotation must not carry the
+    /// previous trip's silence into the next one.
+    @Test("A rotated session starts its measurement from zero")
+    func rotationResetsGapStats() throws {
+        // Arrange
+        let store = StubTraceStore()
+        var recorder = recorder(store)
+        recorder.record(motionSamples: [sample(0, stationary: true), sample(15 * 60, walking: true)])
+
+        // Act
+        let base = TraceSessionBoundaryPolicy.idleGap + 15 * 60
+        recorder.record(motionSamples: [sample(base + 60, automotive: true)])
+        recorder.record(motionSamples: [sample(base + 120, walking: true)])
+
+        // Assert — the new session saw one 60-second gap, not the 15-minute one.
+        let gapStats = try #require(store.latestSession?.gapStats)
+        #expect(gapStats.maxGapMillis == 60 * 1000)
+        #expect(gapStats.gapsOver10MinCount == 0)
+    }
+
+    /// Reopening a trace written before gap measurement landed must not restart the tally
+    /// halfway through the session.
+    @Test("A restored session recomputes a measurement its file never had")
+    func restoredSessionRecomputesMissingGapStats() throws {
+        // Arrange — a file with events but no `gapStats`, as an older build wrote it.
+        let store = StubTraceStore()
+        let stored = TestTrace.session(
+            startedAt: TestTime.offset(0),
+            endedAt: TestTime.offset(18 * 60),
+            events: [
+                .motion(.stationaryEnter, at: TestTime.offset(0), confidence: .medium),
+                .motion(.stationaryExit, at: TestTime.offset(18 * 60), confidence: .medium)
+            ]
+        )
+        #expect(stored.gapStats == nil)
+        try store.write(stored)
+        store.setOpenSessionId(stored.sessionId)
+
+        // Act
+        var recorder = recorder(store)
+        recorder.record(motionSamples: [sample(18 * 60 + 30, walking: true)])
+
+        // Assert
+        let gapStats = try #require(store.latestSession?.gapStats)
+        #expect(gapStats.maxGapMillis == 18 * 60 * 1000)
+        #expect(gapStats.gapsOver10MinCount == 1)
+    }
+
     // MARK: - Privacy
 
     /// The whole reason this file exists is to be copied off the device, so a coordinate
@@ -169,22 +359,26 @@ struct TraceRecorderTests {
         #expect(types(store.latestSession) == ["walking_enter", "stationary_enter"])
     }
 
+    /// Both trips carry two events, because §9's viability rule would otherwise discard
+    /// them and this test is about the boundary, not about what survives it — see
+    /// `singleEventSessionIsDiscardedAtRotation` for that half.
     @Test("Silence for the idle gap starts the next trip")
     func idleGapRotatesTheSession() {
         // Arrange
         let store = StubTraceStore()
         var recorder = recorder(store)
+        let gap = TraceSessionBoundaryPolicy.idleGap
 
         // Act — the commute out, half an hour at the desk, the commute back.
-        recorder.record(motionSamples: [sample(0, automotive: true)])
-        recorder.record(motionSamples: [sample(TraceSessionBoundaryPolicy.idleGap, walking: true)])
+        recorder.record(motionSamples: [sample(0, automotive: true), sample(60, walking: true)])
+        recorder.record(motionSamples: [sample(gap + 60, automotive: true), sample(gap + 120, walking: true)])
 
         // Assert — two trips, and the second starts at its own first event.
         #expect(store.storedSessions.count == 2)
         let sessions = store.storedSessions
-        #expect(types(sessions[0]) == ["vehicle_enter"])
-        #expect(types(sessions[1]) == ["walking_enter"])
-        #expect(sessions[1].startDate == TestTime.offset(TraceSessionBoundaryPolicy.idleGap))
+        #expect(types(sessions[0]) == ["vehicle_enter", "vehicle_exit", "walking_enter"])
+        #expect(types(sessions[1]) == ["vehicle_enter", "vehicle_exit", "walking_enter"])
+        #expect(sessions[1].startDate == TestTime.offset(gap + 60))
     }
 
     @Test("A session that never falls silent rotates at the duration cap")
@@ -279,7 +473,8 @@ struct TraceRecorderTests {
         // Arrange
         let store = StubTraceStore()
         var recorder = recorder(store)
-        recorder.record(motionSamples: [sample(0, walking: true)])
+        // Two events, so §9's viability rule keeps the session this test closes.
+        recorder.record(motionSamples: [sample(0, walking: true), sample(30, stationary: true)])
 
         // Act
         recorder.closeOpenSession()
@@ -289,7 +484,8 @@ struct TraceRecorderTests {
         #expect(store.openSessionId == nil)
 
         // And the next event, well inside the idle gap, is a new trip.
-        recorder.record(motionSamples: [sample(60, stationary: true)])
+        recorder.record(motionSamples: [sample(60, stationary: false, running: true)])
+        recorder.record(motionSamples: [sample(90, walking: true)])
         #expect(store.storedSessions.count == 2)
     }
 
@@ -337,12 +533,13 @@ struct TraceRecorderTests {
         // Arrange
         let store = StubTraceStore()
         var first = recorder(store)
-        first.record(motionSamples: [sample(0, walking: true)])
+        // Two events, so the session the relaunch rotates away from is one §9 keeps.
+        first.record(motionSamples: [sample(0, walking: true), sample(30, stationary: true)])
 
         // Act
         var second = recorder(store)
         second.record(qualitySample: LocationQualitySample(
-            timestamp: TestTime.offset(TraceSessionBoundaryPolicy.idleGap),
+            timestamp: TestTime.offset(30 + TraceSessionBoundaryPolicy.idleGap),
             horizontalAccuracy: 30
         ))
 
@@ -616,12 +813,14 @@ struct TraceRecorderTests {
     /// a clean slate for fixes the previous one already holds.
     @Test("The watermark survives a session rotation")
     func watermarkOutlivesRotation() {
-        // Arrange — one session, then silence long enough to rotate.
+        // Arrange — one session of two fixes (§9 discards a shorter one), then silence
+        // long enough to rotate.
         let store = StubTraceStore()
         var recorder = recorder(store)
         recorder.record(fix: TestGeo.fix(at: TestTime.offset(0), accuracy: 8))
+        recorder.record(fix: TestGeo.fix(at: TestTime.offset(20), accuracy: 8))
         recorder.record(fix: TestGeo.fix(
-            at: TestTime.offset(TraceSessionBoundaryPolicy.idleGap),
+            at: TestTime.offset(20 + TraceSessionBoundaryPolicy.idleGap),
             accuracy: 8
         ))
         #expect(store.storedSessions.count == 2)

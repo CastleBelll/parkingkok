@@ -52,6 +52,25 @@ enum TraceSessionBoundaryPolicy {
     /// Ordinary clock skew, not a clock change. Matches the location freshness tolerance.
     static let clockTolerance: TimeInterval = 5
 
+    /// Fewer events than this and the session is not worth keeping (§9 "비생존 세션은
+    /// 버린다").
+    ///
+    /// Two, because one event is a lone edge with half an hour of silence on either side.
+    /// It cannot become a §8 fixture — a fixture needs a sequence to replay — and it tells
+    /// the engine nothing it could have acted on. Five of the nine sessions in the
+    /// September 2026 field set were exactly that, and they were more than half of what
+    /// the rolling cap was holding.
+    static let minimumViableEventCount = 2
+
+    /// Whether a session that has stopped growing is worth storing.
+    ///
+    /// **Only ever asked at rotation.** An open session with one event is not a failure,
+    /// it is a session that has had one event so far, and judging it early would discard a
+    /// trip on the strength of its first edge.
+    static func isViable(eventCount: Int) -> Bool {
+        eventCount >= minimumViableEventCount
+    }
+
     /// Why the open session was closed. Diagnostic only — §9's schema has no field for it.
     enum RotationReason: String, Sendable, Equatable, CaseIterable {
         /// No event for `idleGap`. The ordinary end of a trip.
