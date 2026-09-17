@@ -52,6 +52,15 @@ struct RehydrationSnapshot: Sendable, Equatable {
     var lastDrivingSessionEndedAt: Date?
     var drivingFixCount = 0
     var drivingMovingSampleCount = 0
+    /// Accepted fixes that did and did not carry a Core Location speed estimate, and how
+    /// much of `drivingMovingSampleCount` the distance fallback contributed. Together
+    /// they separate "the device never moved" from "the platform never reported a speed",
+    /// which the September 2026 field traces showed are not the same failure.
+    var drivingSpeedAvailableCount = 0
+    var drivingSpeedMissingCount = 0
+    var drivingDerivedMovingSampleCount = 0
+    /// Why the distance fallback last declined a fix.
+    var movementEvidenceRejectReason: MovementEvidenceRejection?
     var drivingOutlierDropCount = 0
     var drivingDistanceMeters: Double = 0
     /// Accepted `lastReliableLocation` updates. Zero with a non-zero fix count means the
@@ -228,6 +237,10 @@ actor BackgroundCoordinator {
         recordTrace { $0.record(fix: fix) }
         snapshot.drivingFixCount = evidence.fixCount
         snapshot.drivingMovingSampleCount = evidence.movingSampleCount
+        snapshot.drivingSpeedAvailableCount = evidence.speedAvailableCount
+        snapshot.drivingSpeedMissingCount = evidence.speedMissingCount
+        snapshot.drivingDerivedMovingSampleCount = evidence.derivedMovingSampleCount
+        snapshot.movementEvidenceRejectReason = evidence.movementEvidenceRejection
         snapshot.drivingOutlierDropCount = evidence.outlierCount
         snapshot.drivingDistanceMeters = evidence.distanceMeters
 
@@ -409,6 +422,10 @@ actor BackgroundCoordinator {
         snapshot.drivingConfirmedAt = nil
         snapshot.drivingFixCount = 0
         snapshot.drivingMovingSampleCount = 0
+        snapshot.drivingSpeedAvailableCount = 0
+        snapshot.drivingSpeedMissingCount = 0
+        snapshot.drivingDerivedMovingSampleCount = 0
+        snapshot.movementEvidenceRejectReason = nil
         snapshot.drivingOutlierDropCount = 0
         snapshot.drivingDistanceMeters = 0
         snapshot.captureFailure = nil
