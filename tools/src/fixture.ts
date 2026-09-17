@@ -92,12 +92,29 @@ export interface ProposedExpectation {
   readonly finalState?: DetectionState | undefined;
 }
 
+/**
+ * What `convert --repair` changed, so a rescued recording can never be mistaken for one
+ * the device wrote.
+ *
+ * Indices into the *source trace's* `events`, not this fixture's: the point is to send a
+ * reviewer back to the original file to see what was there. Present only when the repair
+ * actually changed something — a `--repair` run with nothing to repair produces the same
+ * fixture as a plain convert, and saying so in the file would be noise, not provenance.
+ */
+export interface FixtureRepair {
+  /** Events dropped because an identical one was already recorded. */
+  readonly droppedReplayIndices: readonly number[];
+  /** Events that ran backwards and were moved into time order. */
+  readonly reorderedIndices: readonly number[];
+}
+
 export interface FixtureTodo {
   readonly status: typeof TODO_STATUS;
   /** A suggestion derived from the label. `null` when the label does not justify one. */
   readonly proposedExpected: ProposedExpectation | null;
   readonly rationale: string;
   readonly source: TodoSource;
+  readonly repair?: FixtureRepair | undefined;
 }
 
 export interface ConfirmedFixture {
@@ -121,7 +138,8 @@ export type FixtureDocument = ConfirmedFixture | DraftFixture;
 const FIXTURE_KEYS = ['name', 'initialState', 'events', 'expected', '_todo'] as const;
 const EXPECTED_KEYS = ['candidate', 'confidence', 'finalState', 'requiredReasons'] as const;
 const PROPOSED_KEYS = ['candidate', 'finalState'] as const;
-const TODO_KEYS = ['status', 'proposedExpected', 'rationale', 'source'] as const;
+const TODO_KEYS = ['status', 'proposedExpected', 'rationale', 'source', 'repair'] as const;
+const REPAIR_KEYS = ['droppedReplayIndices', 'reorderedIndices'] as const;
 const SOURCE_KEYS = [
   'sessionId',
   'platform',
@@ -232,6 +250,34 @@ function parseSource(value: unknown, path: string): TodoSource {
   };
 }
 
+function parseIndexList(
+  object: Record<string, unknown>,
+  path: string,
+  key: string,
+): readonly number[] {
+  const raw = asArray(object[key], `${path}.${key}`);
+  return raw.map((entry, index) => {
+    const where = `${path}.${key}[${String(index)}]`;
+    if (typeof entry !== 'number' || !Number.isInteger(entry) || entry < 0) {
+      fail(where, `expected a non-negative integer trace event index, got ${JSON.stringify(entry)}`);
+    }
+    return entry;
+  });
+}
+
+function parseRepair(value: unknown, path: string): FixtureRepair {
+  const object = asObject(value, path);
+  allowOnlyKeys(object, path, REPAIR_KEYS);
+  const repair: FixtureRepair = {
+    droppedReplayIndices: parseIndexList(object, path, 'droppedReplayIndices'),
+    reorderedIndices: parseIndexList(object, path, 'reorderedIndices'),
+  };
+  if (repair.droppedReplayIndices.length === 0 && repair.reorderedIndices.length === 0) {
+    fail(path, 'records a repair that changed nothing; omit the block instead');
+  }
+  return repair;
+}
+
 function parseTodo(value: unknown, path: string): FixtureTodo {
   const object = asObject(value, path);
   allowOnlyKeys(object, path, TODO_KEYS);
@@ -246,6 +292,7 @@ function parseTodo(value: unknown, path: string): FixtureTodo {
         : parseProposedExpectation(object['proposedExpected'], `${path}.proposedExpected`),
     rationale: requireString(object, path, 'rationale'),
     source: parseSource(object['source'], `${path}.source`),
+    repair: 'repair' in object ? parseRepair(object['repair'], `${path}.repair`) : undefined,
   };
 }
 

@@ -183,6 +183,9 @@ struct DiagnosticsView: View {
             LabeledContent("이벤트 수", value: "\(model.traceSummary.eventCount)개")
             LabeledContent("상한으로 버림", value: "\(model.traceSummary.droppedSessionCount)개")
             LabeledContent("라벨 없음", value: "\(model.traceSummary.unlabeledSessionCount)개")
+            if model.snapshot.traceReplayDropCount > 0 {
+                LabeledContent("재전달 위치 무시", value: "\(model.snapshot.traceReplayDropCount)회")
+            }
             if let failure = model.snapshot.traceFailure {
                 LabeledContent("기록 실패", value: failure).foregroundStyle(.orange)
             }
