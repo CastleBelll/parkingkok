@@ -77,6 +77,79 @@ struct TraceDeviceMetadata: Sendable, Equatable {
     }
 }
 
+/// What the gaps inside one recorded session looked like (docs/05 §9 "gap 계측").
+///
+/// **This exists to retire a guess, not to act on one.** The 30-minute idle gap was set
+/// from a single day of observation and the same day showed it landing badly: three office
+/// waits of 20.7 / 28.9 / 28.4 minutes all stayed inside one session — the largest missing
+/// the threshold by 66 seconds — while a 16.9-minute silence sat in the middle of a real
+/// subway ride, so lowering the number would have cut a genuine journey in two. Nothing
+/// here changes the threshold. It records what a threshold would have had to decide, so
+/// that the next change is made against a distribution instead of against one commute.
+///
+/// The two counts bracket the interesting region rather than describing it fully: a
+/// histogram of every gap would say more and would also mean carrying an array per session
+/// for a number nobody reads until the retune. The whole distribution is recoverable from
+/// the events themselves once a trace is copied off the device; these three numbers are
+/// what makes the aggregate cheap enough to show on the diagnostics screen.
+struct TraceGapStats: Sendable, Equatable, Codable {
+    /// Milliseconds. `0` for a session with fewer than two events — no gap was observed,
+    /// which is not the same as a short one, and the viability rule discards those anyway.
+    var maxGapMillis: Int64 = 0
+    var gapsOver10MinCount = 0
+    var gapsOver20MinCount = 0
+
+    static let tenMinutesMillis: Int64 = 10 * 60 * 1000
+    static let twentyMinutesMillis: Int64 = 20 * 60 * 1000
+
+    static let empty = TraceGapStats()
+
+    /// Folds in the silence between the previous event and the one being appended.
+    ///
+    /// Called once per appended event, which is what keeps this off the battery budget:
+    /// three integer comparisons on a path that was already writing the event.
+    /// A negative delta cannot arrive — the recorder's watermark refuses any event not
+    /// strictly newer than the last one — but it is clamped rather than trusted, because a
+    /// negative maximum would read as "no gap observed" and quietly poison the aggregate.
+    mutating func record(gapMillis: Int64) {
+        let gap = max(0, gapMillis)
+        maxGapMillis = max(maxGapMillis, gap)
+        if gap > Self.tenMinutesMillis {
+            gapsOver10MinCount += 1
+        }
+        if gap > Self.twentyMinutesMillis {
+            gapsOver20MinCount += 1
+        }
+    }
+
+    /// Measures a finished event list in one pass.
+    ///
+    /// Used where there is no append to hang the increment off: restoring a session after
+    /// process death, and splitting one into fragments whose gaps are a subset of the
+    /// parent's. Both are rare and bounded by `maximumEvents`.
+    init(events: [TraceEvent]) {
+        for (previous, next) in zip(events, events.dropFirst()) {
+            record(gapMillis: next.atMillis - previous.atMillis)
+        }
+    }
+
+    init() {}
+}
+
+/// Where a session came from when a human cut a longer one in two (docs/05 §9
+/// "사람이 세션을 나눈다").
+///
+/// The device cannot tell "sitting in the office" from "travelling" — both emit motion
+/// edges, and the September 2026 traces put the silence between them within a minute of the
+/// boundary. A person can tell, so the split is theirs to make; this records that they made
+/// it. Both fragments carry the *same* value, so the pair is recoverable from either half
+/// long after the parent file has been evicted.
+struct TraceSplitOrigin: Sendable, Equatable, Codable {
+    let parentSessionId: UUID
+    /// The time of the first event of the second fragment — the cut itself, not a gap.
+    let atMillis: Int64
+}
+
 /// One recorded session, in the exact shape docs/05 §9 fixed.
 ///
 /// **Never an encoding of a live detection type.** Like `DiagnosticsReport`, every field
@@ -89,8 +162,14 @@ struct TraceDeviceMetadata: Sendable, Equatable {
 /// `endedAt` is non-optional and is rewritten to the newest event's time on every append,
 /// so a file left behind by process death is already complete rather than needing a
 /// repair pass on the next launch.
-struct TraceSession: Sendable, Equatable, Codable {
+struct TraceSession: Sendable, Equatable, Codable, Identifiable {
     static let schemaVersion = 1
+
+    /// `sessionId` is already the identity §9 gives a session; this only spells it the way
+    /// SwiftUI asks for it.
+    var id: UUID {
+        sessionId
+    }
 
     var schemaVersion: Int = TraceSession.schemaVersion
     let sessionId: UUID
@@ -102,6 +181,14 @@ struct TraceSession: Sendable, Equatable, Codable {
     var endedAt: Int64
     var label: TraceLabel
     var events: [TraceEvent]
+    /// Optional because *absent* and *zero* are different claims, and the aggregate this
+    /// feeds cannot afford to confuse them. Traces recorded before gap measurement landed
+    /// were never measured; reading them as "no gap over 10 minutes" would understate
+    /// exactly the tail the retune is looking for. A session written from now on always
+    /// carries one.
+    var gapStats: TraceGapStats?
+    /// Present only on a fragment a human cut out of a longer session.
+    var splitFrom: TraceSplitOrigin?
 
     init(
         sessionId: UUID,
@@ -109,7 +196,9 @@ struct TraceSession: Sendable, Equatable, Codable {
         startedAt: Date,
         endedAt: Date,
         label: TraceLabel = .unlabeled,
-        events: [TraceEvent] = []
+        events: [TraceEvent] = [],
+        gapStats: TraceGapStats? = nil,
+        splitFrom: TraceSplitOrigin? = nil
     ) {
         self.sessionId = sessionId
         platform = metadata.platform
@@ -120,6 +209,19 @@ struct TraceSession: Sendable, Equatable, Codable {
         self.endedAt = endedAt.traceMillis
         self.label = label
         self.events = events
+        self.gapStats = gapStats
+        self.splitFrom = splitFrom
+    }
+
+    /// The flat §9 fields read back as the value they were written from, so a fragment can
+    /// be built carrying the same device and build as the session it was cut out of.
+    var metadata: TraceDeviceMetadata {
+        TraceDeviceMetadata(
+            platform: platform,
+            deviceModel: deviceModel,
+            osVersion: osVersion,
+            appVersion: appVersion
+        )
     }
 
     var startDate: Date {
@@ -139,9 +241,17 @@ struct TraceSessionSummary: Sendable, Equatable, Identifiable {
     let endedAt: Date
     let eventCount: Int
     let label: TraceLabel
+    let gapStats: TraceGapStats?
+    let splitFrom: TraceSplitOrigin?
 
     var duration: TimeInterval {
         endedAt.timeIntervalSince(startedAt)
+    }
+
+    /// A fragment is already the result of one human judgement, so the labelling screen
+    /// says so rather than presenting it as something the device recorded whole.
+    var isSplitFragment: Bool {
+        splitFrom != nil
     }
 
     init(_ session: TraceSession) {
@@ -150,18 +260,40 @@ struct TraceSessionSummary: Sendable, Equatable, Identifiable {
         endedAt = session.endDate
         eventCount = session.events.count
         label = session.label
+        gapStats = session.gapStats
+        splitFrom = session.splitFrom
     }
 }
 
-/// The four numbers that answer "is recording working?" without retrieving a single trace
-/// (docs/05 §9 rolling cap; the dropped count is the part a silent eviction would hide).
+/// The numbers that answer "is recording working?" — and now "what would a different idle
+/// gap have done?" — without retrieving a single trace (docs/05 §9).
+///
+/// Both drop counters are here because they fail in opposite directions and a single total
+/// would hide which one is happening: `droppedSessionCount` climbing means the rolling cap
+/// is evicting trips before anyone labelled them, while `nonViableDropCount` climbing means
+/// the boundary is manufacturing single-event sessions and the threshold is wrong.
+///
+/// The gap aggregate describes the sessions **still on disk**. Eviction takes a session's
+/// gaps with it, which is the right reading for a screen that answers "what is currently
+/// recorded" — the durable copy of the distribution is the trace files themselves, each
+/// carrying its own `gapStats`, retrieved over the same `devicectl copy` path.
 struct TraceSummary: Sendable, Equatable, Codable {
     var sessionCount = 0
     var eventCount = 0
     /// Sessions evicted by the rolling cap since install. Persisted, because the eviction
     /// that matters happens in a background process nobody is watching.
     var droppedSessionCount = 0
+    /// Sessions discarded at rotation for holding one event or none (§9 "비생존 세션은
+    /// 버린다"). Persisted for the same reason, and never folded into the count above.
+    var nonViableDropCount = 0
     var unlabeledSessionCount = 0
+    /// Sessions carrying a measurement. Below `sessionCount` only while traces recorded
+    /// before gap measurement landed are still on disk.
+    var measuredSessionCount = 0
+    /// The largest silence inside any retained session, in milliseconds.
+    var maxGapMillis: Int64 = 0
+    var sessionsOver10MinGapCount = 0
+    var sessionsOver20MinGapCount = 0
 
     static let empty = TraceSummary()
 }

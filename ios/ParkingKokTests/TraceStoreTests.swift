@@ -23,6 +23,260 @@ struct TraceStoreTests {
         )
     }
 
+    // MARK: - Non-viable discard (§9)
+
+    @Test("A discarded session leaves the disk and is counted apart from the rolling cap")
+    func discardRemovesTheFileAndCountsSeparately() throws {
+        // Arrange
+        let directory = TemporaryTraceDirectory()
+        let store = store(directory)
+        let lonely = session(startOffset: 0, events: 1)
+        try store.write(lonely)
+        try store.write(session(startOffset: 600, events: 4))
+
+        // Act
+        store.discardNonViable(id: lonely.sessionId)
+
+        // Assert
+        #expect(store.load(id: lonely.sessionId) == nil)
+        #expect(store.summary().sessionCount == 1)
+        #expect(store.summary().nonViableDropCount == 1)
+        // The rolling cap evicted nothing; conflating the two would hide which is happening.
+        #expect(store.summary().droppedSessionCount == 0)
+    }
+
+    /// The counter matters most in a background launch nobody is watching, which is the
+    /// one place it cannot be held in memory.
+    @Test("The non-viable count outlives the process")
+    func nonViableCountIsPersisted() throws {
+        // Arrange
+        let directory = TemporaryTraceDirectory()
+        let store = store(directory)
+        let first = session(startOffset: 0, events: 1)
+        let second = session(startOffset: 600, events: 1)
+        try store.write(first)
+        try store.write(second)
+
+        // Act
+        store.discardNonViable(id: first.sessionId)
+        store.discardNonViable(id: second.sessionId)
+
+        // Assert
+        #expect(FileTraceStore(directory: directory.url).summary().nonViableDropCount == 2)
+    }
+
+    @Test("Discarding the same session twice counts once")
+    func discardIsIdempotent() throws {
+        // Arrange
+        let directory = TemporaryTraceDirectory()
+        let store = store(directory)
+        let lonely = session(startOffset: 0, events: 1)
+        try store.write(lonely)
+
+        // Act
+        store.discardNonViable(id: lonely.sessionId)
+        store.discardNonViable(id: lonely.sessionId)
+
+        // Assert
+        #expect(store.summary().nonViableDropCount == 1)
+    }
+
+    /// A pointer outliving the file it names would have the next launch try to reopen a
+    /// session that is gone.
+    @Test("Discarding the open session clears the open-session pointer")
+    func discardClearsTheOpenPointer() throws {
+        // Arrange
+        let directory = TemporaryTraceDirectory()
+        let store = store(directory)
+        let lonely = session(startOffset: 0, events: 1)
+        try store.write(lonely)
+        store.setOpenSessionId(lonely.sessionId)
+
+        // Act
+        store.discardNonViable(id: lonely.sessionId)
+
+        // Assert
+        #expect(store.openSessionId == nil)
+        #expect(FileTraceStore(directory: directory.url).openSessionId == nil)
+    }
+
+    // MARK: - Split replacement (§9)
+
+    @Test("A split session is replaced on disk by its fragments")
+    func replaceSwapsTheParentForItsFragments() throws {
+        // Arrange
+        let directory = TemporaryTraceDirectory()
+        let store = store(directory)
+        let parent = session(startOffset: 0, events: 6)
+        try store.write(parent)
+        let fragments = try TraceSessionSplit.split(parent, atEventIndex: 3)
+
+        // Act
+        try store.replace(parent.sessionId, with: [fragments.leading, fragments.trailing])
+
+        // Assert
+        #expect(store.load(id: parent.sessionId) == nil)
+        #expect(store.load(id: fragments.leading.sessionId) == fragments.leading)
+        #expect(store.load(id: fragments.trailing.sessionId) == fragments.trailing)
+        #expect(store.summary().sessionCount == 2)
+        #expect(store.summary().eventCount == 6)
+        // A split is not an eviction; neither counter may move.
+        #expect(store.summary().droppedSessionCount == 0)
+        #expect(store.summary().nonViableDropCount == 0)
+    }
+
+    @Test("Splitting the session still being recorded is refused")
+    func replaceRefusesTheOpenSession() throws {
+        // Arrange
+        let directory = TemporaryTraceDirectory()
+        let store = store(directory)
+        let parent = session(startOffset: 0, events: 6)
+        try store.write(parent)
+        store.setOpenSessionId(parent.sessionId)
+        let fragments = try TraceSessionSplit.split(parent, atEventIndex: 3)
+
+        // Act / Assert
+        #expect(throws: TraceStoreError.sessionIsOpen) {
+            try store.replace(parent.sessionId, with: [fragments.leading, fragments.trailing])
+        }
+        #expect(store.load(id: parent.sessionId) == parent)
+        #expect(store.summary().sessionCount == 1)
+    }
+
+    @Test("Splitting a session that is gone is an error, not a silent write")
+    func replaceRefusesAMissingSession() throws {
+        // Arrange
+        let directory = TemporaryTraceDirectory()
+        let store = store(directory)
+        let parent = session(startOffset: 0, events: 6)
+        let fragments = try TraceSessionSplit.split(parent, atEventIndex: 3)
+
+        // Act / Assert
+        #expect(throws: TraceStoreError.sessionNotFound) {
+            try store.replace(parent.sessionId, with: [fragments.leading, fragments.trailing])
+        }
+        #expect(store.summary().sessionCount == 0)
+    }
+
+    /// One session in, two out. A cap applied only when the recorder opens a session would
+    /// let a run of splits carry the store past it and stay there.
+    @Test("A split at the rolling cap evicts the oldest session rather than overrunning it")
+    func replaceReappliesTheRollingCap() throws {
+        // Arrange — exactly at the cap.
+        let directory = TemporaryTraceDirectory()
+        let store = store(directory, retention: TraceRetentionPolicy(maximumSessionCount: 3))
+        let oldest = session(startOffset: 0, events: 2)
+        try store.write(oldest)
+        try store.write(session(startOffset: 600, events: 2))
+        let parent = session(startOffset: 1200, events: 6)
+        try store.write(parent)
+        #expect(store.summary().sessionCount == 3)
+
+        // Act
+        let fragments = try TraceSessionSplit.split(parent, atEventIndex: 3)
+        try store.replace(parent.sessionId, with: [fragments.leading, fragments.trailing])
+
+        // Assert — still three, and the evicted one is the oldest, counted as a cap drop.
+        #expect(store.summary().sessionCount == 3)
+        #expect(store.load(id: oldest.sessionId) == nil)
+        #expect(store.summary().droppedSessionCount == 1)
+        #expect(store.load(id: fragments.leading.sessionId) != nil)
+        #expect(store.load(id: fragments.trailing.sessionId) != nil)
+    }
+
+    @Test("The cap never evicts the session being recorded to make room for a split")
+    func replaceProtectsTheOpenSessionFromTheCap() throws {
+        // Arrange — the open session is also the oldest.
+        let directory = TemporaryTraceDirectory()
+        let store = store(directory, retention: TraceRetentionPolicy(maximumSessionCount: 2))
+        let open = session(startOffset: 0, events: 2)
+        try store.write(open)
+        store.setOpenSessionId(open.sessionId)
+        let parent = session(startOffset: 600, events: 6)
+        try store.write(parent)
+
+        // Act
+        let fragments = try TraceSessionSplit.split(parent, atEventIndex: 3)
+        try store.replace(parent.sessionId, with: [fragments.leading, fragments.trailing])
+
+        // Assert
+        #expect(store.load(id: open.sessionId) != nil)
+        #expect(store.summary().sessionCount == 2)
+    }
+
+    // MARK: - Gap aggregate (§9)
+
+    @Test("The summary aggregates gaps over the sessions on disk")
+    func summaryAggregatesGapStats() throws {
+        // Arrange
+        let directory = TemporaryTraceDirectory()
+        let store = store(directory)
+        try store.write(measured(startOffset: 0, gapsMinutes: [1, 2]))
+        try store.write(measured(startOffset: 3600, gapsMinutes: [12, 25]))
+        try store.write(measured(startOffset: 7200, gapsMinutes: [14]))
+
+        // Act
+        let summary = store.summary()
+
+        // Assert
+        #expect(summary.measuredSessionCount == 3)
+        #expect(summary.maxGapMillis == 25 * 60 * 1000)
+        #expect(summary.sessionsOver10MinGapCount == 2)
+        #expect(summary.sessionsOver20MinGapCount == 1)
+    }
+
+    /// A trace recorded before the measurement landed was never measured, and reading its
+    /// absence as "no long gaps" would understate the very tail the threshold is being
+    /// re-set from.
+    @Test("An unmeasured session is excluded from the aggregate rather than counted as zero")
+    func unmeasuredSessionsAreNotCountedAsZero() throws {
+        // Arrange
+        let directory = TemporaryTraceDirectory()
+        let store = store(directory)
+        try store.write(session(startOffset: 0, events: 3))
+        try store.write(measured(startOffset: 3600, gapsMinutes: [22]))
+
+        // Act
+        let summary = store.summary()
+
+        // Assert
+        #expect(summary.sessionCount == 2)
+        #expect(summary.measuredSessionCount == 1)
+        #expect(summary.maxGapMillis == 22 * 60 * 1000)
+        #expect(summary.sessionsOver20MinGapCount == 1)
+    }
+
+    /// A session with fewer than two events observed no gap. Zero is the honest reading —
+    /// and it must not be mistaken for the largest gap on disk.
+    @Test("A measured session with no observable gap contributes zero")
+    func aSessionWithNoGapContributesZero() throws {
+        // Arrange
+        let directory = TemporaryTraceDirectory()
+        let store = store(directory)
+        try store.write(measured(startOffset: 0, gapsMinutes: []))
+
+        // Act / Assert
+        #expect(store.summary().measuredSessionCount == 1)
+        #expect(store.summary().maxGapMillis == 0)
+    }
+
+    private func measured(startOffset: TimeInterval, gapsMinutes: [Double]) -> TraceSession {
+        var offset = startOffset
+        var events: [TraceEvent] = [.motion(.walkingEnter, at: TestTime.offset(offset), confidence: .high)]
+        for minutes in gapsMinutes {
+            offset += minutes * 60
+            events.append(.motion(.stationaryEnter, at: TestTime.offset(offset), confidence: .high))
+        }
+        return TraceSession(
+            sessionId: UUID(),
+            metadata: TestTrace.metadata,
+            startedAt: TestTime.offset(startOffset),
+            endedAt: TestTime.offset(offset),
+            events: events,
+            gapStats: TraceGapStats(events: events)
+        )
+    }
+
     @Test("A written session round-trips off disk")
     func roundTripsThroughFile() throws {
         // Arrange

@@ -61,6 +61,22 @@ export interface TraceEvent {
   readonly floor?: string | undefined;
 }
 
+/** Contract §9 "gap 계측". Counts and a duration — nothing here can hold a place. */
+export interface TraceGapStats {
+  readonly maxGapMillis: number;
+  readonly gapsOver10MinCount: number;
+  readonly gapsOver20MinCount: number;
+}
+
+/**
+ * Contract §9 "사람이 세션을 나눈다". A parent id and the instant it was cut at —
+ * nothing here can hold a place either.
+ */
+export interface TraceSplitProvenance {
+  readonly parentSessionId: string;
+  readonly atMillis: number;
+}
+
 export interface Trace {
   readonly schemaVersion: number;
   readonly sessionId: string;
@@ -72,6 +88,8 @@ export interface Trace {
   readonly endedAt: number;
   readonly label: TraceLabel;
   readonly events: readonly TraceEvent[];
+  readonly gapStats?: TraceGapStats | undefined;
+  readonly splitFrom?: TraceSplitProvenance | undefined;
 }
 
 const TRACE_KEYS = [
@@ -85,7 +103,15 @@ const TRACE_KEYS = [
   'endedAt',
   'label',
   'events',
+  // Widening the whitelist is the only sanctioned way to add a session key, and each
+  // addition has to argue it cannot carry a coordinate. Both of these are contract §9
+  // fields: gapStats is three counts and a duration, splitFrom is a uuid and an instant.
+  'gapStats',
+  'splitFrom',
 ] as const;
+
+const GAP_STATS_KEYS = ['maxGapMillis', 'gapsOver10MinCount', 'gapsOver20MinCount'] as const;
+const SPLIT_FROM_KEYS = ['parentSessionId', 'atMillis'] as const;
 
 const LABEL_KEYS = ['mode', 'parked', 'note'] as const;
 
@@ -163,7 +189,30 @@ function parseEvent(value: unknown, path: string): TraceEvent {
   return event;
 }
 
-function parseEvents(value: unknown, path: string): TraceEvent[] {
+/**
+ * The ordering rule, on its own so `repair.ts` can hold its own output to it.
+ *
+ * A trace that fails this is a recorder defect or a clock adjustment mid-session, and
+ * saying so is the whole value of the check — `trace2fixture convert --repair` is the
+ * deliberate, reported exception, never a default.
+ */
+export function assertOrderedByTime(events: readonly TraceEvent[], path: string): void {
+  events.forEach((event, index) => {
+    const previous = events[index - 1];
+    if (previous !== undefined && event.atMillis < previous.atMillis) {
+      fail(
+        `${path}[${String(index)}].atMillis`,
+        `events must be ordered by time, but ${String(event.atMillis)} follows ` +
+          `${String(previous.atMillis)}. Out-of-order timestamps mean a recorder bug or a ` +
+          'clock adjustment mid-session; fix the recording rather than sorting it here. ' +
+          'A recording that cannot be made again can be rescued with `convert --repair`, ' +
+          'which reports every event it changes',
+      );
+    }
+  });
+}
+
+function parseEvents(value: unknown, path: string, options: ParseTraceOptions): TraceEvent[] {
   const raw = asArray(value, path);
   if (raw.length === 0) {
     fail(path, 'a trace with no events cannot be converted; there is nothing to time-base against');
@@ -177,22 +226,21 @@ function parseEvents(value: unknown, path: string): TraceEvent[] {
   }
 
   const events = raw.map((entry, index) => parseEvent(entry, `${path}[${String(index)}]`));
-  events.forEach((event, index) => {
-    const previous = events[index - 1];
-    if (previous !== undefined && event.atMillis < previous.atMillis) {
-      fail(
-        `${path}[${String(index)}].atMillis`,
-        `events must be ordered by time, but ${String(event.atMillis)} follows ` +
-          `${String(previous.atMillis)}. Out-of-order timestamps mean a recorder bug or a ` +
-          'clock adjustment mid-session; fix the recording rather than sorting it here',
-      );
-    }
-  });
+  if (options.allowOutOfOrder !== true) assertOrderedByTime(events, path);
   return events;
 }
 
+export interface ParseTraceOptions {
+  /**
+   * Let events run backwards, for a caller that is about to hand them to `repairTrace`.
+   * Off by default, and every other check still applies: this loosens the one rule the
+   * repair exists to restore, not the schema.
+   */
+  readonly allowOutOfOrder?: boolean;
+}
+
 /** Parses and validates an already-decoded trace document. */
-export function parseTrace(value: unknown, path = 'trace'): Trace {
+export function parseTrace(value: unknown, path = 'trace', options: ParseTraceOptions = {}): Trace {
   const object = asObject(value, path);
   allowOnlyKeys(object, path, TRACE_KEYS);
 
@@ -220,7 +268,35 @@ export function parseTrace(value: unknown, path = 'trace'): Trace {
     startedAt,
     endedAt,
     label: parseLabel(object['label'], `${path}.label`),
-    events: parseEvents(object['events'], `${path}.events`),
+    events: parseEvents(object['events'], `${path}.events`, options),
+    gapStats: parseGapStats(object['gapStats'], `${path}.gapStats`),
+    splitFrom: parseSplitFrom(object['splitFrom'], `${path}.splitFrom`),
+  };
+}
+
+/**
+ * Both of these are optional: a session recorded before the fields existed is still a
+ * valid trace, and an unsplit session has no parent. Absent stays absent — a default
+ * would invent provenance that was never recorded.
+ */
+function parseGapStats(value: unknown, path: string): TraceGapStats | undefined {
+  if (value === undefined) return undefined;
+  const object = asObject(value, path);
+  allowOnlyKeys(object, path, GAP_STATS_KEYS);
+  return {
+    maxGapMillis: requireNumber(object, path, 'maxGapMillis', { integer: true, min: 0 }),
+    gapsOver10MinCount: requireNumber(object, path, 'gapsOver10MinCount', { integer: true, min: 0 }),
+    gapsOver20MinCount: requireNumber(object, path, 'gapsOver20MinCount', { integer: true, min: 0 }),
+  };
+}
+
+function parseSplitFrom(value: unknown, path: string): TraceSplitProvenance | undefined {
+  if (value === undefined) return undefined;
+  const object = asObject(value, path);
+  allowOnlyKeys(object, path, SPLIT_FROM_KEYS);
+  return {
+    parentSessionId: requireString(object, path, 'parentSessionId'),
+    atMillis: requireNumber(object, path, 'atMillis', { integer: true, min: 0 }),
   };
 }
 
@@ -230,7 +306,11 @@ export function parseTrace(value: unknown, path = 'trace'): Trace {
  * The coordinate scan runs on the raw text first, so a banned field is reported as the
  * privacy violation it is rather than as a generic unknown key.
  */
-export function parseTraceText(text: string, path = 'trace'): Trace {
+export function parseTraceText(
+  text: string,
+  path = 'trace',
+  options: ParseTraceOptions = {},
+): Trace {
   assertNoCoordinate(text, path);
   let decoded: unknown;
   try {
@@ -240,5 +320,5 @@ export function parseTraceText(text: string, path = 'trace'): Trace {
       `${path}: not valid JSON (${error instanceof Error ? error.message : String(error)})`,
     );
   }
-  return parseTrace(decoded, path);
+  return parseTrace(decoded, path, options);
 }

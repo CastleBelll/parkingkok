@@ -211,6 +211,8 @@ final class StubTraceStore: TraceStoring, @unchecked Sendable {
     private var order: [UUID] = []
     private var writeError: TraceStoreError?
     private var prunes: [UUID?] = []
+    private var openId: UUID?
+    private var discardedNonViableIds: [UUID] = []
 
     init(writeError: TraceStoreError? = nil) {
         self.writeError = writeError
@@ -228,6 +230,10 @@ final class StubTraceStore: TraceStoring, @unchecked Sendable {
         lock.withLock { prunes }
     }
 
+    var nonViableDiscards: [UUID] {
+        lock.withLock { discardedNonViableIds }
+    }
+
     func write(_ session: TraceSession) throws {
         try lock.withLock {
             if let writeError {
@@ -240,8 +246,43 @@ final class StubTraceStore: TraceStoring, @unchecked Sendable {
         }
     }
 
+    var openSessionId: UUID? {
+        lock.withLock { openId }
+    }
+
+    func setOpenSessionId(_ id: UUID?) {
+        lock.withLock { openId = id }
+    }
+
     func prune(protecting sessionId: UUID?) {
         lock.withLock { prunes.append(sessionId) }
+    }
+
+    func discardNonViable(id: UUID) {
+        lock.withLock {
+            guard sessions.removeValue(forKey: id) != nil else { return }
+            order.removeAll { $0 == id }
+            discardedNonViableIds.append(id)
+            if openId == id {
+                openId = nil
+            }
+        }
+    }
+
+    func replace(_ id: UUID, with fragments: [TraceSession]) throws {
+        try lock.withLock {
+            guard openId != id else { throw TraceStoreError.sessionIsOpen }
+            guard sessions[id] != nil else { throw TraceStoreError.sessionNotFound }
+            for fragment in fragments {
+                if sessions[fragment.sessionId] == nil {
+                    order.append(fragment.sessionId)
+                }
+                sessions[fragment.sessionId] = fragment
+            }
+            sessions.removeValue(forKey: id)
+            order.removeAll { $0 == id }
+            prunes.append(openId)
+        }
     }
 
     func summaries() -> [TraceSessionSummary] {
@@ -294,18 +335,41 @@ enum TestTrace {
     )
 
     static func session(
+        sessionId: UUID = UUID(),
         startedAt: Date = TestTime.offset(0),
         endedAt: Date = TestTime.offset(60),
         label: TraceLabel = .unlabeled,
-        events: [TraceEvent] = []
+        events: [TraceEvent] = [],
+        gapStats: TraceGapStats? = nil,
+        splitFrom: TraceSplitOrigin? = nil
     ) -> TraceSession {
         TraceSession(
-            sessionId: UUID(),
+            sessionId: sessionId,
             metadata: metadata,
             startedAt: startedAt,
             endedAt: endedAt,
             label: label,
-            events: events
+            events: events,
+            gapStats: gapStats,
+            splitFrom: splitFrom
+        )
+    }
+
+    /// A session whose events sit `spacing` apart, for the cases where only the shape of
+    /// the event list matters.
+    static func session(eventCount: Int, spacing: TimeInterval = 60) -> TraceSession {
+        let events = (0 ..< eventCount).map { index in
+            TraceEvent.motion(
+                index.isMultiple(of: 2) ? .stationaryEnter : .stationaryExit,
+                at: TestTime.offset(Double(index) * spacing),
+                confidence: .medium
+            )
+        }
+        return session(
+            startedAt: TestTime.offset(0),
+            endedAt: TestTime.offset(Double(max(0, eventCount - 1)) * spacing),
+            events: events,
+            gapStats: TraceGapStats(events: events)
         )
     }
 }

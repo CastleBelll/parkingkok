@@ -90,6 +90,7 @@ struct DiagnosticsReportTests {
         snapshot.significantChangeCount = 3
         snapshot.staleLocationDropCount = 2
         snapshot.lastStaleLocationAge = 12000
+        snapshot.traceReplayDropCount = 4
         snapshot.motionFailure = nil
 
         // Act
@@ -111,6 +112,8 @@ struct DiagnosticsReportTests {
         #expect(report.significantChangeCount == 3)
         #expect(report.staleLocationDropCount == 2)
         #expect(report.lastStaleLocationAge == 12000)
+        // Recording refused four replayed fixes; the export is the only place that says so.
+        #expect(report.traceReplayDropCount == 4)
         #expect(report.locationAuthorization == "whenInUse")
         #expect(report.motionAuthorization == "authorized")
         #expect(!report.isMonitoringSignificantChanges)

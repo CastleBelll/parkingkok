@@ -26,9 +26,14 @@ npm test           # build + node --test
 npm run lint
 
 node lib/cli.js --help
-node lib/cli.js convert <trace.json> [--name <name>] [--initial-state <STATE>] [--out <file>|-]
+node lib/cli.js convert <trace.json> [--name <name>] [--initial-state <STATE>] [--out <file>|-] [--repair]
 node lib/cli.js validate [paths...] [--allow-draft]
 ```
+
+`--repair`는 다시 만들 수 없는 기록을 구조하는 opt-in 경로다. 기본 동작은 그대로
+시간 역행을 거부한다. 무엇을 몇 개 바꿨는지 출력하고 초안의 `_todo.repair`에
+원본 인덱스를 남긴다 — 자세한 규칙은
+[`../platform-tests/README.md`](../platform-tests/README.md).
 
 ## 구조
 
@@ -38,6 +43,7 @@ node lib/cli.js validate [paths...] [--allow-draft]
 | `schema.ts` | 구조 검증 헬퍼. `allowOnlyKeys`가 미지의 키를 막는 단일 지점 |
 | `privacy.ts` | 좌표 금지. 필드 목록이 아니라 텍스트를 검사한다 |
 | `trace.ts` | §9 trace 파서 |
+| `repair.ts` | `--repair` 전용. 재전달 제거 + 시간 정렬. 기본 경로에서는 실행되지 않는다 |
 | `fixture.ts` | §8 fixture 파서 + 직렬화. confirmed / draft 구분 |
 | `convert.ts` | trace → draft fixture. 순수 함수, clock 없음 |
 | `cli.ts` | `convert` / `validate` |

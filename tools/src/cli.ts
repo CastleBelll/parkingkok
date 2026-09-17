@@ -3,6 +3,7 @@
  * `trace2fixture` — the command line around `convert.ts` and `fixture.ts`.
  *
  *   convert  <trace.json> [--out <file>] [--name <name>] [--initial-state <STATE>] [--force]
+ *            [--repair]
  *   validate [paths...] [--allow-draft]
  *
  * Drafts land in `platform-tests/drafts/` rather than next to the real fixtures, so a
@@ -17,6 +18,7 @@ import { parseArgs } from 'node:util';
 import { DETECTION_STATES, type DetectionState } from './contract';
 import { convertTraceToJson } from './convert';
 import { parseFixtureText } from './fixture';
+import { isRepaired, repairTrace, type TraceRepair } from './repair';
 import { ValidationError } from './schema';
 import { parseTraceText } from './trace';
 
@@ -33,6 +35,11 @@ const USAGE = `trace2fixture — trace (contract §9) to parity fixture (contrac
     --initial-state <STATE> Engine state at session start. Default: IDLE.
                             One of: ${DETECTION_STATES.join(', ')}
     --force                 Overwrite an existing output file.
+    --repair                Rescue a recording whose events run backwards: drop events
+                            identical to ones already recorded, and restore time order.
+                            Off by default — an out-of-order trace is a recorder defect,
+                            and this is for recordings that cannot be made again. Every
+                            change is printed and written into the draft's "_todo".
 
   validate [paths...] [--allow-draft]
     Paths may be files or directories. Default: ${FIXTURE_DIR}
@@ -67,6 +74,36 @@ function toDetectionState(value: string | undefined): DetectionState | undefined
   return value as DetectionState;
 }
 
+/**
+ * Says exactly what `--repair` changed, before the fixture is written.
+ *
+ * A repair that printed nothing would be the quiet rewrite this whole feature exists not
+ * to be: the operator has to be able to look each index up in the trace they recorded.
+ */
+function reportRepair(source: string, repair: TraceRepair | undefined): void {
+  if (repair === undefined) return;
+  if (!isRepaired(repair)) {
+    console.log(`--repair: ${source} needed no repair; the fixture is the one a plain convert gives`);
+    return;
+  }
+
+  console.log(`--repair: ${source} was repaired before conversion`);
+  console.log(`  dropped ${String(repair.droppedReplays.length)} replayed event(s)`);
+  for (const dropped of repair.droppedReplays) {
+    console.log(
+      `    events[${String(dropped.index)}] ${dropped.type} @${String(dropped.atMillis)}` +
+        ` — repeats events[${String(dropped.duplicateOfIndex)}]`,
+    );
+  }
+  console.log(`  reordered ${String(repair.movedEvents.length)} event(s)`);
+  for (const moved of repair.movedEvents) {
+    console.log(
+      `    events[${String(moved.index)}] ${moved.type} @${String(moved.atMillis)}` +
+        ` — recorded after @${String(moved.recordedAfterMillis)}`,
+    );
+  }
+}
+
 function runConvert(argv: readonly string[]): number {
   const { values, positionals } = parseArgs({
     args: [...argv],
@@ -75,6 +112,7 @@ function runConvert(argv: readonly string[]): number {
       name: { type: 'string' },
       'initial-state': { type: 'string' },
       force: { type: 'boolean', default: false },
+      repair: { type: 'boolean', default: false },
     },
     allowPositionals: true,
   });
@@ -84,11 +122,20 @@ function runConvert(argv: readonly string[]): number {
     throw new ValidationError('convert takes exactly one trace file');
   }
 
-  const trace = parseTraceText(readFileSync(input, 'utf8'), basename(input));
+  const source = basename(input);
+  const parsed = parseTraceText(readFileSync(input, 'utf8'), source, {
+    allowOutOfOrder: values.repair,
+  });
+  const { trace, repair } = values.repair
+    ? repairTrace(parsed)
+    : { trace: parsed, repair: undefined };
+  reportRepair(source, repair);
+
   const name = values.name ?? trace.sessionId;
   const json = convertTraceToJson(trace, {
     name,
     initialState: toDetectionState(values['initial-state']),
+    repair,
   });
 
   const out = values.out ?? join(DRAFT_DIR, `${name}.json`);

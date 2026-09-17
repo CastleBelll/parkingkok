@@ -15,8 +15,8 @@ import Foundation
 /// coordinate-bearing ones are deliberately absent, and a test on the encoded bytes
 /// enforces it. **Adding a coordinate here is never the fix for a failing test.**
 struct DiagnosticsReport: Sendable, Equatable, Codable {
-    /// Bumped to 3 by M1's trace-recording summary.
-    static let schemaVersion = 3
+    /// Bumped to 4 by the §7 movement-evidence instrumentation.
+    static let schemaVersion = 4
 
     var schemaVersion: Int = DiagnosticsReport.schemaVersion
     var generatedAt: Date
@@ -58,6 +58,14 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
     var lastDrivingSessionEndedAt: Date?
     var drivingFixCount: Int
     var drivingMovingSampleCount: Int
+    /// docs/05 §7 movement evidence, instrumented. `speedMissingCount == fixCount` with
+    /// `movingSampleCount == 0` is the exact signature of the defect these fields were
+    /// added for: the speed-only rule could not confirm a drive underground.
+    var speedAvailableCount: Int
+    var speedMissingCount: Int
+    var derivedMovingSampleCount: Int
+    /// Why the distance fallback last declined a fix, or absent if it never has.
+    var movementEvidenceRejectReason: String?
     var drivingOutlierDropCount: Int
     var drivingDistanceMeters: Double
     /// How often a fix was accepted as `lastReliableLocation` — never which fix.
@@ -69,14 +77,33 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
     var captureFailure: String?
 
     // Trace recording (docs/05 §9). Counts only — the traces themselves are separate
-    // files, and the point of these four numbers is to tell whether recording is working
+    // files, and the point of these numbers is to tell whether recording is working
     // without retrieving any of them.
     var traceSessionCount: Int
     var traceEventCount: Int
     /// Sessions the rolling cap discarded. §9 requires the eviction to be visible; a
     /// silently shrinking history would look like recording that never happened.
     var traceDroppedSessionCount: Int
+    /// Sessions discarded at rotation for holding one event or none (§9 "비생존 세션은
+    /// 버린다"). Separate from the rolling-cap count on purpose: a rolling-cap eviction
+    /// means the device is recording more than it can hold, while this climbing means the
+    /// boundary is cutting sessions where there was nothing to cut — five of the nine
+    /// September 2026 field sessions were single events. §9: "조용히 버리지 마라."
+    var traceNonViableDropCount: Int
     var traceUnlabeledSessionCount: Int
+    /// Sessions carrying a gap measurement, so the three numbers below can be read as a
+    /// sample size rather than as a claim about every trace on disk.
+    var traceMeasuredSessionCount: Int
+    /// The §9 gap aggregate, over the sessions still on disk. **Instrumentation for a
+    /// decision not yet taken**: the 30-minute idle gap came from a single day and missed
+    /// by 66 seconds, and it does not move until these have accumulated.
+    var traceMaxGapMillis: Int64
+    var traceSessionsOver10MinGapCount: Int
+    var traceSessionsOver20MinGapCount: Int
+    /// Location observations refused as replays of an instant already recorded. Zero is
+    /// the expected reading; a climbing count with a growing trace is Core Location
+    /// re-delivering cached fixes and being ignored, which is the point.
+    var traceReplayDropCount: Int
     var traceFailure: String?
 
     // Location quality
@@ -141,6 +168,10 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
         lastDrivingSessionEndedAt = snapshot.lastDrivingSessionEndedAt
         drivingFixCount = snapshot.drivingFixCount
         drivingMovingSampleCount = snapshot.drivingMovingSampleCount
+        speedAvailableCount = snapshot.drivingSpeedAvailableCount
+        speedMissingCount = snapshot.drivingSpeedMissingCount
+        derivedMovingSampleCount = snapshot.drivingDerivedMovingSampleCount
+        movementEvidenceRejectReason = snapshot.movementEvidenceRejectReason?.rawValue
         drivingOutlierDropCount = snapshot.drivingOutlierDropCount
         drivingDistanceMeters = snapshot.drivingDistanceMeters
         reliableLocationUpdateCount = snapshot.reliableLocationUpdateCount
@@ -153,7 +184,13 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
         traceSessionCount = traceSummary.sessionCount
         traceEventCount = traceSummary.eventCount
         traceDroppedSessionCount = traceSummary.droppedSessionCount
+        traceNonViableDropCount = traceSummary.nonViableDropCount
         traceUnlabeledSessionCount = traceSummary.unlabeledSessionCount
+        traceMeasuredSessionCount = traceSummary.measuredSessionCount
+        traceMaxGapMillis = traceSummary.maxGapMillis
+        traceSessionsOver10MinGapCount = traceSummary.sessionsOver10MinGapCount
+        traceSessionsOver20MinGapCount = traceSummary.sessionsOver20MinGapCount
+        traceReplayDropCount = snapshot.traceReplayDropCount
         traceFailure = snapshot.traceFailure
 
         significantChangeCount = snapshot.significantChangeCount

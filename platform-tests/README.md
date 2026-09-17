@@ -60,6 +60,42 @@ node tools/lib/cli.js convert <trace.json> --name vehicle_underground_then_walk
 node tools/lib/cli.js convert <trace.json> --name ... --initial-state DRIVING
 ```
 
+### 시간이 역행하는 trace — `--repair`
+
+변환기는 기본적으로 시간 역행 이벤트를 **거부한다**. 그건 recorder 결함이고,
+조용히 정렬해 넘기면 결함이 보이지 않게 된다.
+
+다만 기록은 다시 만들 수 없다. 2026년 9월 지하철 trace가 그 경우다 — Core Location이
+significant-change 재등록 때 캐시 fix를 다시 넘겼고, 당시 recorder가 그걸 이미 기록한
+시각 뒤에 한 번 더 적었다. iOS recorder에는 그 뒤로 watermark가 생겼지만
+(`TraceRecorder.admitLocation`), 이미 디스크에 있는 파일은 그대로다.
+
+```sh
+node tools/lib/cli.js convert <trace.json> --name ... --repair
+```
+
+`--repair`가 하는 일은 두 가지뿐이고, **바꾼 것을 전부 출력한다**:
+
+- **같은 관측의 재전달을 버린다.** 이미 기록된 시각에 같은 타입으로 들어온 이벤트 중,
+  기기가 *관측한* 필드(정확도·속도·confidence·bucket)가 전부 같은 것.
+  `distanceFromPreviousM`은 관측값이 아니라 recorder가 이전 좌표에서 *계산한* 값이고,
+  좌표는 절대 영속화되지 않으므로(§9) 재전달본은 앵커를 복원하지 못해 거리를 잃는다.
+  잃는 것은 재전달의 증거지만, **다른 값을 주장하면 재전달이 아니다**
+- **늦게 도착한 관측을 제자리로 옮긴다.** 파일 어디에도 없는 관측이면 실제 기록이므로
+  버리지 않고 `atMillis` 기준 안정 정렬로 되돌린다
+
+그 둘 중 어느 쪽도 아니면 **거부한다.** 같은 시각·같은 타입인데 관측값이 서로 다른
+이벤트는 중복이 아니라 미지의 상황이고, 어느 쪽이 진짜인지 도구가 추측하지 않는다.
+
+복구된 초안은 `_todo.repair`에 **원본 trace의 이벤트 인덱스**를 남긴다. 승격 전에
+그 인덱스를 원본에서 직접 확인한다.
+
+```json
+  "_todo": {
+    "repair": { "droppedReplayIndices": [53, 54], "reorderedIndices": [] }
+  }
+```
+
 변환 결과는 **초안이지 fixture가 아니다.** `expected`가 `null`이고 `_todo` 블록이 붙는다:
 
 ```json
@@ -69,6 +105,7 @@ node tools/lib/cli.js convert <trace.json> --name ... --initial-state DRIVING
     "proposedExpected": { "candidate": false },
     "rationale": "The label says \"bus\", a required negative case ...",
     "source": { "sessionId": "...", "labelMode": "bus", "labelParked": false, ... }
+    // "repair": { ... }  — --repair로 구조한 기록에만 붙는다
   }
 ```
 
@@ -106,7 +143,8 @@ node tools/lib/cli.js validate platform-tests/drafts --allow-draft   # 리뷰 �
 - `expected`가 없는 초안 (`--allow-draft` 없이는 실패)
 - `expected`를 채웠는데 `_todo`가 남아 있는 파일
 - §3에 없는 state, §4에 없는 reason code, §2/§8에 없는 이벤트 타입
-- 시간 역행 이벤트
+- 시간 역행 이벤트 (`convert --repair`가 유일한 예외이고, 무엇을 바꿨는지 출력·기록한다)
+- 아무것도 바꾸지 않았다고 주장하는 `_todo.repair` 블록
 
 초안이 `drafts/` 하위에 따로 사는 이유가 이것이다 — 리뷰 대기 중인 파일이
 계약 게이트를 깨지 않는다.

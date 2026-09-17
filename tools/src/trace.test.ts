@@ -161,4 +161,47 @@ describe('the vocabulary the two platforms share', () => {
     // Act / Assert
     assert.throws(() => parseTrace(document), /adapter defect/);
   });
+
+  it('accepts the contract §9 gapStats and splitFrom', () => {
+    // Arrange — both are optional contract fields, added to the whitelist deliberately.
+    const document = {
+      ...traceDocument(),
+      gapStats: { maxGapMillis: 1_734_000, gapsOver10MinCount: 4, gapsOver20MinCount: 3 },
+      splitFrom: { parentSessionId: 'a3f1c2d4-0000-4000-8000-000000000001', atMillis: at(120) },
+    };
+
+    // Act
+    const parsed = parseTrace(document);
+
+    // Assert
+    assert.equal(parsed.gapStats?.maxGapMillis, 1_734_000);
+    assert.equal(parsed.splitFrom?.parentSessionId, 'a3f1c2d4-0000-4000-8000-000000000001');
+  });
+
+  it('leaves both absent rather than inventing them', () => {
+    // Arrange — a session recorded before the fields existed is still a valid trace.
+    // Act
+    const parsed = parseTrace(traceDocument());
+
+    // Assert — a default here would fabricate provenance that was never recorded.
+    assert.equal(parsed.gapStats, undefined);
+    assert.equal(parsed.splitFrom, undefined);
+  });
+
+  it('still rejects an unknown key inside the widened fields', () => {
+    // Arrange — widening the whitelist must not open the nested objects.
+    const document = {
+      ...traceDocument(),
+      gapStats: {
+        maxGapMillis: 1,
+        gapsOver10MinCount: 0,
+        gapsOver20MinCount: 0,
+        latitude: 37.123_456_7,
+      },
+    };
+
+    // Act / Assert
+    assert.throws(() => parseTrace(document), /unknown key/);
+  });
+
 });
