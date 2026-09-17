@@ -232,7 +232,10 @@ struct TraceRecorderTests {
     }
 
     /// An NTP correction mid-trip would otherwise write a session whose events run
-    /// backwards, which the converter cannot turn into a fixture.
+    /// backwards, which the converter cannot turn into a fixture. The boundary policy
+    /// answers by rotating; the recorder's location watermark gets there first and refuses
+    /// the event outright, which protects the same file more cheaply. See
+    /// `clockJumpCostsTheLocationEventsItRewinds` for the price of that.
     @Test("A clock jump backwards splits rather than corrupting the recording")
     func clockJumpRotatesTheSession() {
         // Arrange
@@ -243,12 +246,17 @@ struct TraceRecorderTests {
         recorder.record(qualitySample: LocationQualitySample(timestamp: TestTime.offset(0), horizontalAccuracy: 10))
         recorder.record(qualitySample: LocationQualitySample(timestamp: TestTime.offset(-60), horizontalAccuracy: 10))
 
-        // Assert
-        #expect(store.storedSessions.count == 2)
-        #expect(store.latestSession?.startDate == TestTime.offset(-60))
+        // Assert — one session, and it still reads forwards.
+        #expect(store.storedSessions.count == 1)
+        #expect(store.latestSession?.events.count == 1)
+        #expect(recorder.replayDropCount == 1)
     }
 
-    @Test("Ordinary clock skew keeps one session")
+    /// Skew inside the tolerance is not a clock jump, so no session rotates — but it is
+    /// still an observation of time the trace already holds, and appending it would leave
+    /// `events` running backwards and `endedAt` ahead of `startedAt`, which is the exact
+    /// file the converter refuses. The watermark drops it instead.
+    @Test("Ordinary clock skew keeps one session and is refused as a replay")
     func clockSkewKeepsOneSession() {
         // Arrange
         let store = StubTraceStore()
@@ -260,7 +268,8 @@ struct TraceRecorderTests {
 
         // Assert
         #expect(store.storedSessions.count == 1)
-        #expect(store.latestSession?.events.count == 2)
+        #expect(store.latestSession?.events.count == 1)
+        #expect(recorder.replayDropCount == 1)
     }
 
     /// docs/05 §9: the opt-in is the one boundary the user controls. The next event must
@@ -531,6 +540,175 @@ struct TraceRecorderTests {
 
         // Assert
         #expect(types(store.latestSession) == ["location", "location"])
+    }
+
+    // MARK: - Location replay
+
+    /// The defect these tests exist for, straight out of a real subway recording: the same
+    /// two fixes appear twice, the second pair 128 s behind the first, because Core
+    /// Location replayed its cache when significant-change monitoring was re-registered.
+    @Test("A fix already recorded is refused when it is delivered again")
+    func replayedFixIsNotRecordedTwice() throws {
+        // Arrange
+        let store = StubTraceStore()
+        var recorder = recorder(store)
+        recorder.record(fix: TestGeo.fix(at: TestTime.offset(0), accuracy: 8))
+        recorder.record(fix: TestGeo.fix(at: TestTime.offset(20), metersNorth: 300, accuracy: 8))
+
+        // Act — the pair comes back, oldest first, exactly as the field trace shows.
+        recorder.record(qualitySample: LocationQualitySample(
+            timestamp: TestTime.offset(0),
+            horizontalAccuracy: 8
+        ))
+        recorder.record(qualitySample: LocationQualitySample(
+            timestamp: TestTime.offset(20),
+            horizontalAccuracy: 8
+        ))
+
+        // Assert
+        let events = try #require(store.latestSession?.events)
+        #expect(events.map(\.atMillis) == [0, 20].map { TestTime.offset(Double($0)).traceMillis })
+        #expect(recorder.replayDropCount == 2)
+    }
+
+    /// The replayed fix in the field trace read 1000 m against a 47.9 m predecessor, so it
+    /// looked like a collapse in quality — and the degradation exception is the one path
+    /// that ignores the sampling interval entirely. A bypass of the rate limit is not a
+    /// bypass of time.
+    @Test("A degradation does not carry a replayed fix past the watermark")
+    func degradationDoesNotBypassTheWatermark() {
+        // Arrange
+        let store = StubTraceStore()
+        var recorder = recorder(store)
+        recorder.record(fix: TestGeo.fix(at: TestTime.offset(0), accuracy: 8))
+        recorder.record(fix: TestGeo.fix(at: TestTime.offset(60), accuracy: 8))
+
+        // Act — an old fix whose accuracy is far worse than the newest one recorded.
+        recorder.record(fix: TestGeo.fix(at: TestTime.offset(30), accuracy: 1000))
+
+        // Assert — neither the fix nor the transition it would have implied.
+        #expect(types(store.latestSession) == ["location", "location"])
+        #expect(recorder.replayDropCount == 1)
+    }
+
+    /// A significant-change sample skips the sampling interval on purpose — in a tunnel it
+    /// may be the only location evidence there is — and that is exactly the path the field
+    /// trace's replay arrived on.
+    @Test("A significant-change sample skips the interval but not the watermark")
+    func significantChangeDoesNotBypassTheWatermark() {
+        // Arrange
+        let store = StubTraceStore()
+        var recorder = recorder(store)
+        recorder.record(fix: TestGeo.fix(at: TestTime.offset(60), accuracy: 8))
+
+        // Act
+        recorder.record(qualitySample: LocationQualitySample(
+            timestamp: TestTime.offset(30),
+            horizontalAccuracy: 30
+        ))
+
+        // Assert
+        #expect(types(store.latestSession) == ["location"])
+        #expect(recorder.replayDropCount == 1)
+    }
+
+    /// Recorder-scoped, like the motion watermark: a rotation must not hand the next trace
+    /// a clean slate for fixes the previous one already holds.
+    @Test("The watermark survives a session rotation")
+    func watermarkOutlivesRotation() {
+        // Arrange — one session, then silence long enough to rotate.
+        let store = StubTraceStore()
+        var recorder = recorder(store)
+        recorder.record(fix: TestGeo.fix(at: TestTime.offset(0), accuracy: 8))
+        recorder.record(fix: TestGeo.fix(
+            at: TestTime.offset(TraceSessionBoundaryPolicy.idleGap),
+            accuracy: 8
+        ))
+        #expect(store.storedSessions.count == 2)
+
+        // Act — the first session's fix is replayed into the second.
+        recorder.record(qualitySample: LocationQualitySample(
+            timestamp: TestTime.offset(0),
+            horizontalAccuracy: 8
+        ))
+
+        // Assert — the new session holds its own fix and nothing else.
+        #expect(store.storedSessions.count == 2)
+        #expect(types(store.latestSession) == ["location"])
+        #expect(recorder.replayDropCount == 1)
+    }
+
+    /// A relaunch is precisely when Core Location replays its cache, so a recorder that
+    /// started with no watermark would append the tail of the session it just reopened.
+    @Test("A restored session reads its watermark back off the newest location event")
+    func restoredSessionReadsBackTheWatermark() {
+        // Arrange
+        let store = StubTraceStore()
+        var first = recorder(store)
+        first.record(fix: TestGeo.fix(at: TestTime.offset(0), accuracy: 8))
+        first.record(fix: TestGeo.fix(at: TestTime.offset(60), accuracy: 8))
+
+        // Act — a new process, handed the same two fixes again.
+        var second = recorder(store)
+        second.record(qualitySample: LocationQualitySample(
+            timestamp: TestTime.offset(0),
+            horizontalAccuracy: 8
+        ))
+        second.record(qualitySample: LocationQualitySample(
+            timestamp: TestTime.offset(60),
+            horizontalAccuracy: 8
+        ))
+
+        // Assert
+        #expect(types(store.latestSession) == ["location", "location"])
+        #expect(second.replayDropCount == 2)
+    }
+
+    /// The watermark must not become a second rate limit: everything that genuinely moves
+    /// forward still goes through, distance and quality included.
+    @Test("Fixes that move forward are unaffected by the watermark")
+    func advancingFixesStillPassTheWatermark() throws {
+        // Arrange
+        let store = StubTraceStore()
+        var recorder = recorder(store)
+
+        // Act — 200 m per step, with quality falling on the last one.
+        recorder.record(fix: TestGeo.fix(at: TestTime.offset(0), metersNorth: 0, accuracy: 8))
+        recorder.record(fix: TestGeo.fix(at: TestTime.offset(20), metersNorth: 200, accuracy: 8))
+        recorder.record(fix: TestGeo.fix(at: TestTime.offset(40), metersNorth: 400, accuracy: 120))
+
+        // Assert
+        let events = try #require(store.latestSession?.events)
+        #expect(types(store.latestSession) == [
+            "location", "location", "location", "location_quality_degraded"
+        ])
+        #expect(try #require(events[1].distanceFromPreviousM).isApproximately(200))
+        #expect(recorder.replayDropCount == 0)
+    }
+
+    /// The price of preferring the watermark over the clock-jump rotation, pinned down so
+    /// it is a decision rather than a surprise: a clock set backwards costs the recording
+    /// its location events until wall-clock passes the watermark again. They are counted,
+    /// and recording resumes on its own. The alternative — exempting a backwards jump —
+    /// would hand every post-rotation replay the same exemption, because a replayed fix
+    /// predates a freshly opened session in exactly the same way.
+    @Test("A clock set backwards costs the location events it rewinds, and they are counted")
+    func clockJumpCostsTheLocationEventsItRewinds() {
+        // Arrange
+        let store = StubTraceStore()
+        var recorder = recorder(store)
+        recorder.record(fix: TestGeo.fix(at: TestTime.offset(0), accuracy: 8))
+
+        // Act — the clock jumps a minute backwards, then the trip carries on.
+        recorder.record(fix: TestGeo.fix(at: TestTime.offset(-60), accuracy: 8))
+        recorder.record(fix: TestGeo.fix(at: TestTime.offset(-40), accuracy: 8))
+        // Past the watermark again: recording resumes with no intervention.
+        recorder.record(fix: TestGeo.fix(at: TestTime.offset(20), accuracy: 8))
+
+        // Assert
+        #expect(store.storedSessions.count == 1)
+        #expect(types(store.latestSession) == ["location", "location"])
+        #expect(recorder.replayDropCount == 2)
     }
 
     // MARK: - Persistence

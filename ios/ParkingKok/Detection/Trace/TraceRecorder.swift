@@ -31,6 +31,14 @@ import Foundation
 /// is always complete: `endedAt` is rewritten on every append, so an abandoned trace needs
 /// no repair pass even when nothing ever reopens it.
 ///
+/// ### Replay
+/// Both input streams re-deliver what they have already delivered. Core Motion history is
+/// re-queried on every wake, and Core Location replays its cached fixes when
+/// significant-change monitoring is re-registered — which happens on every launch, every
+/// authorization change and every opt-in. A recording that believed them would state the
+/// same fix twice and walk its own timeline backwards. Each stream therefore has a
+/// timestamp watermark, and anything not strictly newer than it is dropped and counted.
+///
 /// ### Cost
 /// Append-only, driven entirely by signals that already arrived; nothing here polls or
 /// starts a sensor, and the boundary is evaluated on arrival rather than on a timer.
@@ -58,12 +66,21 @@ struct TraceRecorder {
     /// so the watermark has to outlive the session they were recorded into or a rotation
     /// would replay them into the next one.
     private var motionWatermark: Date?
+    /// Newest location observation already folded in, for the same reason and with the
+    /// same scope as `motionWatermark`: Core Location replays cached fixes whenever
+    /// significant-change monitoring is re-registered, and a session-scoped watermark
+    /// would let a rotation replay them into the next trace.
+    private var locationWatermark: Date?
     private var hasRestoredOpenSession = false
     /// What the store's open-session pointer says, so it is only rewritten when it moves.
     private var openSessionIdOnDisk: UUID?
     /// Last write failure, surfaced in diagnostics rather than thrown: recording must
     /// never break a detection callback.
     private(set) var lastFailure: String?
+    /// Location observations refused as replays of time already recorded. Counted rather
+    /// than dropped quietly: a count that climbs while the trace stops growing is the
+    /// signal that the watermark is rejecting live fixes, and nothing else would show it.
+    private(set) var replayDropCount = 0
 
     init(store: any TraceStoring, metadata: TraceDeviceMetadata = .current) {
         self.store = store
@@ -105,6 +122,7 @@ struct TraceRecorder {
     /// fix and then discarded; only the metres are kept.
     mutating func record(fix: LocationFix) {
         restoreOpenSessionIfNeeded()
+        guard admitLocation(at: fix.timestamp) else { return }
         var open = sessionAccepting(eventAt: fix.timestamp)
         open.accumulateDistance(to: fix)
         let appended = open.appendLocation(
@@ -128,6 +146,7 @@ struct TraceRecorder {
     /// it, which is why it has to be able to open a session of its own.
     mutating func record(qualitySample: LocationQualitySample) {
         restoreOpenSessionIfNeeded()
+        guard admitLocation(at: qualitySample.timestamp) else { return }
         var open = sessionAccepting(eventAt: qualitySample.timestamp)
         let appended = open.appendLocation(
             at: qualitySample.timestamp,
@@ -142,11 +161,42 @@ struct TraceRecorder {
         }
     }
 
+    /// Whether a location observation is new, advancing the watermark when it is.
+    ///
+    /// Placed ahead of everything else the two location entry points do — the session
+    /// boundary, the distance anchor, the downsampling interval and the quality
+    /// transition — because each of those reads as a fact about the present. A replayed
+    /// fix that reached them would restate travel, re-arm a degradation, and stamp the
+    /// trace with a time already behind it. In particular this sits *above*
+    /// `appendLocation`'s two bypasses: a significant-change sample and a quality
+    /// degradation both skip the interval, and skipping the interval is not licence to
+    /// skip time itself.
+    ///
+    /// Strictly newer, matching the motion watermark: two observations of the same instant
+    /// are the same observation delivered twice.
+    ///
+    /// A wall-clock jump backwards is the one thing that looks identical to a replay and is
+    /// not one, and `TraceSessionBoundaryPolicy.clockWentBackwards` exists to rotate on it.
+    /// The watermark still wins, deliberately: after a rotation a replayed fix predates the
+    /// new session exactly as an NTP correction would, so exempting the rotation would hand
+    /// every replay a way through the moment a trip ended. The cost is that a clock set
+    /// backwards costs the recording its location events until wall-clock catches up —
+    /// counted, visible, and the same bargain `motionWatermark` already makes. A short gap
+    /// in a recording is recoverable; a recording that contradicts itself is not.
+    private mutating func admitLocation(at date: Date) -> Bool {
+        guard date > (locationWatermark ?? .distantPast) else {
+            replayDropCount += 1
+            return false
+        }
+        locationWatermark = date
+        return true
+    }
+
     /// Smart Detection was switched off: §9 closes the open session immediately.
     ///
     /// The file is already complete on disk, so closing is purely forgetting which session
-    /// was open. The motion watermark deliberately stays put — opting back in must not
-    /// replay the history that is already recorded in the closed session.
+    /// was open. Both watermarks deliberately stay put — opting back in must not replay
+    /// the history that is already recorded in the closed session.
     mutating func closeOpenSession() {
         session = nil
         // Nothing left on disk may be reopened either, so the lazy restore is spent.
@@ -203,6 +253,10 @@ struct TraceRecorder {
         session = OpenSession(restoring: stored)
         openSessionIdOnDisk = id
         motionWatermark = stored.events.last { $0.type.isMotion }?.date
+        // Read back for the same reason as the motion one: a relaunch is exactly when
+        // Core Location replays its cached fixes, so a recorder that started with no
+        // location watermark would append the tail of the session it just reopened.
+        locationWatermark = stored.events.last { $0.type == .location }?.date
     }
 
     // MARK: - Motion
@@ -374,6 +428,12 @@ struct TraceRecorder {
         /// Quality is tracked on every observation, not only the recorded ones — a
         /// degradation that happened between two downsampled fixes is still real, and it
         /// forces the observation to be recorded so the trace says when quality fell.
+        ///
+        /// `lastLocationEventAt` is the downsampling clock and nothing more: it is compared
+        /// against, never enforced, and both `bypassingInterval` and a degradation skip the
+        /// comparison outright. Monotonicity is the recorder's watermark to keep — see
+        /// `admitLocation(at:)` — and reading a rate limit as one is what let a replayed
+        /// fix in behind a "quality fell" claim.
         ///
         /// @return whether anything was appended. A fresh session always appends, because
         /// it has no previous event to be downsampled against.

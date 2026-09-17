@@ -77,7 +77,7 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
     var captureFailure: String?
 
     // Trace recording (docs/05 §9). Counts only — the traces themselves are separate
-    // files, and the point of these four numbers is to tell whether recording is working
+    // files, and the point of these numbers is to tell whether recording is working
     // without retrieving any of them.
     var traceSessionCount: Int
     var traceEventCount: Int
@@ -85,6 +85,10 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
     /// silently shrinking history would look like recording that never happened.
     var traceDroppedSessionCount: Int
     var traceUnlabeledSessionCount: Int
+    /// Location observations refused as replays of an instant already recorded. Zero is
+    /// the expected reading; a climbing count with a growing trace is Core Location
+    /// re-delivering cached fixes and being ignored, which is the point.
+    var traceReplayDropCount: Int
     var traceFailure: String?
 
     // Location quality
@@ -166,6 +170,7 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
         traceEventCount = traceSummary.eventCount
         traceDroppedSessionCount = traceSummary.droppedSessionCount
         traceUnlabeledSessionCount = traceSummary.unlabeledSessionCount
+        traceReplayDropCount = snapshot.traceReplayDropCount
         traceFailure = snapshot.traceFailure
 
         significantChangeCount = snapshot.significantChangeCount

@@ -39,6 +39,9 @@ struct RehydrationSnapshot: Sendable, Equatable {
     /// Last trace-recording write failure. Recording is best-effort, so the failure has to
     /// be visible somewhere or it is silent (docs/05 §9).
     var traceFailure: String?
+    /// Location observations the recorder refused because it had already recorded that
+    /// instant — Core Location replaying a cached fix, most often after a relaunch.
+    var traceReplayDropCount = 0
 
     // ── Bounded driving session (M0A-2) ──────────────────────────────────────
     var isCapturingDrivingLocation = false
@@ -285,6 +288,7 @@ actor BackgroundCoordinator {
         recorder.closeOpenSession()
         traceRecorder = recorder
         snapshot.traceFailure = recorder.lastFailure
+        snapshot.traceReplayDropCount = recorder.replayDropCount
     }
 
     #if PK_DEV
@@ -588,6 +592,7 @@ actor BackgroundCoordinator {
         body(&recorder)
         traceRecorder = recorder
         snapshot.traceFailure = recorder.lastFailure
+        snapshot.traceReplayDropCount = recorder.replayDropCount
     }
 
     private func persist(_ checkpoint: DetectionCheckpoint) {
