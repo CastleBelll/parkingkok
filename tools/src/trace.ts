@@ -61,6 +61,22 @@ export interface TraceEvent {
   readonly floor?: string | undefined;
 }
 
+/** Contract §9 "gap 계측". Counts and a duration — nothing here can hold a place. */
+export interface TraceGapStats {
+  readonly maxGapMillis: number;
+  readonly gapsOver10MinCount: number;
+  readonly gapsOver20MinCount: number;
+}
+
+/**
+ * Contract §9 "사람이 세션을 나눈다". A parent id and the instant it was cut at —
+ * nothing here can hold a place either.
+ */
+export interface TraceSplitProvenance {
+  readonly parentSessionId: string;
+  readonly atMillis: number;
+}
+
 export interface Trace {
   readonly schemaVersion: number;
   readonly sessionId: string;
@@ -72,6 +88,8 @@ export interface Trace {
   readonly endedAt: number;
   readonly label: TraceLabel;
   readonly events: readonly TraceEvent[];
+  readonly gapStats?: TraceGapStats | undefined;
+  readonly splitFrom?: TraceSplitProvenance | undefined;
 }
 
 const TRACE_KEYS = [
@@ -85,7 +103,15 @@ const TRACE_KEYS = [
   'endedAt',
   'label',
   'events',
+  // Widening the whitelist is the only sanctioned way to add a session key, and each
+  // addition has to argue it cannot carry a coordinate. Both of these are contract §9
+  // fields: gapStats is three counts and a duration, splitFrom is a uuid and an instant.
+  'gapStats',
+  'splitFrom',
 ] as const;
+
+const GAP_STATS_KEYS = ['maxGapMillis', 'gapsOver10MinCount', 'gapsOver20MinCount'] as const;
+const SPLIT_FROM_KEYS = ['parentSessionId', 'atMillis'] as const;
 
 const LABEL_KEYS = ['mode', 'parked', 'note'] as const;
 
@@ -243,6 +269,34 @@ export function parseTrace(value: unknown, path = 'trace', options: ParseTraceOp
     endedAt,
     label: parseLabel(object['label'], `${path}.label`),
     events: parseEvents(object['events'], `${path}.events`, options),
+    gapStats: parseGapStats(object['gapStats'], `${path}.gapStats`),
+    splitFrom: parseSplitFrom(object['splitFrom'], `${path}.splitFrom`),
+  };
+}
+
+/**
+ * Both of these are optional: a session recorded before the fields existed is still a
+ * valid trace, and an unsplit session has no parent. Absent stays absent — a default
+ * would invent provenance that was never recorded.
+ */
+function parseGapStats(value: unknown, path: string): TraceGapStats | undefined {
+  if (value === undefined) return undefined;
+  const object = asObject(value, path);
+  allowOnlyKeys(object, path, GAP_STATS_KEYS);
+  return {
+    maxGapMillis: requireNumber(object, path, 'maxGapMillis', { integer: true, min: 0 }),
+    gapsOver10MinCount: requireNumber(object, path, 'gapsOver10MinCount', { integer: true, min: 0 }),
+    gapsOver20MinCount: requireNumber(object, path, 'gapsOver20MinCount', { integer: true, min: 0 }),
+  };
+}
+
+function parseSplitFrom(value: unknown, path: string): TraceSplitProvenance | undefined {
+  if (value === undefined) return undefined;
+  const object = asObject(value, path);
+  allowOnlyKeys(object, path, SPLIT_FROM_KEYS);
+  return {
+    parentSessionId: requireString(object, path, 'parentSessionId'),
+    atMillis: requireNumber(object, path, 'atMillis', { integer: true, min: 0 }),
   };
 }
 

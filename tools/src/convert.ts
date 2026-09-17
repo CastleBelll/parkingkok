@@ -211,6 +211,12 @@ function buildTodo(
       labelParked: trace.label.parked,
       durationSeconds: toRelativeSeconds(trace.endedAt, trace.startedAt),
       eventCount: trace.events.length,
+      // Provenance, not payload. A reviewer judging `expected` needs to know a human cut
+      // this session out of a longer one — the events before the cut are gone, so the
+      // engine state at the start is a human's claim rather than a recorded fact.
+      ...(trace.splitFrom === undefined
+        ? {}
+        : { splitFromParentSessionId: trace.splitFrom.parentSessionId }),
     },
   };
 }
