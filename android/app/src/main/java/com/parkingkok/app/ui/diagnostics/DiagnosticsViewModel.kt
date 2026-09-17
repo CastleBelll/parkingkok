@@ -11,6 +11,8 @@ import com.parkingkok.app.domain.location.LocationSessionMode
 import com.parkingkok.app.domain.location.LocationSessionState
 import com.parkingkok.app.domain.trace.TraceLabel
 import com.parkingkok.app.domain.trace.TraceSession
+import com.parkingkok.app.domain.trace.TraceSplitResult
+import com.parkingkok.app.domain.trace.TraceSummary
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -37,6 +39,12 @@ data class DiagnosticsUiState(
     val sessionState: LocationSessionState = LocationSessionState(),
     /** Recorded trace sessions, newest first (docs/05_CROSS_PLATFORM_DOMAIN_CONTRACT.md §9). */
     val traceSessions: List<TraceSession> = emptyList(),
+    /** The §9 counters and gap aggregate, the same ones the exported report carries. */
+    val traceSummary: TraceSummary = TraceSummary(),
+    /** §9 allows cutting a closed session only, so the screen has to know which is open. */
+    val openTraceSessionId: String? = null,
+    /** Why the last split was refused, or null. A refusal is a normal outcome, not an error. */
+    val traceSplitRefusal: TraceSplitResult.Refusal? = null,
     /** Result of the last manual export: null before one has run, a reason string on failure. */
     val lastExportFailure: String? = null,
     val lastExportSucceeded: Boolean = false,
@@ -58,8 +66,19 @@ class DiagnosticsViewModel(private val container: AppContainer) : ViewModel() {
      * Re-read rather than observed: traces are files, not a Flow, and they only change when
      * this screen is open or an event arrives. Polling them would be exactly the standing
      * cost §9 rules out.
+     *
+     * Folded into one value so the outer `combine` stays a typed 5-arity one, and so the
+     * list, the aggregate and the open-session pointer can never be rendered from three
+     * different moments in time.
      */
-    private val traceSessions = MutableStateFlow<List<TraceSession>>(emptyList())
+    private data class TraceState(
+        val sessions: List<TraceSession> = emptyList(),
+        val summary: TraceSummary = TraceSummary(),
+        val openSessionId: String? = null,
+        val splitRefusal: TraceSplitResult.Refusal? = null,
+    )
+
+    private val traceState = MutableStateFlow(TraceState())
 
     /** null before an export has been asked for; [failure] null means the last one wrote. */
     private data class ExportResult(val failure: String?)
@@ -85,7 +104,7 @@ class DiagnosticsViewModel(private val container: AppContainer) : ViewModel() {
         container.registrationCoordinator.status,
         storedState,
         exportResult,
-        traceSessions,
+        traceState,
     ) { grantedPermissions, registration, stored, export, traces ->
         DiagnosticsUiState(
             permissions = grantedPermissions,
@@ -94,7 +113,10 @@ class DiagnosticsViewModel(private val container: AppContainer) : ViewModel() {
             checkpoint = stored.checkpoint,
             events = stored.events.asReversed(),
             sessionState = stored.sessionState,
-            traceSessions = traces,
+            traceSessions = traces.sessions,
+            traceSummary = traces.summary,
+            openTraceSessionId = traces.openSessionId,
+            traceSplitRefusal = traces.splitRefusal,
             lastExportFailure = export?.failure,
             lastExportSucceeded = export != null && export.failure == null,
         )
@@ -138,8 +160,34 @@ class DiagnosticsViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    private suspend fun reloadTraces() {
-        traceSessions.value = withContext(Dispatchers.IO) { container.traceRecorder.sessions() }
+    /**
+     * Cuts a closed session in two at the event the user picked (§9 "사람이 세션을 나눈다").
+     *
+     * The refusal is carried back into the state rather than swallowed: §9 forbids a cut
+     * leaving a one-event fragment, and the person choosing the point has no way to know
+     * that until they choose it.
+     */
+    fun splitTraceSession(sessionId: String, atEventIndex: Int) {
+        viewModelScope.launch {
+            val refusal = container.traceRecorder.splitSession(sessionId, atEventIndex)
+            reloadTraces(splitRefusal = refusal)
+        }
+    }
+
+    /**
+     * One read of the traces directory per refresh. [TraceRecorder.summary] walks the same
+     * files, which is why both are done here, off the main thread, and never on an append.
+     */
+    private suspend fun reloadTraces(splitRefusal: TraceSplitResult.Refusal? = null) {
+        val recorder = container.traceRecorder
+        traceState.value = withContext(Dispatchers.IO) {
+            TraceState(
+                sessions = recorder.sessions(),
+                summary = recorder.summary(),
+                openSessionId = recorder.openSessionId(),
+                splitRefusal = splitRefusal,
+            )
+        }
     }
 
     /** Manual bounded capture, so the no-foreground-service path can be exercised without driving. */
