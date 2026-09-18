@@ -7,6 +7,8 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.ReadOnlyComposable
+import com.parkingkok.app.ui.motion.LocalMotionEnabled
+import com.parkingkok.app.ui.motion.rememberMotionEnabled
 
 /**
  * docs/10_DESIGN_UX_SPEC.md §2 tokens mapped onto Material 3 roles.
@@ -95,7 +97,15 @@ fun ParkingkokTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit,
 ) {
-    CompositionLocalProvider(LocalParkingkokSpacing provides ParkingkokSpacing()) {
+    CompositionLocalProvider(
+        LocalParkingkokSpacing provides ParkingkokSpacing(),
+        LocalParkingkokElevation provides ParkingkokElevation(
+            tint = if (darkTheme) BrandPalette.DarkBackground else BrandPalette.LightTextPrimary,
+        ),
+        // Read once, here, so that every animation below this point obeys the same answer
+        // and no screen has to remember to ask (docs/01_PRODUCT_REQUIREMENTS.md §8).
+        LocalMotionEnabled provides rememberMotionEnabled(),
+    ) {
         MaterialTheme(
             colorScheme = if (darkTheme) DarkColors else LightColors,
             typography = ParkingkokTypography,
@@ -108,3 +118,7 @@ fun ParkingkokTheme(
 /** Spacing tokens, reached the same way as `MaterialTheme.colorScheme`. */
 val MaterialTheme.spacing: ParkingkokSpacing
     @Composable @ReadOnlyComposable get() = LocalParkingkokSpacing.current
+
+/** Elevation tokens, reached the same way as `MaterialTheme.colorScheme`. */
+val MaterialTheme.elevation: ParkingkokElevation
+    @Composable @ReadOnlyComposable get() = LocalParkingkokElevation.current
