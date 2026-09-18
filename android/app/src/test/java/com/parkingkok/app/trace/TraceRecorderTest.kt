@@ -2,15 +2,18 @@ package com.parkingkok.app.trace
 
 import com.parkingkok.app.data.DetectionStateStore
 import com.parkingkok.app.data.InMemoryPreferencesDataStore
+import com.parkingkok.app.domain.detection.DetectionCheckpoint
 import com.parkingkok.app.domain.detection.MotionDomainEvent
 import com.parkingkok.app.domain.detection.MotionEventKind
 import com.parkingkok.app.domain.trace.LocationQualityBucket
 import com.parkingkok.app.domain.trace.TraceDeviceInfo
 import com.parkingkok.app.domain.trace.TraceEventType
+import com.parkingkok.app.domain.trace.TraceGapStats
 import com.parkingkok.app.domain.trace.TraceLabel
 import com.parkingkok.app.domain.trace.TraceMode
 import com.parkingkok.app.domain.trace.TraceSession
 import com.parkingkok.app.domain.trace.TraceSessionBoundaryPolicy
+import com.parkingkok.app.domain.trace.TraceSplitResult
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -19,6 +22,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.io.File
 
 /**
  * The recorder end to end against a real traces directory, with no device and no sleeps
@@ -40,6 +44,16 @@ class TraceRecorderTest {
         val stateStore: DetectionStateStore,
         val recorder: TraceRecorder,
     )
+
+    /**
+     * `prune` orders by file modification time, which the filesystem reports at a coarser
+     * resolution than this test writes at. Written explicitly so the oldest session is
+     * unambiguously the oldest, the same way `FileTraceStoreTest` does it.
+     */
+    private fun ageFile(sessionId: String, ageMillis: Long) {
+        File(temporaryFolder.root, "traces/$sessionId.json")
+            .setLastModified(System.currentTimeMillis() - ageMillis)
+    }
 
     private fun fixture(maxSessions: Int = FileTraceStore.DEFAULT_MAX_SESSIONS): Fixture {
         val store = FileTraceStore(temporaryFolder.newFolder("traces"), maxSessions = maxSessions)
@@ -117,19 +131,23 @@ class TraceRecorderTest {
 
     @Test
     fun `silence past the idle gap starts a new session`() = runTest {
-        // Arrange
+        // Arrange — two events per trip, because §9 discards a session that rotates away
+        // holding a single edge.
         val f = fixture()
         f.recorder.recordMotion(motion(MotionEventKind.ENTERED_VEHICLE, startMillis))
+        f.recorder.recordMotion(motion(MotionEventKind.EXITED_VEHICLE, startMillis + 90_000L))
 
-        // Act — the return trip, hours later.
-        val nextTrip = startMillis + TraceSessionBoundaryPolicy.IDLE_GAP_MILLIS + 1_000L
+        // Act — the return trip, hours later. The silence is measured from the trip's last
+        // event, not its first.
+        val nextTrip = startMillis + 90_000L + TraceSessionBoundaryPolicy.IDLE_GAP_MILLIS + 1_000L
         f.recorder.recordMotion(motion(MotionEventKind.ENTERED_VEHICLE, nextTrip))
+        f.recorder.recordMotion(motion(MotionEventKind.EXITED_VEHICLE, nextTrip + 90_000L))
 
         // Assert
         val sessions = f.store.list()
         assertEquals(2, sessions.size)
         assertEquals(nextTrip, sessions.first().startedAt)
-        assertTrue(sessions.all { it.events.size == 1 })
+        assertTrue(sessions.all { it.events.size == 2 })
     }
 
     @Test
@@ -137,10 +155,12 @@ class TraceRecorderTest {
         // Arrange — the user-facing boundary, which must not wait out the idle gap.
         val f = fixture()
         f.recorder.recordMotion(motion(MotionEventKind.ENTERED_VEHICLE, startMillis))
+        f.recorder.recordMotion(motion(MotionEventKind.EXITED_VEHICLE, startMillis + 90_000L))
 
         // Act
         f.recorder.closeOpenSession()
-        f.recorder.recordMotion(motion(MotionEventKind.ENTERED_VEHICLE, startMillis + 1_000L))
+        f.recorder.recordMotion(motion(MotionEventKind.ENTERED_VEHICLE, startMillis + 91_000L))
+        f.recorder.recordMotion(motion(MotionEventKind.EXITED_VEHICLE, startMillis + 92_000L))
 
         // Assert
         assertEquals(2, f.store.list().size)
@@ -196,9 +216,10 @@ class TraceRecorderTest {
         // trip's quality degrading.
         val f = fixture()
         f.recorder.recordLocation(startMillis, accuracyM = 8f, speedMps = null, distanceFromPreviousM = null)
+        f.recorder.recordLocation(startMillis + 15_000L, accuracyM = 8f, speedMps = null, distanceFromPreviousM = 90.0)
 
         // Act
-        val nextTrip = startMillis + TraceSessionBoundaryPolicy.IDLE_GAP_MILLIS + 1_000L
+        val nextTrip = startMillis + 15_000L + TraceSessionBoundaryPolicy.IDLE_GAP_MILLIS + 1_000L
         f.recorder.recordLocation(nextTrip, accuracyM = 120f, speedMps = null, distanceFromPreviousM = null)
 
         // Assert
@@ -214,6 +235,7 @@ class TraceRecorderTest {
         // whole commute as movement inside the new session.
         val f = fixture()
         f.recorder.recordLocation(startMillis, accuracyM = 8f, speedMps = null, distanceFromPreviousM = null)
+        f.recorder.recordLocation(startMillis + 15_000L, accuracyM = 8f, speedMps = null, distanceFromPreviousM = 90.0)
         f.recorder.closeOpenSession()
 
         // Act — the caller still offers a distance; it belongs to the previous recording.
@@ -242,10 +264,12 @@ class TraceRecorderTest {
         // none, because a thin field run looks like a thin field run.
         val f = fixture(maxSessions = 2)
 
-        // Act — four trips, each separated by more than the idle gap.
+        // Act — four trips, each separated by more than the idle gap, each holding enough
+        // events to survive §9's viability rule.
         repeat(4) { trip ->
-            val at = startMillis + trip * (TraceSessionBoundaryPolicy.IDLE_GAP_MILLIS + 1_000L)
+            val at = startMillis + trip * (TraceSessionBoundaryPolicy.IDLE_GAP_MILLIS + 91_000L)
             f.recorder.recordMotion(motion(MotionEventKind.ENTERED_VEHICLE, at))
+            f.recorder.recordMotion(motion(MotionEventKind.EXITED_VEHICLE, at + 90_000L))
         }
 
         // Assert
@@ -310,5 +334,296 @@ class TraceRecorderTest {
         assertEquals(0, summary.discardedSessionCount)
         assertEquals(2, summary.unlabelledSessionCount)
         assertNull(summary.lastFailure)
+    }
+
+    // MARK: - §9 비생존 세션은 버린다
+
+    @Test
+    fun `a session rotating away with one event is discarded, and counted separately`() = runTest {
+        // Arrange — the shape §9 was written against: a lone motion edge with half an hour
+        // of silence either side. It cannot be replayed as a §8 fixture and tells the
+        // engine nothing, so it must not reach the disk permanently.
+        val f = fixture()
+        f.recorder.recordMotion(motion(MotionEventKind.BECAME_STATIONARY, startMillis))
+
+        // Act — the next trip, past the idle gap, forces the rotation that judges it.
+        val nextTrip = startMillis + TraceSessionBoundaryPolicy.IDLE_GAP_MILLIS + 1_000L
+        f.recorder.recordMotion(motion(MotionEventKind.ENTERED_VEHICLE, nextTrip))
+        f.recorder.recordMotion(motion(MotionEventKind.EXITED_VEHICLE, nextTrip + 90_000L))
+
+        // Assert
+        assertEquals(1, f.store.list().size)
+        assertEquals(nextTrip, onlySession(f).startedAt)
+        val summary = f.recorder.summary()
+        assertEquals(1, summary.nonViableDropCount)
+        // Never folded into the rolling-cap count: the two numbers mean opposite things.
+        assertEquals(0, summary.discardedSessionCount)
+    }
+
+    @Test
+    fun `two events are enough to survive rotation`() = runTest {
+        // Arrange — the other side of the same boundary. One is not a sequence; two is.
+        val f = fixture()
+        f.recorder.recordMotion(motion(MotionEventKind.ENTERED_VEHICLE, startMillis))
+        f.recorder.recordMotion(motion(MotionEventKind.EXITED_VEHICLE, startMillis + 90_000L))
+
+        // Act
+        val nextTrip = startMillis + 90_000L + TraceSessionBoundaryPolicy.IDLE_GAP_MILLIS + 1_000L
+        f.recorder.recordMotion(motion(MotionEventKind.ENTERED_VEHICLE, nextTrip))
+
+        // Assert — the first trip is still on disk; the second is open and unjudged.
+        assertEquals(2, f.store.list().size)
+        assertEquals(0, f.recorder.summary().nonViableDropCount)
+        assertEquals(TraceSessionBoundaryPolicy.MINIMUM_VIABLE_EVENT_COUNT, 2)
+    }
+
+    @Test
+    fun `an open session holding one event is never judged`() = runTest {
+        // Arrange — §9: "열려 있는 세션은 아직 더 붙을 수 있다." Every session passes
+        // through one event on its way to two, and on Android the open session lives on
+        // disk between two PendingIntent deliveries. Judging it early would cut a trip
+        // into first events that were each discarded in turn.
+        val f = fixture()
+
+        // Act
+        f.recorder.recordMotion(motion(MotionEventKind.ENTERED_VEHICLE, startMillis))
+
+        // Assert
+        assertEquals(1, f.store.list().size)
+        assertEquals(1, onlySession(f).events.size)
+        assertEquals(0, f.recorder.summary().nonViableDropCount)
+        assertEquals(onlySession(f).sessionId, f.stateStore.readTraceOpenSessionIdOnce())
+    }
+
+    @Test
+    fun `turning detection off judges the session it closes`() = runTest {
+        // Arrange — opting out is a rotation in every sense the rule cares about: nothing
+        // more can join the session, so "더 붙을 수 있다" stops applying to it.
+        val f = fixture()
+        f.recorder.recordMotion(motion(MotionEventKind.ENTERED_VEHICLE, startMillis))
+
+        // Act
+        f.recorder.closeOpenSession()
+
+        // Assert
+        assertTrue(f.store.list().isEmpty())
+        assertEquals(1, f.recorder.summary().nonViableDropCount)
+        assertNull(f.stateStore.readTraceOpenSessionIdOnce())
+    }
+
+    @Test
+    fun `discarding a non-viable session never rewinds duplicate suppression`() = runTest {
+        // Arrange — §9: "버려도 watermark는 전진시킨다." On Android the duplicate guards
+        // are the persisted checkpoint and the location session's `lastSampleAtMillis`,
+        // which drives the NOT_NEWER drop. Rewinding either would let Fused Location's
+        // cached fixes walk back in and rebuild the session just thrown away.
+        val f = fixture()
+        val checkpoint = DetectionCheckpoint.initial(startMillis).copy(lastLocationAtMillis = startMillis)
+        f.stateStore.writeCheckpoint(checkpoint)
+        f.stateStore.updateLocationSessionState {
+            it.copy(counters = it.counters.copy(lastSampleAtMillis = startMillis))
+        }
+        f.recorder.recordMotion(motion(MotionEventKind.BECAME_STATIONARY, startMillis))
+
+        // Act — rotation discards the one-event session.
+        val nextTrip = startMillis + TraceSessionBoundaryPolicy.IDLE_GAP_MILLIS + 1_000L
+        f.recorder.recordMotion(motion(MotionEventKind.ENTERED_VEHICLE, nextTrip))
+
+        // Assert — the file is gone, the guards have not moved backwards, and the only
+        // pointer that named the deleted file now names the session that replaced it.
+        assertEquals(1, f.recorder.summary().nonViableDropCount)
+        assertEquals(checkpoint, f.stateStore.readCheckpointOnce())
+        assertEquals(startMillis, f.stateStore.readLocationSessionStateOnce().counters.lastSampleAtMillis)
+        assertEquals(onlySession(f).sessionId, f.stateStore.readTraceOpenSessionIdOnce())
+    }
+
+    // MARK: - §9 gap 계측
+
+    @Test
+    fun `each session carries the gaps observed inside it`() = runTest {
+        // Arrange — the measurement that has to accumulate before the 30-minute threshold
+        // is allowed to move.
+        val f = fixture()
+        val elevenMinutes = 11L * 60L * 1_000L
+        val twentyOneMinutes = 21L * 60L * 1_000L
+
+        // Act
+        f.recorder.recordMotion(motion(MotionEventKind.ENTERED_VEHICLE, startMillis))
+        f.recorder.recordMotion(motion(MotionEventKind.EXITED_VEHICLE, startMillis + elevenMinutes))
+        f.recorder.recordMotion(
+            motion(MotionEventKind.STARTED_WALKING, startMillis + elevenMinutes + twentyOneMinutes),
+        )
+
+        // Assert
+        val stats = requireNotNull(onlySession(f).gapStats)
+        assertEquals(twentyOneMinutes, stats.maxGapMillis)
+        assertEquals(2, stats.gapsOver10MinCount)
+        assertEquals(1, stats.gapsOver20MinCount)
+    }
+
+    @Test
+    fun `gap measurement survives the process dying between two events`() = runTest {
+        // Arrange — the open session is re-read from disk on every append, because
+        // transitions and location batches arrive by PendingIntent into a process that
+        // routinely dies in between. The measurement has to come back with it.
+        val f = fixture()
+        val sixteenMinutes = 16L * 60L * 1_000L
+        f.recorder.recordMotion(motion(MotionEventKind.ENTERED_VEHICLE, startMillis))
+        f.recorder.recordMotion(motion(MotionEventKind.EXITED_VEHICLE, startMillis + sixteenMinutes))
+
+        // Act — a fresh recorder over the same store and state, as after a process death.
+        val revived = TraceRecorder(
+            store = f.store,
+            stateStore = f.stateStore,
+            device = TraceDeviceInfo("SM-G996N", "15 (SDK 35)", "0.1.0 (1)"),
+            sessionIdFactory = { "session-revived" },
+        )
+        revived.recordMotion(motion(MotionEventKind.STARTED_WALKING, startMillis + sixteenMinutes + 1_000L))
+
+        // Assert
+        val stats = requireNotNull(onlySession(f).gapStats)
+        assertEquals(sixteenMinutes, stats.maxGapMillis)
+        assertEquals(1, stats.gapsOver10MinCount)
+    }
+
+    @Test
+    fun `the summary aggregates gaps over the sessions still on disk`() = runTest {
+        // Arrange — two trips, one with a long silence in it.
+        val f = fixture()
+        val twentyFiveMinutes = 25L * 60L * 1_000L
+        f.recorder.recordMotion(motion(MotionEventKind.ENTERED_VEHICLE, startMillis))
+        f.recorder.recordMotion(motion(MotionEventKind.EXITED_VEHICLE, startMillis + twentyFiveMinutes))
+        val nextTrip = startMillis + TraceSessionBoundaryPolicy.IDLE_GAP_MILLIS + twentyFiveMinutes + 1_000L
+        f.recorder.recordMotion(motion(MotionEventKind.ENTERED_VEHICLE, nextTrip))
+        f.recorder.recordMotion(motion(MotionEventKind.EXITED_VEHICLE, nextTrip + 60_000L))
+
+        // Act
+        val summary = f.recorder.summary()
+
+        // Assert — the count is a sample size, not a claim about every trace on disk.
+        assertEquals(2, summary.sessionCount)
+        assertEquals(2, summary.measuredSessionCount)
+        assertEquals(twentyFiveMinutes, summary.maxGapMillis)
+        assertEquals(1, summary.sessionsOver10MinGapCount)
+        assertEquals(1, summary.sessionsOver20MinGapCount)
+    }
+
+    // MARK: - §9 사람이 세션을 나눈다
+
+    /** A closed session of [eventCount] events, one minute apart, ready to be cut. */
+    private suspend fun recordClosedSession(f: Fixture, firstEventAtMillis: Long, eventCount: Int) {
+        repeat(eventCount) { index ->
+            f.recorder.recordLocation(
+                firstEventAtMillis + index * 60_000L,
+                accuracyM = 10f,
+                speedMps = null,
+                distanceFromPreviousM = if (index == 0) null else 80.0,
+            )
+        }
+        f.recorder.closeOpenSession()
+    }
+
+    @Test
+    fun `a closed session is replaced by two fragments that each carry their provenance`() = runTest {
+        // Arrange
+        val f = fixture()
+        recordClosedSession(f, startMillis, eventCount = 6)
+        val parentId = onlySession(f).sessionId
+        val cutAtMillis = onlySession(f).events[3].atMillis
+
+        // Act
+        val refusal = f.recorder.splitSession(parentId, atEventIndex = 3)
+
+        // Assert — the original is gone, replaced by two whole sessions.
+        assertNull(refusal)
+        val fragments = f.store.list().sortedBy { it.startedAt }
+        assertEquals(2, fragments.size)
+        assertNull(f.store.read(parentId))
+        assertEquals(listOf(3, 3), fragments.map { it.events.size })
+        fragments.forEach { fragment ->
+            assertEquals(parentId, requireNotNull(fragment.splitFrom).parentSessionId)
+            assertEquals(cutAtMillis, requireNotNull(fragment.splitFrom).atMillis)
+            // A fragment is indistinguishable from a recorded session apart from splitFrom.
+            assertEquals(fragment.events.first().atMillis, fragment.startedAt)
+            assertEquals(fragment.events.last().atMillis, fragment.endedAt)
+            assertEquals(TraceMode.UNKNOWN, fragment.label.mode)
+            assertEquals(TraceGapStats.of(fragment.events), fragment.gapStats)
+        }
+    }
+
+    @Test
+    fun `the session still being recorded cannot be cut`() = runTest {
+        // Arrange — §9 allows cutting a closed session only: more events may still join an
+        // open one, and replacing the file would pull it out from under the recorder.
+        val f = fixture()
+        repeat(4) { index ->
+            f.recorder.recordLocation(startMillis + index * 60_000L, 10f, null, null)
+        }
+        val openId = onlySession(f).sessionId
+
+        // Act
+        val refusal = f.recorder.splitSession(openId, atEventIndex = 2)
+
+        // Assert — nothing moved.
+        assertEquals(TraceSplitResult.SessionIsOpen, refusal)
+        assertEquals(1, f.store.list().size)
+        assertEquals(4, onlySession(f).events.size)
+    }
+
+    @Test
+    fun `a cut that would leave a one-event fragment is refused and changes nothing`() = runTest {
+        // Arrange — §9: "조각도 비생존 규칙을 따른다." Writing the viable half alone would
+        // silently delete the events on the other side.
+        val f = fixture()
+        recordClosedSession(f, startMillis, eventCount = 3)
+        val parentId = onlySession(f).sessionId
+
+        // Act
+        val refusal = f.recorder.splitSession(parentId, atEventIndex = 1)
+
+        // Assert — and the reason names both sides, so the screen can say which was small.
+        assertEquals(TraceSplitResult.FragmentNotViable(1, 2), refusal)
+        assertEquals(1, f.store.list().size)
+        assertEquals(parentId, onlySession(f).sessionId)
+        assertEquals(3, onlySession(f).events.size)
+    }
+
+    @Test
+    fun `cutting outside the events, or a session that is gone, is refused`() = runTest {
+        // Arrange
+        val f = fixture()
+        recordClosedSession(f, startMillis, eventCount = 4)
+        val parentId = onlySession(f).sessionId
+
+        // Act & Assert
+        assertEquals(TraceSplitResult.IndexOutOfRange, f.recorder.splitSession(parentId, atEventIndex = 0))
+        assertEquals(TraceSplitResult.IndexOutOfRange, f.recorder.splitSession(parentId, atEventIndex = 4))
+        assertEquals(TraceSplitResult.SessionNotFound, f.recorder.splitSession("never-recorded", atEventIndex = 1))
+        assertEquals(1, f.store.list().size)
+    }
+
+    @Test
+    fun `splitting re-applies the rolling cap, because one session became two`() = runTest {
+        // Arrange — at the cap, with an unambiguously oldest session. Splitting evicts
+        // nothing by itself; the cap decides that, and counts it the way it counts every
+        // other eviction.
+        val f = fixture(maxSessions = 2)
+        recordClosedSession(f, startMillis, eventCount = 4)
+        val oldestId = onlySession(f).sessionId
+        val secondTrip = startMillis + TraceSessionBoundaryPolicy.IDLE_GAP_MILLIS + 600_000L
+        recordClosedSession(f, secondTrip, eventCount = 4)
+        val splitTargetId = f.store.list().first { it.sessionId != oldestId }.sessionId
+        ageFile(oldestId, ageMillis = 10L * 60L * 1_000L)
+
+        // Act
+        val refusal = f.recorder.splitSession(splitTargetId, atEventIndex = 2)
+
+        // Assert
+        assertNull(refusal)
+        val remaining = f.store.list()
+        assertEquals(2, remaining.size)
+        assertNull(f.store.read(oldestId))
+        assertTrue(remaining.all { it.splitFrom != null })
+        assertEquals(1, f.recorder.summary().discardedSessionCount)
     }
 }

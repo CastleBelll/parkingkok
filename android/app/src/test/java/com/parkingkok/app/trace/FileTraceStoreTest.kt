@@ -207,4 +207,57 @@ class FileTraceStoreTest {
         assertEquals("환승 포함", relabelled.label.note)
         assertTrue(relabelled.isLabelled)
     }
+    @Test
+    fun `deleting a session removes it once, and says which call did it`() {
+        // Arrange — the counter on the other side of this must not move twice for the same
+        // session, so the store has to report whether this call was the one that removed
+        // the file. A file already gone is the wanted outcome, never an error.
+        val store = FileTraceStore(directory())
+        store.write(session("session-a", eventCount = 2))
+
+        // Act
+        val first = store.delete("session-a")
+        val second = store.delete("session-a")
+
+        // Assert
+        assertTrue(first)
+        assertFalse(second)
+        assertNull(store.read("session-a"))
+        assertFalse(store.delete("../escape"))
+    }
+
+    @Test
+    fun `replacing a session writes the fragments before it removes the original`() {
+        // Arrange — §9 "원본은 조각으로 대체된다". Fragments first: a process death between
+        // the two leaves the events on disk twice, which a person can see and undo, while
+        // the other order would lose a recorded trip outright.
+        val store = FileTraceStore(directory())
+        val parent = session("session-parent", eventCount = 4)
+        store.write(parent)
+        val leading = session("fragment-a", eventCount = 2)
+        val trailing = session("fragment-b", startedAt = startMillis + 2, eventCount = 2)
+
+        // Act
+        val failure = store.replace("session-parent", listOf(leading, trailing))
+
+        // Assert
+        assertNull(failure)
+        assertNull(store.read("session-parent"))
+        assertNotNull(store.read("fragment-a"))
+        assertNotNull(store.read("fragment-b"))
+        assertEquals(2, store.list().size)
+    }
+
+    @Test
+    fun `replacing a session that is not there reports it and writes nothing`() {
+        // Arrange
+        val store = FileTraceStore(directory())
+
+        // Act
+        val failure = store.replace("never-recorded", listOf(session("fragment-a", eventCount = 2)))
+
+        // Assert
+        assertEquals("NotFound", failure)
+        assertTrue(store.list().isEmpty())
+    }
 }
