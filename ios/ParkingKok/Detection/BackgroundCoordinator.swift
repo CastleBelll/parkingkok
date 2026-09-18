@@ -35,6 +35,8 @@ struct RehydrationSnapshot: Sendable, Equatable {
     /// Cached fixes rejected as too old to be live evidence.
     var staleLocationDropCount = 0
     var lastStaleLocationAge: TimeInterval?
+    /// Fresh samples that arrived older than the checkpoint already knew about.
+    var supersededLocationDropCount = 0
     var lastPersistError: String?
     /// Last trace-recording write failure. Recording is best-effort, so the failure has to
     /// be visible somewhere or it is silent (docs/05 §9).
@@ -198,9 +200,27 @@ actor BackgroundCoordinator {
         }
 
         snapshot.significantChangeCount += 1
+        // The trace records what arrived either way: it describes what the device saw,
+        // and its own watermark decides what to keep.
+        recordTrace { $0.record(qualitySample: sample) }
+
+        // Fresh enough is not the same as newest. The 300s bound rejects an hours-old
+        // cached fix, but Core Location also replays recent ones — that replay is what
+        // put duplicate fixes in the trace — and a 200s-old sample arriving after a
+        // bounded fix from 10s ago clears the bound while still being older than what the
+        // checkpoint already holds. Writing it would walk `lastLocationAt` backwards,
+        // which widens the motion replay window and ages the checkpoint on paper.
+        //
+        // Android reaches the same rule from the other side: its reliable-location
+        // selector refuses a sample that is not newer, so the value it writes alongside
+        // can never regress.
+        guard sample.timestamp > (checkpoint?.lastLocationAt ?? .distantPast) else {
+            snapshot.supersededLocationDropCount += 1
+            return
+        }
+
         snapshot.lastLocationAt = sample.timestamp
         snapshot.lastLocationAccuracy = sample.horizontalAccuracy
-        recordTrace { $0.record(qualitySample: sample) }
 
         var updated = checkpoint ?? DetectionCheckpoint.initial(at: now)
         updated.lastLocationAt = sample.timestamp

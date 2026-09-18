@@ -17,7 +17,7 @@ import Foundation
 struct DiagnosticsReport: Sendable, Equatable, Codable {
     /// Bumped to 5 by the §7 distance-clause instrumentation; 4 was the movement-evidence
     /// counters before it.
-    static let schemaVersion = 5
+    static let schemaVersion = 6
 
     var schemaVersion: Int = DiagnosticsReport.schemaVersion
     var generatedAt: Date
@@ -115,6 +115,7 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
     var lastLocationAccuracy: Double?
     var staleLocationDropCount: Int
     var lastStaleLocationAge: TimeInterval?
+    var supersededLocationDropCount: Int
     var locationFailure: String?
 
     // Permissions and wiring
@@ -202,6 +203,7 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
         lastLocationAccuracy = snapshot.lastLocationAccuracy
         staleLocationDropCount = snapshot.staleLocationDropCount
         lastStaleLocationAge = snapshot.lastStaleLocationAge
+        supersededLocationDropCount = snapshot.supersededLocationDropCount
         locationFailure = snapshot.locationFailure
 
         self.locationAuthorization = locationAuthorization.rawValue
