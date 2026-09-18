@@ -16,6 +16,8 @@ import UIKit
 ///   permission (FR-001) has nothing to navigate to, so `길찾기` is disabled and says
 ///   why rather than opening a map of nowhere.
 struct ParkingDetailView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     @Bindable private var model: ParkingModel
     private let sessionID: UUID
 
@@ -39,24 +41,33 @@ struct ParkingDetailView: View {
     var body: some View {
         PKScreen {
             if let session {
-                if let point = ParkingMapPoint(session) {
-                    ParkingMapCard(point: point, floorText: session.floor?.displayText)
-                } else {
-                    ParkingMapUnavailableCard()
+                Group {
+                    if let point = ParkingMapPoint(session) {
+                        ParkingMapCard(point: point, floorText: session.floor?.displayText)
+                    } else {
+                        ParkingMapUnavailableCard()
+                    }
                 }
+                .pkEntrance(0)
                 summaryCard(session)
+                    .pkEntrance(1)
                 factsCard(session)
+                    .pkEntrance(2)
                 if let failure = model.failure {
                     PKNoticeCard(text: failure)
+                        .pkEntrance(3)
                 }
                 secondaryActions(session)
+                    .pkEntrance(3)
                 ParkingPhotoCard(
                     phase: photoPhase,
                     now: displayNow,
                     onAdd: beginAddingPhoto,
                     onOpen: { isViewingPhoto = true }
                 )
+                .pkEntrance(4)
                 primaryActions(session)
+                    .pkEntrance(4)
             } else {
                 Text("기록을 찾을 수 없어요.")
                     .font(PKTypography.supporting)
@@ -274,7 +285,9 @@ struct ParkingDetailView: View {
                 subtitle: "주차를 종료하고 기록을 저장합니다",
                 systemImage: "flag.checkered"
             ) {
-                model.endActiveParking()
+                pkWithAnimation(PKMotion.sessionChange, reduceMotion: reduceMotion) {
+                    _ = model.endActiveParking()
+                }
                 dismiss()
             }
         }

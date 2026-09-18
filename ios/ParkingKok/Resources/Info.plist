@@ -33,6 +33,13 @@
 	<string>주차한 자리의 기둥 번호나 주변을 사진으로 남겨두기 위해 카메라를 사용합니다. 사진은 기기에만 저장되며 서버로 전송하지 않습니다.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>차량 이동과 도보 전환을 구분해 주차 시점을 추정하기 위해 동작 및 피트니스 데이터를 사용합니다. 이 데이터는 기기에만 저장됩니다.</string>
+	<!-- docs/07 "동의": Firebase Analytics collects by default, and `session_start` /
+	     `first_open` never pass through `AnalyticsRecorder`. This is what keeps the SDK
+	     silent when something else — an anonymous sign-in, say — has already started
+	     Firebase while analytics consent is still off. `FirebaseAnalyticsCollectionControl`
+	     is the only thing that ever overrides it, and only while the stored flag is true. -->
+	<key>FIREBASE_ANALYTICS_COLLECTION_ENABLED</key>
+	<false/>
 	<key>PKAppEnvironment</key>
 	<string>$(PK_APP_ENV)</string>
 	<!-- docs/04_IOS_IMPLEMENTATION.md §4: "Location updates only if implementation

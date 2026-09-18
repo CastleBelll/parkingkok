@@ -116,8 +116,10 @@
 
     <!-- Brand header, shown on every root screen (design-references/01-home-main.png). -->
     <string name="brand_name">주차콕</string>
-    <string name="brand_tagline">자동 주차 기록</string>
-    <string name="brand_footer">주차는 쉽고, 일상은 더 가볍게</string>
+    <string name="brand_subtitle">자동 주차 기록</string>
+    <!-- Two lines, right-aligned beside the header icons, as in the mockup. -->
+    <string name="brand_tagline">주차는 쉽고\n일상은 더 가볍게 ☺</string>
+    <string name="brand_footer">좋은 하루, 좋은 주차</string>
 
     <!-- Home -->
     <string name="home_active_title">현재 주차 위치</string>
@@ -144,6 +146,7 @@
     <string name="home_empty_body">주차한 곳의 층과 구역을 적어두면 돌아올 때 바로 찾을 수 있어요.</string>
     <string name="home_save_parking">주차 위치 저장</string>
     <string name="home_settings">설정</string>
+    <string name="home_notification_settings">알림 설정</string>
 
     <!-- Elapsed time (docs/10_DESIGN_UX_SPEC.md §6 item 3) -->
     <string name="elapsed_just_now">방금 주차했어요</string>
@@ -231,7 +234,6 @@
     <!-- History (design-references/04-history-list.png) -->
     <string name="history_title">주차 기록</string>
     <string name="history_badge_detected">자동</string>
-    <string name="history_badge_manual">직접</string>
     <string name="history_count">기록 %1$d건</string>
     <string name="history_empty_title">아직 기록이 없어요</string>
     <string name="history_empty_body">주차를 종료하면 여기에 쌓여요.</string>

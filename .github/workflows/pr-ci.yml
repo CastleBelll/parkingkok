@@ -84,14 +84,16 @@ jobs:
         working-directory: ios
         run: |
           set -euo pipefail
+          # NOTE: warnings-as-errors is set in ios/Config/Base.xcconfig, which applies to
+          # our targets only. Passing it on the xcodebuild command line would also force it
+          # onto SwiftPM dependency targets (Firebase), which Xcode builds with
+          # -suppress-warnings, producing a hard "conflicting options" driver error.
           xcodebuild build-for-testing \
             -project ParkingKok.xcodeproj \
             -scheme ParkingKok \
             -configuration DEV \
             -destination "platform=iOS Simulator,OS=${IOS_SIMULATOR_OS},name=${IOS_SIMULATOR_NAME}" \
-            -derivedDataPath "${RUNNER_TEMP}/DerivedData" \
-            SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
-            GCC_TREAT_WARNINGS_AS_ERRORS=YES
+            -derivedDataPath "${RUNNER_TEMP}/DerivedData"
 
       - name: Run unit tests
         working-directory: ios

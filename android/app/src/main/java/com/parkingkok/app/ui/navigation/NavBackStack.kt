@@ -15,6 +15,14 @@ value class NavBackStack private constructor(val entries: List<ParkingkokRoute>)
     val canGoBack: Boolean get() = entries.size > 1
 
     /**
+     * How deep the user is. 1 at the root.
+     *
+     * The shell compares it across a navigation to tell a push from a pop, which is what
+     * decides which way the screen transition runs.
+     */
+    val depth: Int get() = entries.size
+
+    /**
      * Pushes [route], unless it is already on top.
      *
      * Double-tapping a row is the common way to end up with the same screen twice, and

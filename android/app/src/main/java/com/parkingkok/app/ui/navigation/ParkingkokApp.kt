@@ -1,9 +1,19 @@
 package com.parkingkok.app.ui.navigation
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
@@ -15,6 +25,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.IntOffset
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -22,6 +33,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.parkingkok.app.AppContainer
 import com.parkingkok.app.R
 import com.parkingkok.app.map.ExternalMapOpener
+import com.parkingkok.app.ui.motion.LocalMotionEnabled
+import com.parkingkok.app.ui.motion.MotionDurations
 import com.parkingkok.app.ui.detail.ParkingDetailScreen
 import com.parkingkok.app.ui.detail.ParkingDetailViewModel
 import com.parkingkok.app.ui.diagnostics.DiagnosticsScreen
@@ -55,48 +68,95 @@ fun ParkingkokApp(container: AppContainer) {
 
     BackHandler(enabled = backStack.canGoBack) { backStack = backStack.pop() }
 
-    when (val route = backStack.current) {
-        ParkingkokRoute.Home -> HomeRoute(
-            container = container,
-            onNavigate = { backStack = backStack.push(it) },
-        )
+    RouteTransition(backStack) { route ->
+        when (route) {
+            ParkingkokRoute.Home -> HomeRoute(
+                container = container,
+                onNavigate = { backStack = backStack.push(it) },
+            )
 
-        ParkingkokRoute.ManualEntry -> ManualEntryRoute(
-            container = container,
-            onSaved = { backStack = backStack.pop() },
-            onBack = { backStack = backStack.pop() },
-        )
+            ParkingkokRoute.ManualEntry -> ManualEntryRoute(
+                container = container,
+                onSaved = { backStack = backStack.pop() },
+                onBack = { backStack = backStack.pop() },
+            )
 
-        is ParkingkokRoute.Detail -> DetailRoute(
-            container = container,
-            recordId = route.recordId,
-            onBack = { backStack = backStack.pop() },
-        )
+            is ParkingkokRoute.Detail -> DetailRoute(
+                container = container,
+                recordId = route.recordId,
+                onBack = { backStack = backStack.pop() },
+            )
 
-        ParkingkokRoute.History -> HistoryRoute(
-            container = container,
-            onOpenDetail = { backStack = backStack.push(ParkingkokRoute.Detail(it)) },
-            onBack = { backStack = backStack.pop() },
-        )
+            ParkingkokRoute.History -> HistoryRoute(
+                container = container,
+                onOpenDetail = { backStack = backStack.push(ParkingkokRoute.Detail(it)) },
+                onBack = { backStack = backStack.pop() },
+            )
 
-        ParkingkokRoute.Settings -> SettingsRoute(
-            container = container,
-            onOpenDiagnostics = { backStack = backStack.push(ParkingkokRoute.Diagnostics) },
-            onBack = { backStack = backStack.pop() },
-        )
+            ParkingkokRoute.Settings -> SettingsRoute(
+                container = container,
+                onOpenDiagnostics = { backStack = backStack.push(ParkingkokRoute.Diagnostics) },
+                onBack = { backStack = backStack.pop() },
+            )
 
-        ParkingkokRoute.Diagnostics -> DiagnosticsRoute(
-            container = container,
-            onBack = { backStack = backStack.pop() },
-        )
+            ParkingkokRoute.Diagnostics -> DiagnosticsRoute(
+                container = container,
+                onBack = { backStack = backStack.pop() },
+            )
+        }
     }
 }
+
+/**
+ * The push and the pop.
+ *
+ * Material 3's shared axis: the screen being left slides a short way against the travel and
+ * fades out while the arriving one slides in — the same direction Android's own back stack
+ * moves, not an iOS full-width slide (docs/10_DESIGN_UX_SPEC.md §3). Depth decides the
+ * direction, so going back really does run the animation backwards.
+ *
+ * With motion off it is a cut. So is the first frame: `AnimatedContent` starts settled, so
+ * a stack restored after process death opens on the screen the user left without replaying
+ * a navigation they did not perform.
+ */
+@Composable
+private fun RouteTransition(
+    backStack: NavBackStack,
+    content: @Composable (ParkingkokRoute) -> Unit,
+) {
+    val motionEnabled = LocalMotionEnabled.current
+    AnimatedContent(
+        targetState = backStack,
+        contentKey = { it.current },
+        transitionSpec = {
+            if (!motionEnabled) {
+                EnterTransition.None togetherWith ExitTransition.None
+            } else {
+                val forward = targetState.depth >= initialState.depth
+                val spec = tween<Float>(MotionDurations.ROUTE_MS)
+                val travel = tween<IntOffset>(MotionDurations.ROUTE_MS)
+                val enter = fadeIn(spec) + slideInHorizontally(travel) { width ->
+                    if (forward) width / ROUTE_TRAVEL_DIVISOR else -width / ROUTE_TRAVEL_DIVISOR
+                }
+                val exit = fadeOut(spec) + slideOutHorizontally(travel) { width ->
+                    if (forward) -width / ROUTE_TRAVEL_DIVISOR else width / ROUTE_TRAVEL_DIVISOR
+                }
+                enter togetherWith exit
+            }
+        },
+        label = "route",
+    ) { stack -> content(stack.current) }
+}
+
+/** A screen travels an eighth of its width, the way Material's shared axis does. */
+private const val ROUTE_TRAVEL_DIVISOR = 8
 
 @Composable
 private fun HomeRoute(container: AppContainer, onNavigate: (ParkingkokRoute) -> Unit) {
     val viewModel: HomeViewModel = viewModel(factory = HomeViewModel.factory(container))
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val mapOpener = rememberMapOpener()
+    val context = LocalContext.current
 
     HomeScreen(
         state = state,
@@ -110,8 +170,23 @@ private fun HomeRoute(container: AppContainer, onNavigate: (ParkingkokRoute) -> 
         onOpenDetail = { onNavigate(ParkingkokRoute.Detail(it)) },
         onOpenHistory = { onNavigate(ParkingkokRoute.History) },
         onOpenSettings = { onNavigate(ParkingkokRoute.Settings) },
+        // The bell in the mockup's header. 주차콕 has no notification centre of its own, so
+        // it leads to the place its detection notifications are actually switched on and
+        // off — a real destination rather than a decorative icon.
+        onOpenNotificationSettings = { context.startActivity(notificationSettingsIntent(context)) },
     )
 }
+
+/**
+ * Where this app's notification channels are configured.
+ *
+ * `ACTION_APP_NOTIFICATION_SETTINGS` is guaranteed from API 26 and this app is minSdk 29,
+ * so there is no fallback to write: the screen is always there.
+ */
+private fun notificationSettingsIntent(context: Context): Intent =
+    Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+        .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
 @Composable
 private fun ManualEntryRoute(

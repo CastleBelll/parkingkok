@@ -1,5 +1,6 @@
 package com.parkingkok.app.ui.history
 
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -41,6 +42,7 @@ import com.parkingkok.app.ui.components.ParkingkokRow
 import com.parkingkok.app.ui.components.ParkingkokScreen
 import com.parkingkok.app.ui.components.RowChevron
 import com.parkingkok.app.ui.components.StatusBadge
+import com.parkingkok.app.ui.motion.pressScale
 import com.parkingkok.app.ui.format.dayText
 import com.parkingkok.app.ui.format.timeOfDayText
 
@@ -93,12 +95,15 @@ fun HistoryScreen(
         }
 
         item("delete-all") {
+            val deleteInteraction = remember { MutableInteractionSource() }
             OutlinedButton(
                 onClick = { confirmingDeleteAll = true },
                 shape = MaterialTheme.shapes.small,
+                interactionSource = deleteInteraction,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = MaterialTheme.spacing.small),
+                    .padding(top = MaterialTheme.spacing.small)
+                    .pressScale(deleteInteraction),
             ) {
                 Icon(
                     painter = painterResource(R.drawable.ic_delete),
@@ -145,19 +150,13 @@ private fun HistoryRow(record: ParkingRecord, nowMillis: Long, onClick: () -> Un
         .ifEmpty { stringResource(R.string.home_no_floor) }
     val detected = record.source == ParkingSource.DETECTED
 
+    // One badge for every record, detected or typed. `04-history-list.png` gives the list
+    // a single repeated car chip, and docs/19 §4 asks for the automatic ones to be picked
+    // out by a badge — so the chip is the list's rhythm and the badge carries the meaning.
+    // Tinting the chip as well made every row look like a different kind of thing.
     ParkingkokRow(
         title = place,
         iconRes = R.drawable.ic_car,
-        iconContainerColor = if (detected) {
-            MaterialTheme.colorScheme.tertiaryContainer
-        } else {
-            MaterialTheme.colorScheme.primaryContainer
-        },
-        iconContentColor = if (detected) {
-            MaterialTheme.colorScheme.onTertiaryContainer
-        } else {
-            MaterialTheme.colorScheme.onPrimaryContainer
-        },
         onClick = onClick,
         trailing = {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -178,29 +177,24 @@ private fun HistoryRow(record: ParkingRecord, nowMillis: Long, onClick: () -> Un
             }
         },
     )
-    // The badge is a word, not a colour: docs/01 §8 forbids colour-only state, and the
-    // tinted chip above would otherwise be the only thing separating 자동 from 직접.
-    Row(
-        modifier = Modifier.padding(
-            start = MaterialTheme.spacing.large + BADGE_INDENT,
-            bottom = MaterialTheme.spacing.medium,
-        ),
-    ) {
-        StatusBadge(
-            text = stringResource(
-                if (detected) R.string.history_badge_detected else R.string.history_badge_manual,
+    // Only the automatically detected records are badged (docs/19 §4). A typed record is
+    // the ordinary case and says so by carrying nothing — badging both turned the list
+    // into two columns of chips. The badge is a word, never a colour: docs/01 §8.
+    if (detected) {
+        Row(
+            modifier = Modifier.padding(
+                start = MaterialTheme.spacing.large + BADGE_INDENT,
+                bottom = MaterialTheme.spacing.medium,
             ),
-            containerColor = if (detected) {
-                MaterialTheme.colorScheme.tertiaryContainer
-            } else {
-                MaterialTheme.colorScheme.surfaceVariant
-            },
-            contentColor = if (detected) {
-                MaterialTheme.colorScheme.onTertiaryContainer
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            },
-        )
+        ) {
+            StatusBadge(
+                text = stringResource(R.string.history_badge_detected),
+                containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+        }
+    } else {
+        Spacer(Modifier.height(MaterialTheme.spacing.tiny))
     }
 }
 

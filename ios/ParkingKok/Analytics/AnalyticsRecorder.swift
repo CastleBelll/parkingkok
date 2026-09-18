@@ -41,13 +41,14 @@ struct DisabledAnalyticsRecorder: AnalyticsRecording {
 ///
 /// One instance per process, mirroring `DetectionRuntime.shared`, so the settings toggle
 /// and the recorder cannot disagree about consent.
-///
-/// **What changes when a Firebase project exists:** add a `FirebaseAnalyticsSink` that maps
-/// `AnalyticsPayload` onto `Analytics.logEvent(_:parameters:)`, and return it from
-/// `liveSink` below. That is the entire change — `AnalyticsEvent`, the consent gate and
-/// every call site stay as they are.
 enum AnalyticsComposition {
-    static let consent: any AnalyticsConsentStoring = UserDefaultsAnalyticsConsentStore()
+    /// The persisted flag, wrapped so that whoever writes it also moves the SDK's own
+    /// collection switch. See `FirebaseGatedAnalyticsConsentStore` for why that is a
+    /// decorator and not a line added to `SettingsModel`.
+    static let consent: any AnalyticsConsentStoring = FirebaseGatedAnalyticsConsentStore(
+        base: UserDefaultsAnalyticsConsentStore(),
+        collection: collectionControl
+    )
 
     static let recorder: any AnalyticsRecording = AnalyticsRecorder(
         consent: consent,
@@ -55,11 +56,33 @@ enum AnalyticsComposition {
         clock: SystemDateProvider()
     )
 
+    /// Re-asserts the stored consent on the Firebase SDK at launch.
+    ///
+    /// `setAnalyticsCollectionEnabled` persists across launches, so without this the SDK's
+    /// state would be whatever the last session happened to leave behind rather than what
+    /// the user's stored choice says. With consent off this configures nothing — see
+    /// `FirebaseAnalyticsCollectionControl`.
+    static func applyStoredConsent() {
+        collectionControl.setEnabled(consent.isGranted)
+    }
+
+    /// docs/07 §2 fixed Firebase Analytics as the transport. A build with no Firebase
+    /// project — CI, fork checkouts — keeps the pre-Firebase behaviour rather than
+    /// pretending to have one.
     private static var liveSink: any AnalyticsSending {
-        #if PK_DEV
-            OSLogAnalyticsSink()
-        #else
-            NoOpAnalyticsSink()
-        #endif
+        guard FirebaseBootstrap.shared.isAvailable else {
+            #if PK_DEV
+                return OSLogAnalyticsSink()
+            #else
+                return NoOpAnalyticsSink()
+            #endif
+        }
+        return FirebaseAnalyticsSink()
+    }
+
+    private static var collectionControl: any AnalyticsCollectionControlling {
+        FirebaseBootstrap.shared.isAvailable
+            ? FirebaseAnalyticsCollectionControl()
+            : NoAnalyticsCollectionControl()
     }
 }

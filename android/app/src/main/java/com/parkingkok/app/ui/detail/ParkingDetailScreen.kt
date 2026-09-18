@@ -2,6 +2,7 @@ package com.parkingkok.app.ui.detail
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -58,6 +59,8 @@ import com.parkingkok.app.ui.components.IconChip
 import com.parkingkok.app.ui.components.LocationPreviewCard
 import com.parkingkok.app.ui.components.ParkingkokCard
 import com.parkingkok.app.ui.components.ParkingkokScreen
+import com.parkingkok.app.ui.components.PrimaryCtaButton
+import com.parkingkok.app.ui.motion.pressScale
 import com.parkingkok.app.ui.format.dayText
 import com.parkingkok.app.ui.format.elapsedText
 import com.parkingkok.app.ui.format.timeOfDayText
@@ -226,6 +229,7 @@ private fun LocationBlock(record: ParkingRecord) {
     val accuracy = location.horizontalAccuracyM
     LocationPreviewCard(
         pinLabel = record.floor?.displayLabel,
+        zoneLabel = record.zone,
         caption = if (accuracy != null) {
             stringResource(R.string.detail_map_caption_accuracy, accuracy.toInt())
         } else {
@@ -391,11 +395,15 @@ private fun ActionButton(
     modifier: Modifier = Modifier,
     busy: Boolean = false,
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
     OutlinedButton(
         onClick = onClick,
         enabled = enabled,
         shape = MaterialTheme.shapes.small,
-        modifier = modifier.heightIn(min = MaterialTheme.spacing.touchTarget + 8.dp),
+        interactionSource = interactionSource,
+        modifier = modifier
+            .heightIn(min = MaterialTheme.spacing.touchTarget + 8.dp)
+            .pressScale(interactionSource),
     ) {
         if (busy) {
             CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
@@ -553,40 +561,24 @@ private fun NoticeCard(notice: UiNotice, onDismiss: () -> Unit) {
 
 @Composable
 private fun EndParkingButton(onEndParking: () -> Unit) {
-    Button(
+    PrimaryCtaButton(
+        iconRes = R.drawable.ic_flag,
+        label = stringResource(R.string.home_end_parking),
+        caption = stringResource(R.string.home_end_parking_caption),
         onClick = onEndParking,
-        shape = MaterialTheme.shapes.small,
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 64.dp),
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_flag),
-                    contentDescription = null,
-                    modifier = Modifier.size(20.dp),
-                )
-                Spacer(Modifier.width(MaterialTheme.spacing.small))
-                Text(
-                    text = stringResource(R.string.home_end_parking),
-                    style = MaterialTheme.typography.titleMedium,
-                )
-            }
-            Text(
-                text = stringResource(R.string.home_end_parking_caption),
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
-    }
+    )
 }
 
 @Composable
 private fun DeleteRecordButton(onClick: () -> Unit) {
+    val interactionSource = remember { MutableInteractionSource() }
     OutlinedButton(
         onClick = onClick,
         shape = MaterialTheme.shapes.small,
-        modifier = Modifier.fillMaxWidth(),
+        interactionSource = interactionSource,
+        modifier = Modifier
+            .fillMaxWidth()
+            .pressScale(interactionSource),
     ) {
         Icon(
             painter = painterResource(R.drawable.ic_delete),

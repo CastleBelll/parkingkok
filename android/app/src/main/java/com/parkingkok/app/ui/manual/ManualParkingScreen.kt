@@ -1,5 +1,6 @@
 package com.parkingkok.app.ui.manual
 
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,6 +18,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
@@ -30,6 +32,7 @@ import com.parkingkok.app.theme.spacing
 import com.parkingkok.app.ui.components.DetailHeader
 import com.parkingkok.app.ui.components.ParkingkokCard
 import com.parkingkok.app.ui.components.ParkingkokScreen
+import com.parkingkok.app.ui.motion.pressScale
 
 /**
  * The manual entry form — FR-001's `층/구역/spot/메모`.
@@ -126,13 +129,16 @@ fun ManualParkingScreen(
 
         item("actions") {
             Column(verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small)) {
+                val saveInteraction = remember { MutableInteractionSource() }
                 Button(
                     onClick = onSave,
                     enabled = !state.saving,
                     shape = MaterialTheme.shapes.small,
+                    interactionSource = saveInteraction,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = MaterialTheme.spacing.touchTarget + 8.dp),
+                        .heightIn(min = MaterialTheme.spacing.touchTarget + 8.dp)
+                        .pressScale(saveInteraction),
                 ) {
                     Text(
                         text = stringResource(R.string.manual_save),

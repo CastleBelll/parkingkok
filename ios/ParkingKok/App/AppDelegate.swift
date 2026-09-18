@@ -16,6 +16,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         DetectionRuntime.shared.bootstrap(
             launchReason: relaunchedByLocation ? .significantLocationChange : .userInitiated
         )
+        // docs/07 "동의". Local work: with consent off this starts no Firebase and makes no
+        // call — it is the launch that proves nothing goes out, not the launch that has to
+        // be forgiven for it. Nothing here blocks the first frame.
+        AnalyticsComposition.applyStoredConsent()
+        #if PK_DEV
+            FirebaseSelfCheck.runIfRequested()
+        #endif
         return true
     }
 }
