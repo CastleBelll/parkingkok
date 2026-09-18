@@ -7,6 +7,8 @@ import com.parkingkok.app.core.Clock
 import com.parkingkok.app.core.SystemClock
 import com.parkingkok.app.data.DetectionStateStore
 import com.parkingkok.app.data.detectionDataStore
+import com.parkingkok.app.data.parking.ParkingDatabase
+import com.parkingkok.app.data.parking.RoomParkingRepository
 import com.parkingkok.app.detection.ActivityTransitionRegistrar
 import com.parkingkok.app.detection.DetectionRegistrationCoordinator
 import com.parkingkok.app.detection.FusedLocationSessionController
@@ -14,7 +16,10 @@ import com.parkingkok.app.detection.FusedLocationSessionRegistrar
 import com.parkingkok.app.detection.TransitionEventIngestor
 import com.parkingkok.app.diagnostics.DiagnosticsExporter
 import com.parkingkok.app.diagnostics.FileDiagnosticsReportStore
+import com.parkingkok.app.domain.parking.ParkingLocationProvider
+import com.parkingkok.app.domain.parking.ParkingRepository
 import com.parkingkok.app.domain.trace.TraceDeviceInfo
+import com.parkingkok.app.location.CheckpointParkingLocationProvider
 import com.parkingkok.app.trace.FileTraceStore
 import com.parkingkok.app.trace.NotificationLabelPromptDelivery
 import com.parkingkok.app.trace.TraceLabelPrompter
@@ -38,6 +43,27 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
     val applicationScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     val detectionStateStore: DetectionStateStore = DetectionStateStore(detectionDataStore(appContext))
+
+    /**
+     * Local parking storage. Opened lazily so a process started by a detection broadcast
+     * does not pay for a database it will not read — the receivers touch the detection
+     * DataStore only.
+     */
+    private val parkingDatabase: ParkingDatabase by lazy { ParkingDatabase.open(appContext) }
+
+    val parkingRepository: ParkingRepository by lazy {
+        RoomParkingRepository(parkingDatabase.parkingRecordDao())
+    }
+
+    /**
+     * Where a manual save gets its coordinates, when there are any.
+     *
+     * FR-001: this returning null is an ordinary outcome, not a failure — see
+     * [CheckpointParkingLocationProvider].
+     */
+    val parkingLocationProvider: ParkingLocationProvider by lazy {
+        CheckpointParkingLocationProvider(detectionStateStore)
+    }
 
     private val registrar = ActivityTransitionRegistrar(appContext)
 

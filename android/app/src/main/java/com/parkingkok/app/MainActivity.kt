@@ -4,17 +4,13 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.runtime.getValue
-import androidx.lifecycle.compose.LifecycleResumeEffect
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
 import com.parkingkok.app.theme.ParkingkokTheme
-import com.parkingkok.app.ui.diagnostics.DiagnosticsScreen
-import com.parkingkok.app.ui.diagnostics.DiagnosticsViewModel
+import com.parkingkok.app.ui.navigation.ParkingkokApp
 
 /**
- * Single P0 entry point. Hosts the detection diagnostics screen only — product UI lands
- * after the detection engine (CLAUDE.md Development Order).
+ * The single entry point. It owns the window and nothing else — the shell, its back stack
+ * and every screen live in [ParkingkokApp] (docs/03_SYSTEM_ARCHITECTURE.md §5 keeps
+ * business logic out of the Activity).
  */
 class MainActivity : ComponentActivity() {
 
@@ -27,27 +23,7 @@ class MainActivity : ComponentActivity() {
         val container = ParkingkokApplication.containerOf(this) ?: AppContainer(this)
         setContent {
             ParkingkokTheme {
-                val viewModel: DiagnosticsViewModel =
-                    viewModel(factory = DiagnosticsViewModel.factory(container))
-                val state by viewModel.uiState.collectAsStateWithLifecycle()
-
-                // The permission can be revoked in Settings while the app is backgrounded,
-                // so re-read it and reconcile on every resume.
-                LifecycleResumeEffect(Unit) {
-                    viewModel.refresh()
-                    onPauseOrDispose { }
-                }
-
-                DiagnosticsScreen(
-                    state = state,
-                    onDetectionEnabledChange = viewModel::setDetectionEnabled,
-                    onPermissionResult = viewModel::refresh,
-                    onCaptureModeChange = viewModel::setCaptureMode,
-                    onExportDiagnostics = viewModel::exportDiagnostics,
-                    onClearEvents = viewModel::clearEventLog,
-                    onTraceLabelChange = viewModel::setTraceLabel,
-                    onTraceSplit = viewModel::splitTraceSession,
-                )
+                ParkingkokApp(container = container)
             }
         }
     }

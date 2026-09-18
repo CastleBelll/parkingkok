@@ -113,4 +113,136 @@
     <string name="diagnostics_permission_notifications">알림</string>
     <string name="diagnostics_request_permission_notifications">알림 권한 요청</string>
     <string name="diagnostics_trace_label_prompt_suppressed">알림 못 띄움</string>
+
+    <!-- Brand header, shown on every root screen (design-references/01-home-main.png). -->
+    <string name="brand_name">주차콕</string>
+    <string name="brand_tagline">자동 주차 기록</string>
+    <string name="brand_footer">주차는 쉽고, 일상은 더 가볍게</string>
+
+    <!-- Home -->
+    <string name="home_active_title">현재 주차 위치</string>
+    <string name="home_no_floor">위치 기록됨</string>
+    <string name="home_floor_hint">층을 변경할 수 있어요</string>
+    <string name="home_floor_hint_fixed">직접 입력한 층이라 - / + 로 바꿀 수 없어요</string>
+    <string name="home_floor_decrease">한 층 아래로</string>
+    <string name="home_floor_increase">한 층 위로</string>
+    <string name="home_end_parking">주차 종료</string>
+    <string name="home_end_parking_caption">주차를 종료하고 기록을 저장합니다</string>
+    <string name="home_detail">주차 상세 보기</string>
+    <string name="home_detail_caption">저장된 주차 정보를 확인하세요</string>
+    <string name="home_recent_title">최근 주차</string>
+    <string name="home_recent_all">전체보기</string>
+    <string name="home_recent_empty">아직 저장된 주차 기록이 없어요</string>
+    <string name="home_empty_title">지금은 주차 중이 아니에요</string>
+    <string name="home_empty_body">주차한 곳의 층과 구역을 적어두면 돌아올 때 바로 찾을 수 있어요.</string>
+    <string name="home_save_parking">주차 위치 저장</string>
+    <string name="home_settings">설정</string>
+
+    <!-- Elapsed time (docs/10_DESIGN_UX_SPEC.md §6 item 3) -->
+    <string name="elapsed_just_now">방금 주차했어요</string>
+    <string name="elapsed_minutes">%1$d분째 주차 중</string>
+    <string name="elapsed_hours">%1$d시간 %2$d분째 주차 중</string>
+    <string name="elapsed_days">%1$d일 %2$d시간째 주차 중</string>
+
+    <!-- Location status. There is no map in this build; the chip states what is known. -->
+    <string name="location_saved">위치 저장됨</string>
+    <string name="location_accuracy">반경 %1$d m</string>
+    <string name="location_none">위치 없음</string>
+    <string name="location_none_caption">권한 없이 저장한 기록이에요</string>
+
+    <!-- Features that do not exist yet. Shown as disabled, never as working. -->
+    <string name="coming_soon_map">지도에서 보기</string>
+    <string name="coming_soon_map_caption">준비 중인 기능이에요</string>
+    <string name="coming_soon_photo">사진 추가</string>
+    <string name="coming_soon_photo_caption">준비 중인 기능이에요</string>
+    <string name="coming_soon_badge">준비 중</string>
+
+    <!-- Manual parking entry (FR-001) -->
+    <string name="manual_title">주차 위치 저장</string>
+    <string name="manual_subtitle">기억나는 만큼만 적어도 괜찮아요. 나중에 층은 바꿀 수 있어요.</string>
+    <string name="manual_floor_label">층</string>
+    <string name="manual_floor_placeholder">예) B3, 2F, 옥상</string>
+    <string name="manual_floor_help">B3 이나 2F 처럼 적으면 홈에서 - / + 로 바꿀 수 있어요</string>
+    <string name="manual_zone_label">구역</string>
+    <string name="manual_zone_placeholder">예) A구역</string>
+    <string name="manual_spot_label">주차 번호</string>
+    <string name="manual_spot_placeholder">예) 142</string>
+    <string name="manual_memo_label">메모</string>
+    <string name="manual_memo_placeholder">예) 엘리베이터 옆 기둥</string>
+    <string name="manual_save">저장하기</string>
+    <string name="manual_cancel">취소</string>
+    <string name="manual_privacy_note">입력한 내용과 위치는 이 기기에만 저장돼요.</string>
+    <string name="manual_already_active">이미 주차 중인 기록이 있어요. 먼저 종료해 주세요.</string>
+
+    <!-- Parking detail (design-references/03-parking-detail.png) -->
+    <string name="detail_title">주차 위치</string>
+    <string name="detail_parked_at">주차 시간</string>
+    <string name="detail_ended_at">종료 시간</string>
+    <string name="detail_source">저장 방식</string>
+    <string name="detail_source_manual">직접 입력</string>
+    <string name="detail_source_detected">자동 저장됨</string>
+    <string name="detail_accuracy">마지막 위치 정확도</string>
+    <string name="detail_memo">메모</string>
+    <string name="detail_duration">주차 시간</string>
+    <string name="detail_duration_value">%1$s</string>
+    <string name="detail_delete">이 기록 삭제</string>
+    <string name="detail_delete_confirm_title">이 기록을 삭제할까요?</string>
+    <string name="detail_delete_confirm_body">삭제한 기록은 되돌릴 수 없어요.</string>
+    <string name="detail_gone">기록을 찾을 수 없어요</string>
+
+    <!-- History (design-references/04-history-list.png) -->
+    <string name="history_title">주차 기록</string>
+    <string name="history_badge_detected">자동</string>
+    <string name="history_badge_manual">직접</string>
+    <string name="history_count">기록 %1$d건</string>
+    <string name="history_empty_title">아직 기록이 없어요</string>
+    <string name="history_empty_body">주차를 종료하면 여기에 쌓여요.</string>
+    <string name="history_delete_all">기록 전체 삭제</string>
+    <string name="history_delete_all_confirm_title">기록을 모두 삭제할까요?</string>
+    <string name="history_delete_all_confirm_body">주차 중인 기록은 지워지지 않아요. 삭제한 기록은 되돌릴 수 없어요.</string>
+    <string name="history_day_today">오늘</string>
+    <string name="history_day_yesterday">어제</string>
+
+    <!-- Settings (design-references/05-settings.png), section order per docs/19 -->
+    <string name="settings_title">설정</string>
+    <string name="settings_account_title">회원가입 없이 사용 중</string>
+    <string name="settings_account_body">모든 주차 기록은 이 기기에만 저장됩니다</string>
+    <string name="settings_section_detection">자동 감지</string>
+    <string name="settings_detection_toggle">자동 주차 감지</string>
+    <string name="settings_detection_toggle_caption">주차 시 자동으로 위치를 기록합니다</string>
+    <string name="settings_detection_on">켜짐</string>
+    <string name="settings_detection_off">꺼짐</string>
+    <string name="settings_section_notification">알림</string>
+    <string name="settings_notification_status">주차 감지 알림</string>
+    <string name="settings_notification_pending_caption">감지된 주차를 알려주는 기능은 준비 중이에요</string>
+    <string name="settings_section_permission">권한</string>
+    <string name="settings_permission_location">위치 권한</string>
+    <string name="settings_permission_location_caption">주차 위치를 기록하려면 필요해요</string>
+    <string name="settings_permission_background">위치 항상 허용</string>
+    <string name="settings_permission_background_caption">앱이 꺼져 있을 때도 감지하려면 필요해요</string>
+    <string name="settings_permission_activity">신체 활동</string>
+    <string name="settings_permission_activity_caption">운전과 걷기를 구분하려면 필요해요</string>
+    <string name="settings_permission_notification">알림 권한</string>
+    <string name="settings_permission_notification_caption">주차 알림을 받으려면 필요해요</string>
+    <string name="settings_permission_granted">허용됨</string>
+    <string name="settings_permission_denied">거부됨</string>
+    <string name="settings_permission_open">시스템 설정 열기</string>
+    <string name="settings_section_plus">주차콕 Plus</string>
+    <string name="settings_plus_title">아직 준비 중이에요</string>
+    <string name="settings_plus_caption">구독 기능은 이 버전에 없습니다</string>
+    <string name="settings_section_data">데이터</string>
+    <string name="settings_data_export">주차 기록 내보내기</string>
+    <string name="settings_data_export_caption">준비 중인 기능이에요</string>
+    <string name="settings_data_delete">주차 기록 전체 삭제</string>
+    <string name="settings_data_delete_caption">이 기기에 저장된 기록을 지웁니다</string>
+    <string name="settings_section_privacy">개인정보</string>
+    <string name="settings_privacy_body">주차콕은 위치, 사진, 메모를 서버로 보내지 않습니다. 모두 이 기기 안에만 있습니다.</string>
+    <string name="settings_section_developer">개발자</string>
+    <string name="settings_diagnostics">감지 진단 (P0)</string>
+    <string name="settings_diagnostics_caption">감지 엔진 상태와 트레이스를 확인합니다</string>
+
+    <!-- Shared -->
+    <string name="action_back">뒤로</string>
+    <string name="action_cancel">취소</string>
+    <string name="action_delete">삭제</string>
 </resources>

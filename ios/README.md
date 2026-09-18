@@ -213,6 +213,33 @@ xcrun devicectl device copy from --device <device-udid> \
    expected reading and not a failure. A session with no motion event is deliberately never
    prompted for: there is nothing a person could answer about three location fixes.
 
+## DEV-only UI fixtures
+
+The product screens need an active parking and a history to be worth looking at, and
+neither `devicectl` nor the simulator can drive a touchscreen. Two launch hooks fill that
+gap. Both are inside `#if PK_DEV`, so STAGING and PROD do not contain them.
+
+```sh
+xcrun devicectl device process launch --device <device-udid> --terminate-existing \
+  --environment-variables '{"PK_SEED_SAMPLE_PARKING":"1","PK_INITIAL_ROUTE":"history"}' \
+  com.parkingkok.app.dev
+```
+
+| Variable | Effect |
+| --- | --- |
+| `PK_SEED_SAMPLE_PARKING=1` | **Replaces** the local store with the fixture behind `design-references/01-home-main.png`: B3 · A구역 142 parked 1시간 24분 ago, over four earlier records. Carries no coordinate. |
+| `PK_INITIAL_ROUTE=history\|settings\|detail\|diagnostics` | Opens the stack on that screen instead of home. |
+
+Appearance for the light/dark pass:
+
+```sh
+xcrun devicectl device settings appearance --device <device-udid> --mode light
+xcrun devicectl device capture screenshot --device <device-udid> --destination shot.png
+```
+
+Capture a few seconds after launch — a screenshot taken during the launch animation
+catches the scroll view mid-bounce and looks like a safe-area bug that is not there.
+
 ## Lint
 
 ```sh
