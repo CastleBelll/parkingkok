@@ -39,6 +39,11 @@ final class SignificantLocationMonitor: NSObject {
         LocationAuthorization(manager.authorizationStatus)
     }
 
+    /// When the current monitoring stretch began. Only meaningful beside how long ago the
+    /// last input arrived: "monitoring" and "receiving" are different claims, and the
+    /// diagnostics only ever made the first one.
+    private(set) var monitoringStartedAt: Date?
+
     /// Re-registers the service. Idempotent — Core Location tolerates repeat calls, and
     /// a relaunch must call it again to receive the event that woke the app.
     func startMonitoring() {
@@ -47,12 +52,16 @@ final class SignificantLocationMonitor: NSObject {
             return
         }
         manager.startMonitoringSignificantLocationChanges()
+        if !isMonitoring {
+            monitoringStartedAt = Date()
+        }
         isMonitoring = true
     }
 
     func stopMonitoring() {
         manager.stopMonitoringSignificantLocationChanges()
         isMonitoring = false
+        monitoringStartedAt = nil
     }
 
     func requestWhenInUseAuthorization() {

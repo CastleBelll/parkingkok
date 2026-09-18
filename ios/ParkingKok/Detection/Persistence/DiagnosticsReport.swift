@@ -17,7 +17,7 @@ import Foundation
 struct DiagnosticsReport: Sendable, Equatable, Codable {
     /// Bumped to 5 by the §7 distance-clause instrumentation; 4 was the movement-evidence
     /// counters before it.
-    static let schemaVersion = 6
+    static let schemaVersion = 7
 
     var schemaVersion: Int = DiagnosticsReport.schemaVersion
     var generatedAt: Date
@@ -123,6 +123,13 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
     var motionAuthorization: String
     var isMotionHistoryAvailable: Bool
     var isMonitoringSignificantChanges: Bool
+    /// How long monitoring has been up, and how long since any detection input arrived.
+    ///
+    /// "Monitoring" and "receiving" are different claims and this file only made the
+    /// first. A long age beside a longer silence is the shape worth suspecting; a short
+    /// silence just means the pipeline is quiet.
+    var monitoringAge: TimeInterval?
+    var timeSinceLastDetectionInput: TimeInterval?
     var isSmartDetectionEnabled: Bool
     var storeSetupFailure: String?
     var lastPersistError: String?
@@ -134,6 +141,7 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
         motionAuthorization: MotionAuthorization,
         isMotionHistoryAvailable: Bool,
         isMonitoringSignificantChanges: Bool,
+        monitoringStartedAt: Date?,
         isSmartDetectionEnabled: Bool,
         storeSetupFailure: String?,
         traceSummary: TraceSummary
@@ -210,6 +218,17 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
         self.motionAuthorization = motionAuthorization.rawValue
         self.isMotionHistoryAvailable = isMotionHistoryAvailable
         self.isMonitoringSignificantChanges = isMonitoringSignificantChanges
+        monitoringAge = monitoringStartedAt.map { now.timeIntervalSince($0) }
+        // Any input counts: a motion edge, a significant change, or a bounded fix. The
+        // question is whether the stack is hearing anything at all.
+        timeSinceLastDetectionInput = [
+            snapshot.motionSamples.last?.timestamp,
+            snapshot.lastLocationAt,
+            snapshot.lastVehicleEvidenceAt
+        ]
+        .compactMap(\.self)
+        .max()
+        .map { now.timeIntervalSince($0) }
         self.isSmartDetectionEnabled = isSmartDetectionEnabled
         self.storeSetupFailure = storeSetupFailure
         lastPersistError = snapshot.lastPersistError

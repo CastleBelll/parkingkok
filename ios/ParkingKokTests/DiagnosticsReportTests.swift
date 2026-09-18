@@ -14,6 +14,7 @@ struct DiagnosticsReportTests {
             motionAuthorization: .authorized,
             isMotionHistoryAvailable: true,
             isMonitoringSignificantChanges: true,
+            monitoringStartedAt: nil,
             isSmartDetectionEnabled: true,
             storeSetupFailure: nil,
             traceSummary: .empty
@@ -101,6 +102,7 @@ struct DiagnosticsReportTests {
             motionAuthorization: .authorized,
             isMotionHistoryAvailable: true,
             isMonitoringSignificantChanges: false,
+            monitoringStartedAt: nil,
             isSmartDetectionEnabled: true,
             storeSetupFailure: nil,
             traceSummary: .empty
@@ -136,6 +138,7 @@ struct DiagnosticsReportTests {
             motionAuthorization: .notDetermined,
             isMotionHistoryAvailable: false,
             isMonitoringSignificantChanges: false,
+            monitoringStartedAt: nil,
             isSmartDetectionEnabled: false,
             storeSetupFailure: nil,
             traceSummary: .empty
@@ -168,6 +171,7 @@ struct DiagnosticsReportTests {
             motionAuthorization: .authorized,
             isMotionHistoryAvailable: true,
             isMonitoringSignificantChanges: true,
+            monitoringStartedAt: nil,
             isSmartDetectionEnabled: true,
             storeSetupFailure: nil,
             traceSummary: summary
@@ -197,5 +201,55 @@ struct DiagnosticsReportTests {
         // Assert
         #expect(decoded == original)
         #expect(decoded.schemaVersion == DiagnosticsReport.schemaVersion)
+    }
+
+    /// Twice a silent period was diagnosed from elapsed wall-clock rather than from the
+    /// device — once as a dead registration, once as a healthy one. Both readings were
+    /// wrong. The file now carries the two numbers that settle it without guessing.
+    @Test("Monitoring age and input silence are reported separately")
+    func reportsMonitoringLiveness() {
+        // Arrange — monitoring up for an hour, last input ten minutes ago.
+        var snapshot = RehydrationSnapshot()
+        snapshot.lastLocationAt = TestTime.offset(-600)
+        snapshot.motionSamples = [MotionSample(timestamp: TestTime.offset(-900), walking: true, confidence: .high)]
+
+        // Act
+        let report = DiagnosticsReport(
+            snapshot: snapshot,
+            now: TestTime.offset(0),
+            locationAuthorization: .always,
+            motionAuthorization: .authorized,
+            isMotionHistoryAvailable: true,
+            isMonitoringSignificantChanges: true,
+            monitoringStartedAt: TestTime.offset(-3600),
+            isSmartDetectionEnabled: true,
+            storeSetupFailure: nil,
+            traceSummary: .empty
+        )
+
+        // Assert — the newest input wins, not the oldest.
+        #expect(report.monitoringAge == 3600)
+        #expect(report.timeSinceLastDetectionInput == 600)
+    }
+
+    @Test("Silence is absent rather than zero when nothing has arrived")
+    func silenceIsAbsentWithoutInput() {
+        // Arrange / Act
+        let report = DiagnosticsReport(
+            snapshot: RehydrationSnapshot(),
+            now: TestTime.offset(0),
+            locationAuthorization: .always,
+            motionAuthorization: .authorized,
+            isMotionHistoryAvailable: true,
+            isMonitoringSignificantChanges: true,
+            monitoringStartedAt: TestTime.offset(-60),
+            isSmartDetectionEnabled: true,
+            storeSetupFailure: nil,
+            traceSummary: .empty
+        )
+
+        // Assert — zero would read as "just heard something", which is the opposite.
+        #expect(report.monitoringAge == 60)
+        #expect(report.timeSinceLastDetectionInput == nil)
     }
 }

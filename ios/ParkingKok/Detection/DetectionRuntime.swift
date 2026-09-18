@@ -94,6 +94,10 @@ final class DetectionRuntime {
         monitor.isMonitoring
     }
 
+    var monitoringStartedAt: Date? {
+        monitor.monitoringStartedAt
+    }
+
     var isCapturingDrivingLocation: Bool {
         locationCapture.isCapturing
     }
@@ -165,6 +169,7 @@ final class DetectionRuntime {
             motionAuthorization: motionAuthorization,
             isMotionHistoryAvailable: isMotionHistoryAvailable,
             isMonitoringSignificantChanges: monitor.isMonitoring,
+            monitoringStartedAt: monitor.monitoringStartedAt,
             isSmartDetectionEnabled: preference.isEnabled,
             storeSetupFailure: storeSetupFailure,
             traceSummary: traceStore?.summary() ?? .empty

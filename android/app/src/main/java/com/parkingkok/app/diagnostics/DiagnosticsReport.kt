@@ -38,6 +38,17 @@ data class DiagnosticsReport(
     val backgroundLocationGranted: Boolean,
     val smartDetectionEnabled: Boolean,
     val transitionRegistration: String,
+    /**
+     * How long the registration has been in place, and how long since it last delivered.
+     *
+     * "Registered" and "receiving" are different claims, and the diagnostics only made the
+     * first one. Twice now a silent period was read as a dead registration and once as a
+     * healthy one, both times by guessing from elapsed wall-clock rather than from the
+     * device. A long age beside a null-or-longer silence is the shape that deserves
+     * suspicion; a short silence says the pipeline is simply quiet.
+     */
+    val transitionRegistrationAgeMillis: Long?,
+    val millisSinceLastTransition: Long?,
 
     // Checkpoint, projected
     val state: String?,
@@ -143,7 +154,7 @@ data class DiagnosticsReport(
 
     companion object {
         /** Bump whenever the shape changes, so an older payload is rejected, not half-read. */
-        const val SCHEMA_VERSION: Int = 4
+        const val SCHEMA_VERSION: Int = 5
 
         @Suppress("LongParameterList")
         fun from(
@@ -168,6 +179,10 @@ data class DiagnosticsReport(
                 backgroundLocationGranted = backgroundLocationGranted,
                 smartDetectionEnabled = smartDetectionEnabled,
                 transitionRegistration = transitionRegistration.wire(),
+                transitionRegistrationAgeMillis = (transitionRegistration as? RegistrationStatus.Active)
+                    ?.let { nowMillis - it.registeredAtMillis },
+                millisSinceLastTransition = transitions.maxOfOrNull { it.atMillis }
+                    ?.let { nowMillis - it },
                 state = checkpoint?.state?.name,
                 revision = checkpoint?.revision,
                 stateEnteredAtMillis = checkpoint?.stateEnteredAtMillis,
