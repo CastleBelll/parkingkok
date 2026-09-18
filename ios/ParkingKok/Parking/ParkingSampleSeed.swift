@@ -45,7 +45,7 @@
         static func initialRoute(activeParkingID: UUID?) -> AppRoute? {
             switch ProcessInfo.processInfo.environment["PK_INITIAL_ROUTE"] {
             case "history": .history
-            case "settings": .settings
+            case "settings": .settings(focus: nil)
             case "diagnostics": .diagnostics
             case "detail": activeParkingID.map(AppRoute.parkingDetail(id:))
             default: nil

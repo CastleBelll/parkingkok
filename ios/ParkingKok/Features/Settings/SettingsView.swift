@@ -11,22 +11,37 @@ import SwiftUI
 struct SettingsView: View {
     private let appInfo: AppInfo
     private let parkingModel: ParkingModel?
+    /// Set when the caller wants a particular section in front of the user — the home
+    /// header's bell asks for `.notifications`.
+    private let focus: SettingsFocus?
     @Binding private var path: [AppRoute]
 
     @State private var model = SettingsModel()
     @State private var isConfirmingDataDeletion = false
 
-    init(appInfo: AppInfo, model: ParkingModel?, path: Binding<[AppRoute]>) {
+    init(appInfo: AppInfo, model: ParkingModel?, path: Binding<[AppRoute]>, focus: SettingsFocus? = nil) {
         self.appInfo = appInfo
         parkingModel = model
         _path = path
+        self.focus = focus
     }
 
     var body: some View {
+        ScrollViewReader { proxy in
+            list
+                .onAppear {
+                    guard let focus else { return }
+                    proxy.scrollTo(focus, anchor: .top)
+                }
+        }
+    }
+
+    private var list: some View {
         List {
             accountSection
             detectionSection
             notificationSection
+                .id(SettingsFocus.notifications)
             permissionSection
             plusSection
             dataSection

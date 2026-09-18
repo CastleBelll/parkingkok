@@ -15,7 +15,11 @@ struct ParkingHistoryRow: View {
 
     var body: some View {
         HStack(spacing: PKSpacing.m) {
-            PKIconChip(icon, tint: session.source == .detected ? .primary : .neutral)
+            // One badge for every record, as `04-history-list.png` draws it. It used to be
+            // a car for detected rows and a `P` for manual ones, which made the list look
+            // like two kinds of thing — and made the source a colour-and-glyph-only state,
+            // which docs/01 §8 forbids. `자동` says it in a word instead.
+            PKIconChip("car.fill", tint: .neutral)
 
             VStack(alignment: .leading, spacing: PKSpacing.xs) {
                 Text(title)
@@ -29,8 +33,13 @@ struct ParkingHistoryRow: View {
 
             Spacer(minLength: PKSpacing.s)
 
+            // Home carries the day in the title, so only the clock is left here and the
+            // row collapses to a single line, the way `01-home-main.png` draws it. The
+            // full list keeps both stacked: its title is already spent on zone and spot.
             VStack(alignment: .trailing, spacing: 2) {
-                Text(ParkingDateText.day(session.startedAt))
+                if style == .full {
+                    Text(ParkingDateText.day(session.startedAt))
+                }
                 Text(ParkingDateText.time(session.startedAt))
             }
             .font(PKTypography.supporting)
@@ -43,24 +52,19 @@ struct ParkingHistoryRow: View {
         }
         .padding(PKSpacing.l)
         .frame(minHeight: PKSize.minimumTouchTarget)
-        .background(PKColor.surface, in: .rect(cornerRadius: PKRadius.row))
-        .overlay {
-            RoundedRectangle(cornerRadius: PKRadius.row)
-                .strokeBorder(PKColor.divider, lineWidth: PKSize.hairline)
-        }
+        // The surface, border and lift belong to `PKSurfaceButtonStyle`, which every call
+        // site wraps this in — a row is a whole card that is also a button.
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityText)
         .accessibilityAddTraits(.isButton)
     }
 
-    private var icon: String {
-        session.source == .detected ? "car.fill" : "parkingsign"
-    }
-
-    /// `B3 · A구역 142` in the full list; just the floor on home.
+    /// `B3 · A구역 142` in the full list; `B2 · 어제` on home.
     private var title: String {
         let floor = session.floor?.displayText ?? "층 미입력"
-        guard style == .full else { return floor }
+        guard style == .full else {
+            return "\(floor) · \(ParkingDateText.day(session.startedAt))"
+        }
         let place = [session.zone, session.spot].compactMap(\.self).joined(separator: " ")
         return place.isEmpty ? floor : "\(floor) · \(place)"
     }

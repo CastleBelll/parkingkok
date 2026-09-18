@@ -2,9 +2,16 @@ import SwiftUI
 
 /// The current parking, as `01-home-main.png` frames it.
 ///
-/// Reading order is docs/10 §6: floor, then zone/spot, then elapsed, then the `-`/`+`
+/// Reading order is docs/10 §6: floor, then zone/spot, then elapsed, then the `−`/`+`
 /// keys. The floor is the hero and everything else is deliberately quieter.
+///
+/// The card is a two-column block, not a single column: the mock puts a map thumbnail in
+/// the top-right, and the hero is measured against it. Laid out as one column the right
+/// 40% of the card is empty and `B3` reads as floating rather than as the anchor of the
+/// screen.
 struct ActiveParkingCard: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     let session: ParkingSession
     let now: Date
     let onStepFloor: (Int) -> Void
@@ -15,8 +22,14 @@ struct ActiveParkingCard: View {
     var body: some View {
         PKCard {
             VStack(alignment: .leading, spacing: PKSpacing.m) {
-                statusRow
-                heroBlock
+                HStack(alignment: .top, spacing: PKSpacing.l) {
+                    VStack(alignment: .leading, spacing: PKSpacing.m) {
+                        statusRow
+                        heroBlock
+                    }
+                    Spacer(minLength: PKSpacing.s)
+                    ParkingMapThumbnail(point: ParkingMapPoint(session), zoneText: session.zone)
+                }
                 floorStepper
             }
             .padding(PKSpacing.xl)
@@ -70,18 +83,26 @@ struct ActiveParkingCard: View {
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
+    /// Two compact keys with a hairline between them, centred under the hero — the mock's
+    /// proportions. Full-width slabs made adjusting the floor look like the screen's first
+    /// action; docs/10 §6 ranks it fourth.
     @ViewBuilder
     private var floorStepper: some View {
         let canStep = session.floor?.isSteppable ?? false
         VStack(spacing: PKSpacing.s) {
-            HStack(spacing: PKSpacing.l) {
+            HStack(spacing: PKSpacing.m) {
                 stepButton(delta: -1, symbol: "minus", label: "한 층 아래로", enabled: canStep)
+                Rectangle()
+                    .fill(PKColor.divider)
+                    .frame(width: PKSize.hairline, height: PKSize.minimumTouchTarget * 0.55)
+                    .accessibilityHidden(true)
                 stepButton(delta: 1, symbol: "plus", label: "한 층 위로", enabled: canStep)
             }
             Text(stepperHint(canStep: canStep))
                 .font(PKTypography.caption)
                 .foregroundStyle(PKColor.textSecondary)
         }
+        .frame(maxWidth: .infinity)
         .padding(.top, PKSpacing.s)
     }
 
@@ -96,12 +117,16 @@ struct ActiveParkingCard: View {
 
     private func stepButton(delta: Int, symbol: String, label: String, enabled: Bool) -> some View {
         Button {
-            onStepFloor(delta)
+            // The hero carries `.contentTransition(.numericText())`; this is what supplies
+            // the animation it rolls on, and it is nil under Reduce Motion, where the
+            // digit changes instantly instead.
+            pkWithAnimation(PKMotion.floorChange, reduceMotion: reduceMotion) {
+                onStepFloor(delta)
+            }
         } label: {
             Image(systemName: symbol)
-                .font(.title2.weight(.bold))
         }
-        .buttonStyle(PKSoftButtonStyle())
+        .buttonStyle(PKStepperKeyStyle())
         .disabled(!enabled)
         .opacity(enabled ? 1 : 0.4)
         .accessibilityLabel(label)

@@ -6,6 +6,8 @@ import SwiftUI
 /// build, so capping the list would show the restriction without the thing it restricts.
 /// Every stored record is listed.
 struct HistoryView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     @Bindable private var model: ParkingModel
     @Binding private var path: [AppRoute]
 
@@ -20,7 +22,9 @@ struct HistoryView: View {
     var body: some View {
         PKScreen {
             filterChips
+                .pkEntrance(0)
             MonthlySummaryCard(summary: HistorySummary(sessions: model.completedSessions, now: model.now))
+                .pkEntrance(1)
 
             if filtered.isEmpty {
                 Text(filter == .all ? "아직 저장된 기록이 없어요." : "해당 조건의 기록이 없어요.")
@@ -29,20 +33,25 @@ struct HistoryView: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, PKSpacing.xxl)
             } else {
+                // The stagger is on the group, not on each row: `04-history-list.png` can
+                // run to dozens of records, and animating them individually would mean a
+                // wait proportional to the history's length.
                 VStack(spacing: PKSpacing.s) {
                     ForEach(filtered) { session in
                         Button { path.append(.parkingDetail(id: session.id)) } label: {
                             ParkingHistoryRow(session: session, style: .full)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(PKSurfaceButtonStyle(radius: PKRadius.row))
                     }
                 }
+                .pkEntrance(2)
 
                 Button("기록 전체 삭제", role: .destructive) { isConfirmingDeleteAll = true }
                     .font(PKTypography.row)
                     .tint(PKColor.danger)
                     .frame(maxWidth: .infinity, minHeight: PKSize.minimumTouchTarget)
                     .padding(.top, PKSpacing.s)
+                    .pkEntrance(3)
             }
 
             PKBrandFooter()
@@ -71,21 +80,14 @@ struct HistoryView: View {
     private var filterChips: some View {
         HStack(spacing: PKSpacing.s) {
             ForEach(HistoryFilter.allCases, id: \.self) { option in
-                Button { filter = option } label: {
+                Button {
+                    pkWithAnimation(PKMotion.selection, reduceMotion: reduceMotion) {
+                        filter = option
+                    }
+                } label: {
                     Text(option.title)
-                        .font(PKTypography.caption)
-                        .frame(maxWidth: .infinity, minHeight: PKSize.minimumTouchTarget)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(option == filter ? Color.white : PKColor.textSecondary)
-                .background(
-                    option == filter ? PKColor.primary : PKColor.surface,
-                    in: .rect(cornerRadius: PKRadius.button)
-                )
-                .overlay {
-                    RoundedRectangle(cornerRadius: PKRadius.button)
-                        .strokeBorder(PKColor.divider, lineWidth: option == filter ? 0 : PKSize.hairline)
-                }
+                .buttonStyle(PKChipButtonStyle(isSelected: option == filter))
                 // Selection is a colour swap in the mock; VoiceOver needs it said.
                 .accessibilityAddTraits(option == filter ? [.isButton, .isSelected] : .isButton)
             }

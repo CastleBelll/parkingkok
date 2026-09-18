@@ -43,5 +43,9 @@ struct PKHeroFloorText: View {
             // "Hero value may scale down within safe minimum but must remain readable"
             // (§4): 0.5 of a 64pt hero is still 32pt.
             .minimumScaleFactor(0.5)
+            // `B3` → `B4` under the stepper rolls the digit instead of swapping the whole
+            // word. The caller supplies the animation (`PKMotion.floorChange`); with none
+            // — which is what Reduce Motion produces — this is an ordinary instant change.
+            .contentTransition(.numericText())
     }
 }
