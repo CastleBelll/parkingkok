@@ -5,8 +5,9 @@ import kotlinx.serialization.Serializable
 /**
  * What a driving session has accumulated so far, in the terms §7's guard is written in.
  *
- * Coordinate-free on purpose: distance arrives already reduced to metres, so the guard
- * itself can never hold a position.
+ * Every field the guard reads is a scalar: metres, counts, a speed. The one position in
+ * here lives inside [movement], which is the only clause that needs two points to say
+ * anything at all — see [MovementAnchor].
  */
 @Serializable
 data class DrivingSessionEvidence(
@@ -14,13 +15,40 @@ data class DrivingSessionEvidence(
     val vehicleFirstSeenAtMillis: Long,
     /** Most recent vehicle evidence — a transition, or a fix at vehicle-plausible speed. */
     val lastVehicleEvidenceAtMillis: Long,
-    /** Metres accumulated between successive reliable fixes. */
+    /**
+     * Metres accumulated between successive reliable fixes.
+     *
+     * This feeds §7's `distance >= 800m` clause and nothing else. It used to double as the
+     * movement clause; the 2026-09-18 unification separated the two roles, because a sum
+     * cannot tell steady travel from accumulated jitter (see [MovementEvidence]).
+     */
     val travelDistanceMeters: Double = 0.0,
     /** Reliable fixes admitted during the session. */
     val reliableSampleCount: Int = 0,
     /** Fastest speed observed, when the provider reported one. */
     val maxSpeedMps: Float? = null,
-)
+    /** §7's "movement evidence consistent with travel", counted per pair of fixes. */
+    val movement: MovementEvidence = MovementEvidence(),
+) {
+
+    /**
+     * Folds one delivered fix into the movement clause and the observed-speed ceiling.
+     *
+     * Deliberately takes *every* fix, not only the ones [ReliableLocationSelector] admits:
+     * §6's 35 m bar chooses a parking spot worth remembering, and applying it here would
+     * make driving confirmation impossible underground (docs/05 §7).
+     */
+    fun recordingFix(sample: LocationSample): DrivingSessionEvidence = copy(
+        maxSpeedMps = maxOfNullable(maxSpeedMps, sample.speedMps.takeIf { sample.quality.isValid }),
+        movement = movement.recording(sample),
+    )
+
+    private fun maxOfNullable(current: Float?, candidate: Float?): Float? = when {
+        candidate == null -> current
+        current == null -> candidate
+        else -> maxOf(current, candidate)
+    }
+}
 
 /** Why the guard did or did not confirm. Stable strings from docs/05_CROSS_PLATFORM_DOMAIN_CONTRACT.md §4. */
 enum class DrivingReasonCode(val wire: String) {
@@ -62,17 +90,30 @@ object DrivingConfirmationGuard {
     const val MIN_DURATION_MILLIS: Long = 120_000L
     const val MIN_DISTANCE_METERS: Double = 800.0
 
-    /** Vehicle evidence older than this no longer describes the current situation. */
+    /**
+     * Vehicle evidence older than this no longer describes the current situation.
+     *
+     * 300 s rather than the tighter figure iOS started from: measured Activity transition
+     * gaps underground ran to minutes, and the cost of missing a whole journey is larger
+     * than the cost of one wrongly-open timeout window (docs/05 §7).
+     */
     const val RECENT_VEHICLE_WINDOW_MILLIS: Long = 300_000L
 
-    /** Two fixes are the minimum that can evidence displacement rather than a single guess. */
-    const val MIN_RELIABLE_SAMPLES_FOR_MOVEMENT: Int = 2
+    /**
+     * "One event alone never confirms" made concrete: a single fix can never satisfy the
+     * movement requirement.
+     */
+    const val MIN_MOVING_SAMPLES: Int = 2
 
-    /** Metres of displacement that rule out a stationary phone with a drifting fix. */
-    const val MIN_MOVEMENT_METERS: Double = 150.0
-
-    /** ~29 km/h. Above walking or fix drift, below the point of excluding city traffic. */
-    const val MIN_VEHICLE_SPEED_MPS: Float = 8f
+    /**
+     * ~7.2 km/h — above brisk walking, below any real traffic speed.
+     *
+     * Not a "is this a vehicle" bar: that question is already answered by the recent
+     * vehicle evidence conjunct. This one asks only whether the device really moved, so a
+     * higher threshold would reject the car crawling through a car park looking for a
+     * space — which is the exact moment this product exists to catch.
+     */
+    const val MOVING_SPEED_THRESHOLD_MPS: Double = 2.0
 
     fun evaluate(evidence: DrivingSessionEvidence, nowMillis: Long): DrivingConfirmation {
         val reasons = mutableListOf<DrivingReasonCode>()
@@ -91,15 +132,8 @@ object DrivingConfirmationGuard {
 
         val confirmed = hasRecentVehicleEvidence &&
             (durationMet || distanceMet) &&
-            hasMovementEvidence(evidence)
+            evidence.movement.movingSampleCount >= MIN_MOVING_SAMPLES
 
         return DrivingConfirmation(confirmed = confirmed, reasonCodes = reasons.toList())
-    }
-
-    private fun hasMovementEvidence(evidence: DrivingSessionEvidence): Boolean {
-        if (evidence.reliableSampleCount < MIN_RELIABLE_SAMPLES_FOR_MOVEMENT) return false
-        val speed = evidence.maxSpeedMps
-        return evidence.travelDistanceMeters >= MIN_MOVEMENT_METERS ||
-            (speed != null && speed >= MIN_VEHICLE_SPEED_MPS)
     }
 }

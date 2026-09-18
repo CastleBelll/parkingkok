@@ -233,6 +233,11 @@ class FusedLocationSessionController(
                 lastSampleAccuracyM = sample.horizontalAccuracyM,
                 lastSampleAtMillis = sample.atMillis,
             )
+            // §7's movement clause reads every fix, whatever the reliability bar made of
+            // it. Underground the accuracies that bar rejects are the only fixes there
+            // are, and gating movement evidence on it would make confirmation impossible
+            // exactly where this product lives (docs/05 §7).
+            evidence = evidence?.recordingFix(sample)
 
             when (decision) {
                 is ReliableLocationDecision.Rejected ->
@@ -250,7 +255,6 @@ class FusedLocationSessionController(
                         current.copy(
                             reliableSampleCount = current.reliableSampleCount + 1,
                             travelDistanceMeters = travelled,
-                            maxSpeedMps = maxSpeed(current.maxSpeedMps, sample.speedMps),
                         )
                     }
                     working = working.copy(
@@ -380,12 +384,6 @@ class FusedLocationSessionController(
     private suspend fun discardRegistration(requestFailure: String): String {
         registrar.remove()
         return requestFailure
-    }
-
-    private fun maxSpeed(current: Float?, candidate: Float?): Float? = when {
-        candidate == null -> current
-        current == null -> candidate
-        else -> max(current, candidate)
     }
 
     private fun LocationSessionAction.describe(): String = when (this) {
