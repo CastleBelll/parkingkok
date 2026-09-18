@@ -9,6 +9,8 @@ import SwiftUI
 /// Nothing here reaches the network, and nothing blocks on anything (docs/01 §8
 /// "Network must not block home"): every value comes from the local store.
 struct HomeView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     @Bindable private var model: ParkingModel
     private let storageWarning: String?
     @Binding private var path: [AppRoute]
@@ -26,48 +28,68 @@ struct HomeView: View {
 
     var body: some View {
         PKScreen {
-            PKBrandHeader { path.append(.settings) }
+            PKBrandHeader(
+                onOpenSettings: { path.append(.settings(focus: nil)) },
+                onOpenNotificationSettings: { path.append(.settings(focus: .notifications)) }
+            )
+            .pkEntrance(0)
 
             if let storageWarning {
                 PKNoticeCard(text: storageWarning)
+                    .pkEntrance(1)
             }
             if let failure = model.failure {
                 PKNoticeCard(text: failure)
+                    .pkEntrance(1)
             }
 
-            if let active = model.activeSession {
-                ActiveParkingCard(
-                    session: active,
-                    now: displayNow,
-                    onStepFloor: { model.stepActiveFloor(by: $0) },
-                    onEditFloor: { isManualSheetPresented = true }
-                )
-                HomeActionRow(
-                    icon: "mappin.and.ellipse",
-                    tint: .accent,
-                    title: "주차 위치 보기",
-                    subtitle: "저장된 주차 정보를 확인하세요"
-                ) {
-                    path.append(.parkingDetail(id: active.id))
+            // The active card and the empty card are the same slot, so parking starting
+            // or ending is a cross-fade in place rather than one card popping out and
+            // another popping in. `pkWithAnimation` at the call sites drives it.
+            Group {
+                if let active = model.activeSession {
+                    ActiveParkingCard(
+                        session: active,
+                        now: displayNow,
+                        onStepFloor: { model.stepActiveFloor(by: $0) },
+                        onEditFloor: { isManualSheetPresented = true }
+                    )
+                    .pkEntrance(1)
+                    HomeActionRow(
+                        icon: "mappin.and.ellipse",
+                        tint: .accent,
+                        title: "주차 위치 보기",
+                        subtitle: "저장된 주차 정보를 확인하세요"
+                    ) {
+                        path.append(.parkingDetail(id: active.id))
+                    }
+                    .pkEntrance(2)
+                    PKPrimaryActionButton(
+                        title: "주차 종료",
+                        subtitle: "주차를 종료하고 기록을 저장합니다",
+                        systemImage: "flag.checkered"
+                    ) {
+                        pkWithAnimation(PKMotion.sessionChange, reduceMotion: reduceMotion) {
+                            model.endActiveParking()
+                        }
+                    }
+                    .pkEntrance(3)
+                } else {
+                    EmptyParkingCard { isManualSheetPresented = true }
+                        .pkEntrance(1)
                 }
-                PKPrimaryActionButton(
-                    title: "주차 종료",
-                    subtitle: "주차를 종료하고 기록을 저장합니다",
-                    systemImage: "flag.checkered"
-                ) {
-                    model.endActiveParking()
-                }
-            } else {
-                EmptyParkingCard { isManualSheetPresented = true }
             }
+            .transition(.opacity)
 
             RecentParkingSection(
                 sessions: model.homePreviewSessions,
                 onSelect: { path.append(.parkingDetail(id: $0.id)) },
                 onSeeAll: { path.append(.history) }
             )
+            .pkEntrance(4)
 
             PKBrandFooter()
+                .pkEntrance(5)
         }
         .navigationBarHidden(true)
         // `.task`/`.onAppear`, never `body`: docs/16 §5 keeps storage work out of render.
@@ -138,12 +160,9 @@ private struct HomeActionRow: View {
             .padding(PKSpacing.l)
             .frame(minHeight: PKSize.minimumTouchTarget)
         }
-        .buttonStyle(.plain)
-        .background(PKColor.surface, in: .rect(cornerRadius: PKRadius.card))
-        .overlay {
-            RoundedRectangle(cornerRadius: PKRadius.card)
-                .strokeBorder(PKColor.divider, lineWidth: PKSize.hairline)
-        }
+        // Surface, border, lift and press all come from the style, so a tappable card
+        // cannot drift away from a card that merely sits there.
+        .buttonStyle(PKSurfaceButtonStyle())
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
     }
@@ -185,7 +204,7 @@ private struct RecentParkingSection: View {
                         Button { onSelect(session) } label: {
                             ParkingHistoryRow(session: session, style: .compact)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(PKSurfaceButtonStyle(radius: PKRadius.row))
                     }
                 }
             }

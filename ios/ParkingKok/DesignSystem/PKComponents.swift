@@ -3,8 +3,12 @@ import SwiftUI
 /// Surface container used by every card in the mocks.
 ///
 /// docs/10_DESIGN_UX_SPEC.md §5: "avoid excessive shadows; prefer border/surface
-/// separation". A hairline border does the separating; the shadow is faint enough to
-/// survive dark mode, where a light-mode drop shadow reads as dirt.
+/// separation". Both are here and each does a different job — the hairline separates,
+/// the shadow gives the card somewhere to be. `PKElevation` carries the reasoning.
+///
+/// The shadow hangs off the background *shape*, never off the card's contents: applying
+/// it to the composed view would put a drop shadow behind every glyph and every line of
+/// text inside.
 struct PKCard<Content: View>: View {
     private let radius: CGFloat
     private let content: Content
@@ -17,7 +21,21 @@ struct PKCard<Content: View>: View {
     var body: some View {
         content
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(PKColor.surface, in: .rect(cornerRadius: radius))
+            .background { PKSurfaceShape(radius: radius) }
+    }
+}
+
+/// The filled, bordered, lifted rounded rectangle under every card and card-shaped row.
+///
+/// One type so a card and a tappable row cannot end up a point of radius or a percent of
+/// shadow apart.
+struct PKSurfaceShape: View {
+    let radius: CGFloat
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: radius)
+            .fill(PKColor.surface)
+            .pkElevation(.resting)
             .overlay {
                 RoundedRectangle(cornerRadius: radius)
                     .strokeBorder(PKColor.divider, lineWidth: PKSize.hairline)
@@ -64,7 +82,7 @@ struct PKIconChip: View {
         switch tint {
         case .primary: PKColor.primarySoft
         case .accent: PKColor.accentSoft
-        case .neutral: PKColor.divider.opacity(0.5)
+        case .neutral: PKColor.primary.opacity(0.08)
         }
     }
 }
@@ -121,14 +139,24 @@ struct PKPrimaryButtonStyle: ButtonStyle {
             .font(PKTypography.row)
             .foregroundStyle(Color.white)
             .frame(maxWidth: .infinity, minHeight: PKSize.minimumTouchTarget)
-            .padding(.vertical, PKSpacing.m)
-            .background(PKColor.primary, in: .rect(cornerRadius: PKRadius.button))
-            .opacity(configuration.isPressed ? 0.85 : 1)
+            .padding(.vertical, PKSpacing.l)
+            .padding(.horizontal, PKSpacing.l)
+            .background {
+                RoundedRectangle(cornerRadius: PKRadius.button)
+                    .fill(PKColor.primary)
+                    .pkElevation(.raised)
+            }
+            .pkPressFeedback(configuration.isPressed)
     }
 }
 
 /// The two-line call to action the mocks use for the consequential one: what it does on
 /// top, what it will do to your data underneath (`01-home-main.png`, `03-parking-detail`).
+///
+/// The mock gives the pair room — the label is not jammed against the subtitle and the
+/// subtitle is not jammed against the edge. That spacing is the difference between a
+/// button and a slab, so it is `PKSpacing.s` between the lines on top of the style's own
+/// vertical padding, not the 4pt it used to be.
 struct PKPrimaryActionButton: View {
     private let title: String
     private let subtitle: String
@@ -144,12 +172,12 @@ struct PKPrimaryActionButton: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: PKSpacing.xs) {
+            VStack(spacing: PKSpacing.s) {
                 Label(title, systemImage: systemImage)
-                    .font(PKTypography.row)
+                    .font(PKTypography.sectionTitle)
                 Text(subtitle)
                     .font(PKTypography.caption)
-                    .opacity(0.85)
+                    .opacity(0.9)
             }
         }
         .buttonStyle(PKPrimaryButtonStyle())
@@ -159,7 +187,7 @@ struct PKPrimaryActionButton: View {
     }
 }
 
-/// The quieter sibling — `길찾기`, `사진 보기`, and the `-`/`+` floor keys.
+/// The quieter sibling — `길찾기` and `사진 보기`, side by side under the facts.
 struct PKSoftButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -168,7 +196,78 @@ struct PKSoftButtonStyle: ButtonStyle {
             .frame(maxWidth: .infinity, minHeight: PKSize.minimumTouchTarget)
             .padding(.vertical, PKSpacing.m)
             .background(PKColor.primarySoft, in: .rect(cornerRadius: PKRadius.button))
-            .opacity(configuration.isPressed ? 0.7 : 1)
+            .pkPressFeedback(configuration.isPressed)
+    }
+}
+
+/// A bare glyph control — the bell and the gear in the header.
+struct PKIconButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(PKColor.textSecondary)
+            .pkPressFeedback(configuration.isPressed)
+    }
+}
+
+/// A whole card that is also a button — the action rows on home, every history row.
+///
+/// The surface, the border, the lift and the press all come from here, so a tappable card
+/// cannot end up looking different from a card that merely sits there. Screens supply the
+/// contents and their padding, nothing else.
+struct PKSurfaceButtonStyle: ButtonStyle {
+    var radius: CGFloat = PKRadius.card
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background { PKSurfaceShape(radius: radius) }
+            .pkPressFeedback(configuration.isPressed)
+    }
+}
+
+/// A filter chip (`04-history-list.png`'s 전체 / 자동 감지 / 직접 저장).
+///
+/// Selection is a fill swap in the mock. It lives in the design system rather than in the
+/// history screen so the chip presses like every other control in the app — one press
+/// definition, reused, not one per screen.
+struct PKChipButtonStyle: ButtonStyle {
+    let isSelected: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(PKTypography.caption)
+            .foregroundStyle(isSelected ? Color.white : PKColor.textSecondary)
+            .frame(maxWidth: .infinity, minHeight: PKSize.minimumTouchTarget)
+            .background {
+                RoundedRectangle(cornerRadius: PKRadius.button)
+                    .fill(isSelected ? PKColor.primary : PKColor.surface)
+                    .pkElevation(.resting)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: PKRadius.button)
+                            .strokeBorder(PKColor.divider, lineWidth: isSelected ? 0 : PKSize.hairline)
+                    }
+            }
+            .pkPressFeedback(configuration.isPressed)
+    }
+}
+
+/// One key of the floor stepper (`−` / `+`).
+///
+/// `01-home-main.png` sizes these to their contents — two compact rounded squares with a
+/// hairline between them, together about half the card's width. Full-width slabs would
+/// make nudging the floor look like the screen's primary action, which it is not: docs/10
+/// §6 ranks it fourth, under the floor, the zone and the elapsed time.
+struct PKStepperKeyStyle: ButtonStyle {
+    /// Wide enough for a comfortable thumb, narrow enough to stay a key rather than a bar.
+    static let width: CGFloat = 76
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.title2.weight(.bold))
+            .foregroundStyle(PKColor.primary)
+            .frame(width: Self.width, height: PKSize.minimumTouchTarget + PKSpacing.s)
+            .background(PKColor.primarySoft, in: .rect(cornerRadius: PKRadius.button))
+            .pkPressFeedback(configuration.isPressed)
     }
 }
 

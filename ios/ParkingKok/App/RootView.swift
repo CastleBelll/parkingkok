@@ -74,8 +74,8 @@ struct RootView: View {
             if let composition {
                 HistoryView(model: composition.model, path: $path)
             }
-        case .settings:
-            SettingsView(appInfo: appInfo, model: composition?.model, path: $path)
+        case let .settings(focus):
+            SettingsView(appInfo: appInfo, model: composition?.model, path: $path, focus: focus)
         case .diagnostics:
             DiagnosticsView(appInfo: appInfo)
         }

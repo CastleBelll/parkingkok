@@ -15,7 +15,11 @@ struct ParkingHistoryRow: View {
 
     var body: some View {
         HStack(spacing: PKSpacing.m) {
-            PKIconChip(icon, tint: session.source == .detected ? .primary : .neutral)
+            // One badge for every record, as `04-history-list.png` draws it. It used to be
+            // a car for detected rows and a `P` for manual ones, which made the list look
+            // like two kinds of thing — and made the source a colour-and-glyph-only state,
+            // which docs/01 §8 forbids. `자동` says it in a word instead.
+            PKIconChip("car.fill", tint: .neutral)
 
             VStack(alignment: .leading, spacing: PKSpacing.xs) {
                 Text(title)
@@ -43,18 +47,11 @@ struct ParkingHistoryRow: View {
         }
         .padding(PKSpacing.l)
         .frame(minHeight: PKSize.minimumTouchTarget)
-        .background(PKColor.surface, in: .rect(cornerRadius: PKRadius.row))
-        .overlay {
-            RoundedRectangle(cornerRadius: PKRadius.row)
-                .strokeBorder(PKColor.divider, lineWidth: PKSize.hairline)
-        }
+        // The surface, border and lift belong to `PKSurfaceButtonStyle`, which every call
+        // site wraps this in — a row is a whole card that is also a button.
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityText)
         .accessibilityAddTraits(.isButton)
-    }
-
-    private var icon: String {
-        session.source == .detected ? "car.fill" : "parkingsign"
     }
 
     /// `B3 · A구역 142` in the full list; just the floor on home.
