@@ -48,6 +48,22 @@
             </intent-filter>
         </activity>
 
+        <!-- Lets a camera app write one capture into our cache directory (FR-007). The
+             app declares no CAMERA permission: ACTION_IMAGE_CAPTURE requires it only from
+             an app that declares it, so not declaring it is what keeps the photo flow
+             permission-free (docs/04_ANDROID_IMPLEMENTATION.md §19). Stored parking photos
+             are not reachable through this provider - file_paths.xml exposes the camera
+             scratch directory and nothing else. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <!-- Target of the Activity Transition PendingIntent. Not exported: only Play
              services holds the PendingIntent, and a PendingIntent target does not need
              to be exported to be delivered. -->

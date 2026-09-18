@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The only path this app ever shares out: the scratch file a camera app writes a
+     capture into before it is downsampled into app-private storage (FR-007).
+     Parking photos themselves are never exposed - they live in filesDir and no grant
+     to them exists. -->
+<paths>
+    <cache-path name="camera" path="camera/" />
+</paths>

@@ -22,6 +22,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
@@ -41,6 +45,7 @@ import com.parkingkok.app.domain.parking.FloorParser
 import com.parkingkok.app.domain.parking.ParkingLocation
 import com.parkingkok.app.domain.parking.ParkingRecord
 import com.parkingkok.app.domain.parking.ParkingSource
+import com.parkingkok.app.domain.photo.PhotoSource
 import com.parkingkok.app.theme.ParkingkokTheme
 import com.parkingkok.app.theme.spacing
 import com.parkingkok.app.ui.components.BrandFooter
@@ -49,8 +54,11 @@ import com.parkingkok.app.ui.components.IconChip
 import com.parkingkok.app.ui.components.ParkingkokCard
 import com.parkingkok.app.ui.components.ParkingkokRow
 import com.parkingkok.app.ui.components.ParkingkokScreen
+import com.parkingkok.app.ui.components.StaticLocationArtwork
 import com.parkingkok.app.ui.components.RowChevron
 import com.parkingkok.app.ui.components.SettingsAction
+import com.parkingkok.app.ui.UiNotice
+import com.parkingkok.app.ui.photo.ParkingPhotoPicker
 import com.parkingkok.app.ui.format.dayText
 import com.parkingkok.app.ui.format.elapsedText
 import com.parkingkok.app.ui.format.timeOfDayText
@@ -72,8 +80,14 @@ fun HomeScreen(
     onOpenDetail: (String) -> Unit,
     onOpenHistory: () -> Unit,
     onOpenSettings: () -> Unit,
+    onDirections: () -> Unit,
+    onPhotoSelected: (PhotoSource) -> Unit,
+    onCameraUnavailable: () -> Unit,
+    onNoticeShown: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var pickingPhoto by remember { mutableStateOf(false) }
+
     ParkingkokScreen(
         modifier = modifier,
         header = { BrandHeader(action = { SettingsAction(onOpenSettings) }) },
@@ -94,9 +108,21 @@ fun HomeScreen(
             }
             item("actions") {
                 PrimaryActions(
+                    canOpenMap = state.canOpenMap,
+                    hasPhoto = state.hasPhoto,
+                    photoBusy = state.photoBusy,
+                    onDirections = onDirections,
+                    onPhoto = {
+                        // The viewer lives on the detail screen; adding one starts here.
+                        if (state.hasPhoto) onOpenDetail(active.id) else pickingPhoto = true
+                    },
                     onOpenDetail = { onOpenDetail(active.id) },
                     onEndParking = onEndParking,
                 )
+            }
+            val notice = state.notice
+            if (notice != null) {
+                item("notice") { NoticeCard(notice = notice, onDismiss = onNoticeShown) }
             }
         }
 
@@ -125,10 +151,23 @@ fun HomeScreen(
             }
         }
     }
+
+    ParkingPhotoPicker(
+        visible = pickingPhoto,
+        onDismiss = { pickingPhoto = false },
+        onPhotoSelected = onPhotoSelected,
+        onCameraUnavailable = onCameraUnavailable,
+    )
 }
 
 /**
  * The hero. Floor first and largest, then zone/spot, then elapsed — §6 items 1 to 3.
+ *
+ * The mockup puts a map thumbnail beside the hero. It is drawn, never fetched: Android's
+ * FR-008 is an external maps intent and the 2026-09-18 decision in
+ * docs/04_ANDROID_IMPLEMENTATION.md §12 replaces this preview with a static
+ * representation, so that opening the app does not put the parked coordinate on the
+ * network. See `StaticLocationArtwork`.
  */
 @Composable
 private fun ActiveParkingCard(
@@ -162,27 +201,46 @@ private fun ActiveParkingCard(
         }
 
         Spacer(Modifier.height(MaterialTheme.spacing.medium))
-        FloorHero(floor = record.floor, spokenPrefix = stringResource(R.string.home_active_title))
+        Row(verticalAlignment = Alignment.Top) {
+            Column(Modifier.weight(1f)) {
+                FloorHero(
+                    floor = record.floor,
+                    spokenPrefix = stringResource(R.string.home_active_title),
+                )
 
-        val supporting = listOfNotNull(record.zone, record.spot)
-        if (supporting.isNotEmpty()) {
-            Spacer(Modifier.height(MaterialTheme.spacing.tiny))
-            Text(
-                text = supporting.joinToString(" · "),
-                style = MaterialTheme.typography.headlineSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
+                val supporting = listOfNotNull(record.zone, record.spot)
+                if (supporting.isNotEmpty()) {
+                    Spacer(Modifier.height(MaterialTheme.spacing.tiny))
+                    Text(
+                        text = supporting.joinToString(" · "),
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+
+                Spacer(Modifier.height(MaterialTheme.spacing.tiny))
+                Text(
+                    text = elapsedText(ElapsedTime.since(record.startedAtMillis, nowMillis)),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            if (record.location != null) {
+                Spacer(Modifier.width(MaterialTheme.spacing.medium))
+                StaticLocationArtwork(
+                    modifier = Modifier.size(width = 132.dp, height = 112.dp),
+                    pinLabel = record.floor?.displayLabel,
+                    pinSize = 26.dp,
+                )
+            }
         }
 
-        Spacer(Modifier.height(MaterialTheme.spacing.tiny))
-        Text(
-            text = elapsedText(ElapsedTime.since(record.startedAtMillis, nowMillis)),
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-
-        Spacer(Modifier.height(MaterialTheme.spacing.medium))
-        LocationChip(location = record.location)
+        if (record.location == null) {
+            // No coordinate to stand in for: say so instead of drawing a pin (FR-001).
+            Spacer(Modifier.height(MaterialTheme.spacing.medium))
+            LocationChip(location = null)
+        }
 
         Spacer(Modifier.height(MaterialTheme.spacing.large))
         FloorStepper(floor = record.floor, onStepFloor = onStepFloor)
@@ -274,12 +332,10 @@ private fun StepperKey(
 }
 
 /**
- * What the app knows about where the car is.
+ * Said in place of the map thumbnail when the record has no coordinate.
  *
- * The mockup shows a map thumbnail here. There is no map in this build (FR-008 is out of
- * scope), so the slot states the fact instead of showing a picture of somewhere the user
- * is not — and when no coordinate was captured it says so plainly, because a manual save
- * with no permission is a normal, supported outcome (FR-001), not a degraded one.
+ * A manual save made with location permission denied is a normal, supported outcome
+ * (FR-001), not a degraded one, so it gets a plain sentence rather than an error.
  */
 @Composable
 private fun LocationChip(location: ParkingLocation?) {
@@ -322,16 +378,59 @@ private fun LocationChip(location: ParkingLocation?) {
 }
 
 /**
- * §6 items 5 and 6.
+ * §6 items 5 and 6, and the mockup's first two rows: `주차 위치 보기` then `사진 추가`.
  *
- * The mockup's first two rows are `주차 위치 보기` (a map) and `사진 추가`. Neither feature is in
- * this build, so they appear disabled and say `준비 중인 기능이에요` rather than being removed —
- * removing them would quietly change the hierarchy the design fixes, and dressing them as
- * working would be worse.
+ * Both work now. The map row hands the coordinate to an external maps app (FR-008 on
+ * Android, docs/04_ANDROID_IMPLEMENTATION.md §12) and is disabled — with the reason in its
+ * supporting line, never colour alone — for a record saved without one. `주차 상세 보기` is
+ * this app's own addition below them, because the shell needs a way into the detail
+ * screen that the mockup leaves to a tap on the card.
  */
 @Composable
-private fun PrimaryActions(onOpenDetail: () -> Unit, onEndParking: () -> Unit) {
+private fun PrimaryActions(
+    canOpenMap: Boolean,
+    hasPhoto: Boolean,
+    photoBusy: Boolean,
+    onDirections: () -> Unit,
+    onPhoto: () -> Unit,
+    onOpenDetail: () -> Unit,
+    onEndParking: () -> Unit,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.medium)) {
+        ParkingkokCard(contentPadding = 0.dp) {
+            ParkingkokRow(
+                title = stringResource(R.string.home_map),
+                supporting = stringResource(
+                    if (canOpenMap) R.string.home_map_caption else R.string.home_map_caption_none,
+                ),
+                iconRes = R.drawable.ic_map,
+                iconContainerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                iconContentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                enabled = canOpenMap,
+                onClick = onDirections,
+                trailing = { RowChevron(enabled = canOpenMap) },
+            )
+            HorizontalDivider(
+                modifier = Modifier.padding(start = MaterialTheme.spacing.large),
+                color = MaterialTheme.colorScheme.outlineVariant,
+            )
+            ParkingkokRow(
+                title = stringResource(
+                    if (hasPhoto) R.string.home_photo_view else R.string.home_photo_add,
+                ),
+                supporting = stringResource(
+                    if (hasPhoto) {
+                        R.string.home_photo_view_caption
+                    } else {
+                        R.string.home_photo_add_caption
+                    },
+                ),
+                iconRes = R.drawable.ic_photo,
+                enabled = !photoBusy,
+                onClick = onPhoto,
+                trailing = { RowChevron(enabled = !photoBusy) },
+            )
+        }
         ParkingkokCard(contentPadding = 0.dp) {
             ParkingkokRow(
                 title = stringResource(R.string.home_detail),
@@ -339,28 +438,6 @@ private fun PrimaryActions(onOpenDetail: () -> Unit, onEndParking: () -> Unit) {
                 iconRes = R.drawable.ic_car,
                 onClick = onOpenDetail,
                 trailing = { RowChevron() },
-            )
-        }
-        ParkingkokCard(contentPadding = 0.dp) {
-            ParkingkokRow(
-                title = stringResource(R.string.coming_soon_map),
-                supporting = stringResource(R.string.coming_soon_map_caption),
-                iconRes = R.drawable.ic_map,
-                iconContainerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                iconContentColor = MaterialTheme.colorScheme.onTertiaryContainer,
-                enabled = false,
-                trailing = { RowChevron(enabled = false) },
-            )
-            HorizontalDivider(
-                modifier = Modifier.padding(start = MaterialTheme.spacing.large),
-                color = MaterialTheme.colorScheme.outlineVariant,
-            )
-            ParkingkokRow(
-                title = stringResource(R.string.coming_soon_photo),
-                supporting = stringResource(R.string.coming_soon_photo_caption),
-                iconRes = R.drawable.ic_photo,
-                enabled = false,
-                trailing = { RowChevron(enabled = false) },
             )
         }
         Button(
@@ -388,6 +465,28 @@ private fun PrimaryActions(onOpenDetail: () -> Unit, onEndParking: () -> Unit) {
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
+        }
+    }
+}
+
+/** One sentence about what just happened, dismissed by the user. */
+@Composable
+private fun NoticeCard(notice: UiNotice, onDismiss: () -> Unit) {
+    ParkingkokCard(contentPadding = MaterialTheme.spacing.large) {
+        Text(
+            text = stringResource(
+                when (notice) {
+                    UiNotice.PHOTO_UNREADABLE -> R.string.notice_photo_unreadable
+                    UiNotice.PHOTO_NOT_SAVED -> R.string.notice_photo_not_saved
+                    UiNotice.CAMERA_UNAVAILABLE -> R.string.notice_camera_unavailable
+                    UiNotice.NO_MAPS_APP -> R.string.notice_no_maps_app
+                },
+            ),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
+            Text(stringResource(R.string.action_confirm))
         }
     }
 }
@@ -512,6 +611,10 @@ private fun HomeParkedPreview() {
             onOpenDetail = {},
             onOpenHistory = {},
             onOpenSettings = {},
+            onDirections = {},
+            onPhotoSelected = {},
+            onCameraUnavailable = {},
+            onNoticeShown = {},
         )
     }
 }
@@ -528,6 +631,10 @@ private fun HomeEmptyPreview() {
             onOpenDetail = {},
             onOpenHistory = {},
             onOpenSettings = {},
+            onDirections = {},
+            onPhotoSelected = {},
+            onCameraUnavailable = {},
+            onNoticeShown = {},
         )
     }
 }

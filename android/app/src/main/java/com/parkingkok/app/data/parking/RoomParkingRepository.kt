@@ -28,6 +28,8 @@ class RoomParkingRepository(private val dao: ParkingRecordDao) : ParkingReposito
 
     override suspend fun findActive(): ParkingRecord? = dao.findActive()?.toDomain()
 
+    override suspend fun find(id: String): ParkingRecord? = dao.findById(id)?.toDomain()
+
     override suspend fun insert(record: ParkingRecord) = dao.insert(record.toEntity())
 
     override suspend fun update(
@@ -38,6 +40,8 @@ class RoomParkingRepository(private val dao: ParkingRecordDao) : ParkingReposito
     }?.toDomain()
 
     override suspend fun delete(id: String) = dao.delete(id)
+
+    override suspend fun photoPaths(): Set<String> = dao.photoPaths().toSet()
 
     override suspend fun deleteCompleted() = dao.deleteCompleted()
 }
