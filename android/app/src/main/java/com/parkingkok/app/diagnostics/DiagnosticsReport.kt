@@ -70,6 +70,23 @@ data class DiagnosticsReport(
     val reliableSampleCount: Int?,
     val maxSpeedMps: Float?,
 
+    /**
+     * §7's movement clause, as counts rather than as a verdict.
+     *
+     * The pair that has to be readable off one file: "confirmation never fired" and "no fix
+     * ever carried a speed" look identical from outside, and on the September 2026 field
+     * device it was the second one. [speedMissingCount] high with
+     * [derivedMovingSampleCount] at zero is the shape of that defect; the same two with
+     * [movementEvidenceRejectReason] set says which gate declined and why.
+     */
+    val movingSampleCount: Int?,
+    val speedAvailableCount: Int?,
+    val speedMissingCount: Int?,
+    val derivedMovingSampleCount: Int?,
+    val movementEvidenceRejectReason: String?,
+    /** Fixes discarded as implausible jumps before the movement clause saw them (§5). */
+    val movementOutlierCount: Int?,
+
     // Location quality counters (docs/05 §5: exclusions are counted, not dropped quietly)
     val counters: LocationDiagnosticsCounters,
     /** Volatile ring buffer, oldest first. Coordinate-free by construction. */
@@ -111,7 +128,7 @@ data class DiagnosticsReport(
 
     companion object {
         /** Bump whenever the shape changes, so an older payload is rejected, not half-read. */
-        const val SCHEMA_VERSION: Int = 2
+        const val SCHEMA_VERSION: Int = 3
 
         @Suppress("LongParameterList")
         fun from(
@@ -160,6 +177,12 @@ data class DiagnosticsReport(
                 lastVehicleEvidenceAtMillis = evidence?.lastVehicleEvidenceAtMillis,
                 reliableSampleCount = evidence?.reliableSampleCount,
                 maxSpeedMps = evidence?.maxSpeedMps,
+                movingSampleCount = evidence?.movement?.movingSampleCount,
+                speedAvailableCount = evidence?.movement?.speedAvailableCount,
+                speedMissingCount = evidence?.movement?.speedMissingCount,
+                derivedMovingSampleCount = evidence?.movement?.derivedMovingSampleCount,
+                movementEvidenceRejectReason = evidence?.movement?.rejectReason?.wire,
+                movementOutlierCount = evidence?.movement?.outlierCount,
                 counters = sessionState.counters,
                 recentFixes = qualityHistory.map { entry ->
                     FixQuality(
