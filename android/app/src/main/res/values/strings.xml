@@ -130,6 +130,13 @@
     <string name="home_end_parking_caption">주차를 종료하고 기록을 저장합니다</string>
     <string name="home_detail">주차 상세 보기</string>
     <string name="home_detail_caption">저장된 주차 정보를 확인하세요</string>
+    <string name="home_map">주차 위치 보기</string>
+    <string name="home_map_caption">지도 앱에서 마지막으로 확인된 위치를 열어요</string>
+    <string name="home_map_caption_none">위치 없이 저장한 기록이라 지도를 열 수 없어요</string>
+    <string name="home_photo_add">사진 추가</string>
+    <string name="home_photo_add_caption">주차한 자리를 사진으로 남겨두세요</string>
+    <string name="home_photo_view">사진 보기</string>
+    <string name="home_photo_view_caption">저장한 주차 사진을 확인하세요</string>
     <string name="home_recent_title">최근 주차</string>
     <string name="home_recent_all">전체보기</string>
     <string name="home_recent_empty">아직 저장된 주차 기록이 없어요</string>
@@ -144,17 +151,20 @@
     <string name="elapsed_hours">%1$d시간 %2$d분째 주차 중</string>
     <string name="elapsed_days">%1$d일 %2$d시간째 주차 중</string>
 
-    <!-- Location status. There is no map in this build; the chip states what is known. -->
+    <!-- Location status. The app never claims to know the car's exact location: the
+         copy is always "마지막으로 확인된 위치" (docs/04_IOS_IMPLEMENTATION.md §9), because
+         underground accuracy is exactly where that claim would be false. -->
     <string name="location_saved">위치 저장됨</string>
     <string name="location_accuracy">반경 %1$d m</string>
     <string name="location_none">위치 없음</string>
     <string name="location_none_caption">권한 없이 저장한 기록이에요</string>
 
+    <!-- Map (FR-008). Android opens an external maps app; this is the pin label handed
+         to it. It carries nothing from the record - floor, zone, spot and memo are
+         local-only data (docs/06 §1) and a pin label leaves the app. -->
+    <string name="map_pin_label">주차 위치</string>
+
     <!-- Features that do not exist yet. Shown as disabled, never as working. -->
-    <string name="coming_soon_map">지도에서 보기</string>
-    <string name="coming_soon_map_caption">준비 중인 기능이에요</string>
-    <string name="coming_soon_photo">사진 추가</string>
-    <string name="coming_soon_photo_caption">준비 중인 기능이에요</string>
     <string name="coming_soon_badge">준비 중</string>
 
     <!-- Manual parking entry (FR-001) -->
@@ -189,6 +199,34 @@
     <string name="detail_delete_confirm_title">이 기록을 삭제할까요?</string>
     <string name="detail_delete_confirm_body">삭제한 기록은 되돌릴 수 없어요.</string>
     <string name="detail_gone">기록을 찾을 수 없어요</string>
+    <string name="detail_map_caption">마지막으로 확인된 위치 · 정확도는 기록되지 않았어요</string>
+    <string name="detail_map_caption_accuracy">마지막으로 확인된 위치 · 반경 %1$d m</string>
+    <string name="detail_map_none_title">위치 없이 저장한 기록이에요</string>
+    <string name="detail_map_none_body">위치 권한이 없었거나 신뢰할 만한 위치를 얻지 못했어요. 층과 구역은 그대로 남아 있어요.</string>
+    <string name="detail_directions">길찾기</string>
+    <string name="detail_directions_unavailable">저장된 위치가 없어서 길찾기를 열 수 없어요.</string>
+
+    <!-- Photo (FR-007). One per record, stored on this device only. -->
+    <string name="detail_photo_add">사진 추가</string>
+    <string name="detail_photo_view">사진 보기</string>
+    <string name="detail_photo_section">주차 사진</string>
+    <string name="detail_photo_saved_at">%1$s에 저장됨</string>
+    <string name="detail_photo_replace">사진 다시 고르기</string>
+    <string name="detail_photo_delete">사진 삭제</string>
+    <string name="detail_photo_close">닫기</string>
+    <string name="detail_photo_missing">사진을 불러올 수 없어요</string>
+
+    <!-- Photo picker -->
+    <string name="photo_pick_title">주차 사진 추가</string>
+    <string name="photo_pick_body">사진은 이 기기에만 저장되고 서버로 보내지 않아요.</string>
+    <string name="photo_pick_camera">촬영하기</string>
+    <string name="photo_pick_album">앨범에서 고르기</string>
+
+    <!-- One-off notices. Never carry a path or a coordinate. -->
+    <string name="notice_photo_unreadable">고른 파일에서 사진을 읽지 못했어요. 다른 사진으로 시도해 주세요.</string>
+    <string name="notice_photo_not_saved">사진을 저장하지 못했어요. 저장 공간을 확인해 주세요. 주차 기록은 그대로예요.</string>
+    <string name="notice_camera_unavailable">카메라 앱을 찾지 못했어요. 앨범에서 고를 수 있어요.</string>
+    <string name="notice_no_maps_app">지도 앱을 찾지 못했어요. 지도 앱을 설치하면 길찾기를 열 수 있어요.</string>
 
     <!-- History (design-references/04-history-list.png) -->
     <string name="history_title">주차 기록</string>
@@ -245,4 +283,5 @@
     <string name="action_back">뒤로</string>
     <string name="action_cancel">취소</string>
     <string name="action_delete">삭제</string>
+    <string name="action_confirm">확인</string>
 </resources>

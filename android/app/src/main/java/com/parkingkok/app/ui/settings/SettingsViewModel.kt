@@ -85,7 +85,10 @@ class SettingsViewModel(
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : ViewModel> create(modelClass: Class<T>): T = SettingsViewModel(
                     container = container,
-                    deleteHistory = DeleteParkingHistoryUseCase(container.parkingRepository),
+                    deleteHistory = DeleteParkingHistoryUseCase(
+                        container.parkingRepository,
+                        container.cleanUpOrphanPhotos,
+                    ),
                 ) as T
             }
     }

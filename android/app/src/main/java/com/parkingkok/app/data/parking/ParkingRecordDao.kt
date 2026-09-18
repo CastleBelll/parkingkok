@@ -50,6 +50,9 @@ abstract class ParkingRecordDao {
     @Update
     abstract suspend fun update(entity: ParkingRecordEntity)
 
+    @Query("SELECT photoRelativePath FROM parking_record WHERE photoRelativePath IS NOT NULL")
+    abstract suspend fun photoPaths(): List<String>
+
     @Query("DELETE FROM parking_record WHERE id = :id")
     abstract suspend fun delete(id: String)
 

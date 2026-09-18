@@ -9,6 +9,11 @@ import com.parkingkok.app.data.DetectionStateStore
 import com.parkingkok.app.data.detectionDataStore
 import com.parkingkok.app.data.parking.ParkingDatabase
 import com.parkingkok.app.data.parking.RoomParkingRepository
+import com.parkingkok.app.data.photo.FileParkingPhotoImageLoader
+import com.parkingkok.app.data.photo.FileParkingPhotoStore
+import com.parkingkok.app.data.photo.JpegPhotoEncoder
+import com.parkingkok.app.data.photo.ParkingPhotoFiles
+import com.parkingkok.app.data.photo.ParkingPhotoImageLoader
 import com.parkingkok.app.detection.ActivityTransitionRegistrar
 import com.parkingkok.app.detection.DetectionRegistrationCoordinator
 import com.parkingkok.app.detection.FusedLocationSessionController
@@ -18,6 +23,8 @@ import com.parkingkok.app.diagnostics.DiagnosticsExporter
 import com.parkingkok.app.diagnostics.FileDiagnosticsReportStore
 import com.parkingkok.app.domain.parking.ParkingLocationProvider
 import com.parkingkok.app.domain.parking.ParkingRepository
+import com.parkingkok.app.domain.parking.usecase.CleanUpOrphanPhotosUseCase
+import com.parkingkok.app.domain.photo.ParkingPhotoStore
 import com.parkingkok.app.domain.trace.TraceDeviceInfo
 import com.parkingkok.app.location.CheckpointParkingLocationProvider
 import com.parkingkok.app.trace.FileTraceStore
@@ -53,6 +60,35 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
 
     val parkingRepository: ParkingRepository by lazy {
         RoomParkingRepository(parkingDatabase.parkingRecordDao())
+    }
+
+    /**
+     * Where parking photos live: `filesDir/parking-photos`, app-private (docs/06 §4).
+     *
+     * Lazy for the same reason the database is — a process started by a detection
+     * broadcast never looks at a photo.
+     */
+    private val parkingPhotoFiles: ParkingPhotoFiles by lazy {
+        ParkingPhotoFiles(ParkingPhotoFiles.defaultDirectory(appContext.filesDir))
+    }
+
+    val parkingPhotoStore: ParkingPhotoStore by lazy {
+        FileParkingPhotoStore(parkingPhotoFiles, JpegPhotoEncoder())
+    }
+
+    val parkingPhotoImageLoader: ParkingPhotoImageLoader by lazy {
+        FileParkingPhotoImageLoader(parkingPhotoFiles)
+    }
+
+    /**
+     * The orphan sweep (FR-007 photos are sensitive local data, docs/06 §1).
+     *
+     * Exposed rather than run from [ParkingkokApplication] because it is the first thing
+     * that would open the database on a process a broadcast started, which is the cost the
+     * lazy database above exists to avoid. The shell runs it once, when there is a screen.
+     */
+    val cleanUpOrphanPhotos: CleanUpOrphanPhotosUseCase by lazy {
+        CleanUpOrphanPhotosUseCase(parkingRepository, parkingPhotoStore)
     }
 
     /**

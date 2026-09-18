@@ -24,6 +24,9 @@ interface ParkingRepository {
 
     suspend fun findActive(): ParkingRecord?
 
+    /** A single record by id, active or completed, or null when it is gone. */
+    suspend fun find(id: String): ParkingRecord?
+
     suspend fun insert(record: ParkingRecord)
 
     /**
@@ -38,6 +41,16 @@ interface ParkingRepository {
     suspend fun update(id: String, mutate: (ParkingRecord) -> ParkingRecord): ParkingRecord?
 
     suspend fun delete(id: String)
+
+    /**
+     * Every non-null `photoRelativePath` currently stored.
+     *
+     * The orphan sweep needs the set of photos that are still referenced, and asking the
+     * database is the only way to know it. It is a projection of one column rather than
+     * `observeCompleted(ALL)` because the caller wants paths, not records, and loading
+     * every memo and coordinate to discard them would be the N+1 of reads.
+     */
+    suspend fun photoPaths(): Set<String>
 
     /** Clears completed history. The active record, if any, survives. */
     suspend fun deleteCompleted()
