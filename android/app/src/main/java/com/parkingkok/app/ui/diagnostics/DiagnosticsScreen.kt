@@ -271,6 +271,32 @@ private fun SessionCard(session: LocationSessionState, onCaptureModeChange: (Loc
                 stringResource(R.string.diagnostics_absent)
             },
         )
+        // §7's movement clause, in the three numbers a field run is read from. "Never
+        // confirmed" and "no fix ever carried a speed" look the same from outside; these
+        // tell them apart without opening the export.
+        val movement = session.evidence?.movement
+        LabelledValue(
+            stringResource(R.string.diagnostics_session_moving_samples),
+            "${movement?.movingSampleCount ?: 0} / ${movement?.derivedMovingSampleCount ?: 0}",
+        )
+        LabelledValue(
+            stringResource(R.string.diagnostics_session_speed_available),
+            "${movement?.speedAvailableCount ?: 0} / ${movement?.speedMissingCount ?: 0}",
+        )
+        LabelledValue(
+            stringResource(R.string.diagnostics_session_movement_reject),
+            movement?.rejectReason?.wire ?: stringResource(R.string.diagnostics_absent),
+        )
+        // §7's distance clause and what its noise floor kept out of it. The pair matters:
+        // a distance that never grows is only readable next to the count of legs refused.
+        LabelledValue(
+            stringResource(R.string.diagnostics_session_travel_distance),
+            "%.0f m / %d".format(
+                Locale.US,
+                session.evidence?.travelDistanceMeters ?: 0.0,
+                session.evidence?.distanceNoiseFloorRejectCount ?: 0,
+            ),
+        )
         session.lastStopReason?.let {
             LabelledValue(stringResource(R.string.diagnostics_session_stop_reason), it.name)
         }

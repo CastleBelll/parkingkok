@@ -230,22 +230,54 @@ class FusedLocationSessionControllerTest {
 
     @Test
     fun `driving is confirmed only once movement backs the vehicle evidence up`() = runTest {
-        // Arrange — docs/05 §7. One transition never confirms.
+        // Arrange — docs/05 §7. One transition never confirms, and since the 2026-09-18
+        // unification neither does one moving fix: the clause counts samples.
         val f = fixture()
         f.controller.onMotionEvent(motion(MotionEventKind.ENTERED_VEHICLE, startMillis))
 
-        // Act — two minutes later, with real displacement between two fixes.
+        // Act — two minutes later, two fixes at traffic speed 222m apart.
         f.clock.epochMillis = startMillis + 130_000L
-        f.controller.onLocationBatch(listOf(fix(atMillis = f.clock.epochMillis - 2_000L)))
+        val afterOne = f.controller.onLocationBatch(
+            listOf(fix(atMillis = f.clock.epochMillis - 2_000L, speedMps = 16f)),
+        )
         f.clock.epochMillis = startMillis + 140_000L
         val state = f.controller.onLocationBatch(
-            listOf(fix(atMillis = f.clock.epochMillis - 1_000L, latitude = 37.51, speedMps = 16f)),
+            listOf(fix(atMillis = f.clock.epochMillis - 1_000L, latitude = 37.502, speedMps = 16f)),
         )
 
         // Assert
+        assertFalse(afterOne.drivingConfirmed)
         assertTrue(state.drivingConfirmed)
         assertEquals(LocationSessionMode.DRIVING, state.mode)
         assertTrue(state.drivingReasonCodes.contains("vehicle_duration_met"))
+        assertEquals(2, state.evidence?.movement?.movingSampleCount)
+        assertEquals(2, state.evidence?.movement?.speedAvailableCount)
+    }
+
+    @Test
+    fun `a coarse fix that the reliability bar rejects still counts as movement evidence`() = runTest {
+        // Arrange — the structural defect the unification removed. §6's 35m bar picks a
+        // parking spot worth remembering; underground it rejects every fix there is, and
+        // gating the movement clause on it made confirmation impossible down there.
+        val f = fixture()
+        f.controller.onMotionEvent(motion(MotionEventKind.ENTERED_VEHICLE, startMillis))
+
+        // Act — three 300m-accurate fixes with no speed, 40s and ~2km apart each. Not one
+        // of them clears the 35m reliability bar.
+        var state = f.controller.onLocationBatch(emptyList())
+        listOf(37.500 to 130_000L, 37.518 to 170_000L, 37.536 to 210_000L).forEach { (latitude, elapsed) ->
+            f.clock.epochMillis = startMillis + elapsed
+            state = f.controller.onLocationBatch(
+                listOf(fix(atMillis = f.clock.epochMillis - 1_000L, latitude = latitude, accuracyM = 300f)),
+            )
+        }
+
+        // Assert — nothing was admitted as reliable, and the drive is confirmed anyway.
+        assertEquals(0, state.counters.admittedCount)
+        assertEquals(3, state.counters.poorAccuracyDropCount)
+        assertEquals(3, state.evidence?.movement?.speedMissingCount)
+        assertEquals(2, state.evidence?.movement?.derivedMovingSampleCount)
+        assertTrue(state.drivingConfirmed)
     }
 
     @Test

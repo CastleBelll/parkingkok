@@ -233,6 +233,12 @@ class FusedLocationSessionController(
                 lastSampleAccuracyM = sample.horizontalAccuracyM,
                 lastSampleAtMillis = sample.atMillis,
             )
+            // §7's measured clauses — movement evidence and the accumulated distance —
+            // read every fix, whatever the reliability bar made of it. Underground the
+            // accuracies that bar rejects are the only fixes there are, and gating either
+            // clause on it would make confirmation impossible exactly where this product
+            // lives (docs/05 §7).
+            evidence = evidence?.recordingFix(sample)
 
             when (decision) {
                 is ReliableLocationDecision.Rejected ->
@@ -240,19 +246,12 @@ class FusedLocationSessionController(
 
                 is ReliableLocationDecision.Accepted -> {
                     counters = counters.copy(admittedCount = counters.admittedCount + 1)
-                    // Distance is session-scoped. The first admitted fix of a session
-                    // contributes none: the fix it would be measured from belongs to the
-                    // previous trip, and counting that gap would credit this drive with
-                    // the whole distance since the last parking spot.
-                    evidence = evidence?.let { current ->
-                        val travelled = current.travelDistanceMeters +
-                            if (current.reliableSampleCount == 0) 0.0 else (decision.movedMeters ?: 0.0)
-                        current.copy(
-                            reliableSampleCount = current.reliableSampleCount + 1,
-                            travelDistanceMeters = travelled,
-                            maxSpeedMps = maxSpeed(current.maxSpeedMps, sample.speedMps),
-                        )
-                    }
+                    // Distance is no longer accumulated here. The reliability bar decides
+                    // which fix is worth remembering as a parking spot, not how far the
+                    // device went, and underground it admits almost nothing — so the
+                    // distance clause moved to `recordingFix` above, behind §7's noise
+                    // floor, where every fix reaches it.
+                    evidence = evidence?.let { it.copy(reliableSampleCount = it.reliableSampleCount + 1) }
                     working = working.copy(
                         lastReliableLocation = decision.location,
                         lastLocationAtMillis = sample.atMillis,
@@ -380,12 +379,6 @@ class FusedLocationSessionController(
     private suspend fun discardRegistration(requestFailure: String): String {
         registrar.remove()
         return requestFailure
-    }
-
-    private fun maxSpeed(current: Float?, candidate: Float?): Float? = when {
-        candidate == null -> current
-        current == null -> candidate
-        else -> max(current, candidate)
     }
 
     private fun LocationSessionAction.describe(): String = when (this) {

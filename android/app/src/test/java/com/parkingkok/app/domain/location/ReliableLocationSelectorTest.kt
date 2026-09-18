@@ -2,8 +2,6 @@ package com.parkingkok.app.domain.location
 
 import com.parkingkok.app.domain.detection.ReliableLocation
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -47,8 +45,6 @@ class ReliableLocationSelectorTest {
         val accepted = decision as ReliableLocationDecision.Accepted
         assertEquals(8f, accepted.location.horizontalAccuracyM, 0f)
         assertEquals(fix.atMillis, accepted.location.capturedAtMillis)
-        // No previous fix means no distance to report, rather than a misleading zero.
-        assertNull(accepted.movedMeters)
     }
 
     @Test
@@ -149,24 +145,5 @@ class ReliableLocationSelectorTest {
         // Assert
         assertTrue(better is ReliableLocationDecision.Accepted)
         assertEquals(LocationDropReason.NOT_NEWER, rejectionOf(worse))
-    }
-
-    @Test
-    fun `an accepted fix reports how far it moved from the previous one`() {
-        // Arrange — roughly 111m of latitude at 0.001 degrees.
-        val held = ReliableLocation(
-            latitude = 37.500,
-            longitude = 127.0,
-            horizontalAccuracyM = 10f,
-            capturedAtMillis = now - 10_000L,
-        )
-        val moved = sample(ageMillis = 1_000L, latitude = 37.001 + 0.5, longitude = 127.0)
-
-        // Act
-        val accepted = ReliableLocationSelector.select(held, moved, now) as ReliableLocationDecision.Accepted
-
-        // Assert
-        assertNotNull(accepted.movedMeters)
-        assertEquals(111.0, requireNotNull(accepted.movedMeters), 2.0)
     }
 }

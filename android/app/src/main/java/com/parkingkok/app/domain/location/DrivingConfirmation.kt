@@ -5,8 +5,10 @@ import kotlinx.serialization.Serializable
 /**
  * What a driving session has accumulated so far, in the terms §7's guard is written in.
  *
- * Coordinate-free on purpose: distance arrives already reduced to metres, so the guard
- * itself can never hold a position.
+ * Every field the guard reads is a scalar: metres, counts, a speed. The positions in here
+ * are anchors, and they exist because both of §7's measured clauses ask about a
+ * **displacement**, which needs two points — see [MovementAnchor]. Nothing derived from
+ * them leaves as anything but metres.
  */
 @Serializable
 data class DrivingSessionEvidence(
@@ -14,13 +16,95 @@ data class DrivingSessionEvidence(
     val vehicleFirstSeenAtMillis: Long,
     /** Most recent vehicle evidence — a transition, or a fix at vehicle-plausible speed. */
     val lastVehicleEvidenceAtMillis: Long,
-    /** Metres accumulated between successive reliable fixes. */
+    /**
+     * Metres accumulated for §7's `distance >= 800m` clause, one anchored leg at a time.
+     *
+     * This feeds that clause and nothing else. It used to double as the movement clause;
+     * the 2026-09-18 unification separated the two roles, because a sum cannot tell steady
+     * travel from accumulated jitter (see [MovementEvidence]). It used to be fed only by
+     * fixes the §6 reliability bar admitted, which is that same section's threshold in the
+     * wrong place a second time: 35 m chooses a parking spot worth remembering, and
+     * underground — where accuracy ran from 100 m to 2620 m — it accumulated almost
+     * nothing. See [accumulatingDistance] for what replaced it.
+     */
     val travelDistanceMeters: Double = 0.0,
+    /**
+     * Legs the noise floor kept out of [travelDistanceMeters].
+     *
+     * Instrumented rather than silently dropped: a session that accumulates nothing
+     * underground and one that never moved look identical from outside, and this is the
+     * field that separates them. A count far above the accepted legs says the floor is
+     * wrong for this device, not that the car stood still.
+     */
+    val distanceNoiseFloorRejectCount: Int = 0,
+    /**
+     * The fix [travelDistanceMeters] measures its next leg from.
+     *
+     * A second anchor rather than a reuse of [MovementEvidence.anchor], because §7 asks
+     * the two clauses different questions: distance has no baseline bounds and no speed
+     * gate, only the noise floor they share.
+     */
+    val distanceAnchor: MovementAnchor? = null,
     /** Reliable fixes admitted during the session. */
     val reliableSampleCount: Int = 0,
     /** Fastest speed observed, when the provider reported one. */
     val maxSpeedMps: Float? = null,
-)
+    /** §7's "movement evidence consistent with travel", counted per pair of fixes. */
+    val movement: MovementEvidence = MovementEvidence(),
+) {
+
+    /**
+     * Folds one delivered fix into the movement clause, the distance clause and the
+     * observed-speed ceiling.
+     *
+     * Deliberately takes *every* fix, not only the ones [ReliableLocationSelector] admits:
+     * §6's 35 m bar chooses a parking spot worth remembering, and applying it to either
+     * measured clause makes driving confirmation impossible underground (docs/05 §7).
+     */
+    fun recordingFix(sample: LocationSample): DrivingSessionEvidence {
+        // Asked before the fold, because the answer is about the fix this one follows.
+        val admitted = movement.admits(sample)
+        val folded = copy(
+            maxSpeedMps = maxOfNullable(maxSpeedMps, sample.speedMps.takeIf { sample.quality.isValid }),
+            movement = movement.recording(sample),
+        )
+        return if (admitted) folded.accumulatingDistance(sample) else folded
+    }
+
+    /**
+     * docs/05 §7 `distance >= 800m`, under the same noise floor as movement evidence.
+     *
+     * A leg is added only when its displacement clears the combined positional uncertainty
+     * of the two fixes. Failing keeps the anchor, exactly as the movement clause does, so
+     * slow travel still accumulates — one leg later, measured from further back. Clearing
+     * it advances the anchor, which is what stops the same metres being counted twice.
+     *
+     * The baseline bounds and the speed gate stay out of this deliberately. Those ask
+     * whether a leg looks like travel, which is the movement clause's question; this one
+     * only asks how far.
+     */
+    private fun accumulatingDistance(sample: LocationSample): DrivingSessionEvidence {
+        // The first fix of a session has nothing to measure from: the one before it
+        // belongs to the previous trip, and counting that gap would credit this drive with
+        // the whole distance since the last parking spot.
+        val anchor = distanceAnchor ?: return copy(distanceAnchor = MovementAnchor.of(sample))
+        val displacement =
+            GeoDistance.meters(anchor.latitude, anchor.longitude, sample.latitude, sample.longitude)
+        if (displacement < MovementEvidencePolicy.noiseFloorMeters(anchor, sample)) {
+            return copy(distanceNoiseFloorRejectCount = distanceNoiseFloorRejectCount + 1)
+        }
+        return copy(
+            travelDistanceMeters = travelDistanceMeters + displacement,
+            distanceAnchor = MovementAnchor.of(sample),
+        )
+    }
+
+    private fun maxOfNullable(current: Float?, candidate: Float?): Float? = when {
+        candidate == null -> current
+        current == null -> candidate
+        else -> maxOf(current, candidate)
+    }
+}
 
 /** Why the guard did or did not confirm. Stable strings from docs/05_CROSS_PLATFORM_DOMAIN_CONTRACT.md §4. */
 enum class DrivingReasonCode(val wire: String) {
@@ -62,17 +146,30 @@ object DrivingConfirmationGuard {
     const val MIN_DURATION_MILLIS: Long = 120_000L
     const val MIN_DISTANCE_METERS: Double = 800.0
 
-    /** Vehicle evidence older than this no longer describes the current situation. */
+    /**
+     * Vehicle evidence older than this no longer describes the current situation.
+     *
+     * 300 s rather than the tighter figure iOS started from: measured Activity transition
+     * gaps underground ran to minutes, and the cost of missing a whole journey is larger
+     * than the cost of one wrongly-open timeout window (docs/05 §7).
+     */
     const val RECENT_VEHICLE_WINDOW_MILLIS: Long = 300_000L
 
-    /** Two fixes are the minimum that can evidence displacement rather than a single guess. */
-    const val MIN_RELIABLE_SAMPLES_FOR_MOVEMENT: Int = 2
+    /**
+     * "One event alone never confirms" made concrete: a single fix can never satisfy the
+     * movement requirement.
+     */
+    const val MIN_MOVING_SAMPLES: Int = 2
 
-    /** Metres of displacement that rule out a stationary phone with a drifting fix. */
-    const val MIN_MOVEMENT_METERS: Double = 150.0
-
-    /** ~29 km/h. Above walking or fix drift, below the point of excluding city traffic. */
-    const val MIN_VEHICLE_SPEED_MPS: Float = 8f
+    /**
+     * ~7.2 km/h — above brisk walking, below any real traffic speed.
+     *
+     * Not a "is this a vehicle" bar: that question is already answered by the recent
+     * vehicle evidence conjunct. This one asks only whether the device really moved, so a
+     * higher threshold would reject the car crawling through a car park looking for a
+     * space — which is the exact moment this product exists to catch.
+     */
+    const val MOVING_SPEED_THRESHOLD_MPS: Double = 2.0
 
     fun evaluate(evidence: DrivingSessionEvidence, nowMillis: Long): DrivingConfirmation {
         val reasons = mutableListOf<DrivingReasonCode>()
@@ -91,15 +188,8 @@ object DrivingConfirmationGuard {
 
         val confirmed = hasRecentVehicleEvidence &&
             (durationMet || distanceMet) &&
-            hasMovementEvidence(evidence)
+            evidence.movement.movingSampleCount >= MIN_MOVING_SAMPLES
 
         return DrivingConfirmation(confirmed = confirmed, reasonCodes = reasons.toList())
-    }
-
-    private fun hasMovementEvidence(evidence: DrivingSessionEvidence): Boolean {
-        if (evidence.reliableSampleCount < MIN_RELIABLE_SAMPLES_FOR_MOVEMENT) return false
-        val speed = evidence.maxSpeedMps
-        return evidence.travelDistanceMeters >= MIN_MOVEMENT_METERS ||
-            (speed != null && speed >= MIN_VEHICLE_SPEED_MPS)
     }
 }

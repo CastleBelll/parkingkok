@@ -5,10 +5,14 @@ import com.parkingkok.app.domain.detection.DetectionCheckpoint
 import com.parkingkok.app.domain.detection.MotionDomainEvent
 import com.parkingkok.app.domain.detection.MotionEventKind
 import com.parkingkok.app.domain.detection.ReliableLocation
+import com.parkingkok.app.domain.location.DrivingSessionEvidence
 import com.parkingkok.app.domain.location.LocationDropReason
 import com.parkingkok.app.domain.location.LocationQualityEntry
 import com.parkingkok.app.domain.location.LocationQualitySample
 import com.parkingkok.app.domain.location.LocationSessionState
+import com.parkingkok.app.domain.location.MovementAnchor
+import com.parkingkok.app.domain.location.MovementEvidence
+import com.parkingkok.app.domain.location.MovementEvidenceRejectReason
 import com.parkingkok.app.domain.trace.TraceSummary
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
@@ -97,6 +101,52 @@ class DiagnosticsReportTest {
         assertEquals(now - 60_000L, withFix.reliableLocationCapturedAtMillis)
         assertFalse(withoutFix.hasReliableLocation)
         assertNull(withoutFix.reliableLocationAccuracyM)
+    }
+
+    @Test
+    fun `the measured clauses are exported as counts, and their anchors never are`() {
+        // Arrange — §7's two measured clauses are the only parts of the driving guard that
+        // have to hold a position to do their job, so this is where a coordinate could
+        // escape. The session below has travelled underground: no speed on any fix, two
+        // pairs decided by the distance fallback, and both anchors holding a real position.
+        val evidence = DrivingSessionEvidence(
+            vehicleFirstSeenAtMillis = now - 600_000L,
+            lastVehicleEvidenceAtMillis = now - 30_000L,
+            travelDistanceMeters = 4_100.0,
+            distanceNoiseFloorRejectCount = 46,
+            distanceAnchor = MovementAnchor(now - 20_000L, 37.111_222_3, 127.444_555_6, 120f),
+            movement = MovementEvidence(
+                movingSampleCount = 2,
+                speedAvailableCount = 0,
+                speedMissingCount = 58,
+                derivedMovingSampleCount = 2,
+                rejectReason = MovementEvidenceRejectReason.ACCURACY_TOO_COARSE,
+                outlierCount = 1,
+                anchor = MovementAnchor(now - 30_000L, 37.123_456_7, 127.987_654_3, 300f),
+            ),
+        )
+
+        // Act
+        val exported = report(sessionState = LocationSessionState(evidence = evidence))
+        val encoded = json.encodeToString(exported)
+
+        // Assert — the four counters §7 asks for, plus the reason, as wire strings.
+        assertEquals(2, exported.movingSampleCount)
+        assertEquals(0, exported.speedAvailableCount)
+        assertEquals(58, exported.speedMissingCount)
+        assertEquals(2, exported.derivedMovingSampleCount)
+        assertEquals("accuracyTooCoarse", exported.movementEvidenceRejectReason)
+        assertEquals(1, exported.movementOutlierCount)
+        // The distance clause, as the metres it accumulated and the legs it refused. The
+        // pair is the point: metres alone cannot say whether the floor is set wrong.
+        assertEquals(4_100.0, requireNotNull(exported.travelDistanceMeters), 0.001)
+        assertEquals(46, exported.distanceNoiseFloorRejectCount)
+        // And both anchors stayed behind.
+        assertFalse(encoded.contains("37.123"))
+        assertFalse(encoded.contains("127.987"))
+        assertFalse(encoded.contains("37.111"))
+        assertFalse(encoded.contains("127.444"))
+        assertFalse(encoded.lowercase().contains("anchor"))
     }
 
     @Test

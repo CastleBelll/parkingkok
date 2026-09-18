@@ -273,4 +273,57 @@ struct BackgroundCoordinatorTests {
         #expect(LocationFreshnessPolicy.isFresh(sample(age: -4), now: now))
         #expect(!LocationFreshnessPolicy.isFresh(sample(age: -60), now: now))
     }
+
+    /// Regression: the 300s freshness bound rejects an hours-old cached fix but not a
+    /// recent one, and Core Location replays those too — the same replay that put
+    /// duplicate fixes in the trace. A 200s-old sample arriving after a 10s-old one
+    /// clears the bound while still being older than the checkpoint knows.
+    @Test("A fresh but superseded fix does not walk lastLocationAt backwards")
+    func supersededFixDoesNotRegressCheckpoint() async {
+        // Arrange — establish a recent location, then deliver an older-but-fresh one.
+        let coordinator = makeCoordinator(
+            store: StubCheckpointStore(),
+            motion: StubMotionHistoryProvider(),
+            now: TestTime.offset(1000)
+        )
+        let recent = LocationQualitySample(timestamp: TestTime.offset(990), horizontalAccuracy: 8)
+        let superseded = LocationQualitySample(timestamp: TestTime.offset(800), horizontalAccuracy: 8)
+
+        // Act
+        await coordinator.handleSignificantChange(recent)
+        await coordinator.handleSignificantChange(superseded)
+
+        // Assert
+        let snapshot = await coordinator.currentSnapshot()
+        #expect(snapshot.lastLocationAt == TestTime.offset(990))
+        #expect(snapshot.currentCheckpoint?.lastLocationAt == TestTime.offset(990))
+        #expect(snapshot.supersededLocationDropCount == 1)
+        // The wake itself still happened, and both arrivals are real events.
+        #expect(snapshot.significantChangeCount == 2)
+        #expect(snapshot.staleLocationDropCount == 0)
+    }
+
+    @Test("A newer fresh fix still advances the checkpoint")
+    func newerFixAdvancesCheckpoint() async {
+        // Arrange
+        let coordinator = makeCoordinator(
+            store: StubCheckpointStore(),
+            motion: StubMotionHistoryProvider(),
+            now: TestTime.offset(1000)
+        )
+
+        // Act
+        await coordinator.handleSignificantChange(
+            LocationQualitySample(timestamp: TestTime.offset(800), horizontalAccuracy: 8)
+        )
+        await coordinator.handleSignificantChange(
+            LocationQualitySample(timestamp: TestTime.offset(990), horizontalAccuracy: 12)
+        )
+
+        // Assert
+        let snapshot = await coordinator.currentSnapshot()
+        #expect(snapshot.lastLocationAt == TestTime.offset(990))
+        #expect(snapshot.lastLocationAccuracy == 12)
+        #expect(snapshot.supersededLocationDropCount == 0)
+    }
 }

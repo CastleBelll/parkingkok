@@ -69,6 +69,34 @@ data class DiagnosticsReport(
     val lastVehicleEvidenceAtMillis: Long?,
     val reliableSampleCount: Int?,
     val maxSpeedMps: Float?,
+    /** Metres §7's `distance >= 800m` clause has accumulated, one anchored leg at a time. */
+    val travelDistanceMeters: Double?,
+    /**
+     * Legs the §7 noise floor kept out of [travelDistanceMeters].
+     *
+     * Same name and meaning on iOS, so one number compares across a pair of field runs. A
+     * count far above the accepted legs says the floor is wrong for this device, not that
+     * the car stood still — which is the question the old ≤35 m gate could not answer at
+     * all, because it rejected almost every underground fix before it got here.
+     */
+    val distanceNoiseFloorRejectCount: Int?,
+
+    /**
+     * §7's movement clause, as counts rather than as a verdict.
+     *
+     * The pair that has to be readable off one file: "confirmation never fired" and "no fix
+     * ever carried a speed" look identical from outside, and on the September 2026 field
+     * device it was the second one. [speedMissingCount] high with
+     * [derivedMovingSampleCount] at zero is the shape of that defect; the same two with
+     * [movementEvidenceRejectReason] set says which gate declined and why.
+     */
+    val movingSampleCount: Int?,
+    val speedAvailableCount: Int?,
+    val speedMissingCount: Int?,
+    val derivedMovingSampleCount: Int?,
+    val movementEvidenceRejectReason: String?,
+    /** Fixes discarded as implausible jumps before the movement clause saw them (§5). */
+    val movementOutlierCount: Int?,
 
     // Location quality counters (docs/05 §5: exclusions are counted, not dropped quietly)
     val counters: LocationDiagnosticsCounters,
@@ -115,7 +143,7 @@ data class DiagnosticsReport(
 
     companion object {
         /** Bump whenever the shape changes, so an older payload is rejected, not half-read. */
-        const val SCHEMA_VERSION: Int = 3
+        const val SCHEMA_VERSION: Int = 4
 
         @Suppress("LongParameterList")
         fun from(
@@ -164,6 +192,14 @@ data class DiagnosticsReport(
                 lastVehicleEvidenceAtMillis = evidence?.lastVehicleEvidenceAtMillis,
                 reliableSampleCount = evidence?.reliableSampleCount,
                 maxSpeedMps = evidence?.maxSpeedMps,
+                travelDistanceMeters = evidence?.travelDistanceMeters,
+                distanceNoiseFloorRejectCount = evidence?.distanceNoiseFloorRejectCount,
+                movingSampleCount = evidence?.movement?.movingSampleCount,
+                speedAvailableCount = evidence?.movement?.speedAvailableCount,
+                speedMissingCount = evidence?.movement?.speedMissingCount,
+                derivedMovingSampleCount = evidence?.movement?.derivedMovingSampleCount,
+                movementEvidenceRejectReason = evidence?.movement?.rejectReason?.wire,
+                movementOutlierCount = evidence?.movement?.outlierCount,
                 counters = sessionState.counters,
                 recentFixes = qualityHistory.map { entry ->
                     FixQuality(

@@ -113,6 +113,9 @@ struct DiagnosticsView: View {
             if let accuracy = model.snapshot.lastLocationAccuracy {
                 LabeledContent("마지막 수평 정확도", value: "\(Int(accuracy)) m")
             }
+            if model.snapshot.supersededLocationDropCount > 0 {
+                LabeledContent("뒤늦게 온 위치 무시", value: "\(model.snapshot.supersededLocationDropCount)회")
+            }
             if model.snapshot.staleLocationDropCount > 0 {
                 LabeledContent("오래된 위치 무시", value: "\(model.snapshot.staleLocationDropCount)회")
                 if let age = model.snapshot.lastStaleLocationAge {
@@ -154,7 +157,11 @@ struct DiagnosticsView: View {
             if let reason = model.snapshot.movementEvidenceRejectReason {
                 LabeledContent("이동 근거 거절 사유", value: reason.rawValue)
             }
-            LabeledContent("누적 거리", value: "\(Int(model.snapshot.drivingDistanceMeters)) m")
+            LabeledContent(
+                "누적 거리",
+                value: "\(Int(model.snapshot.drivingDistanceMeters)) m "
+                    + "(노이즈 바닥 제외 \(model.snapshot.drivingDistanceNoiseFloorRejectCount))"
+            )
             LabeledContent("이상치 제거", value: "\(model.snapshot.drivingOutlierDropCount)")
             LabeledContent("reliable 채택", value: "\(model.snapshot.reliableLocationUpdateCount)회")
             LabeledContent("reliable 거절", value: "\(model.snapshot.reliableLocationRejectCount)회")
