@@ -1,0 +1,82 @@
+import SwiftUI
+
+/// One record in a list — home's preview and the full history share it
+/// (`01-home-main.png` and `04-history-list.png` show the same row at two densities).
+struct ParkingHistoryRow: View {
+    enum Style {
+        /// Home's three-row preview: floor and date only.
+        case compact
+        /// The history screen: zone/spot and the detection badge as well.
+        case full
+    }
+
+    let session: ParkingSession
+    let style: Style
+
+    var body: some View {
+        HStack(spacing: PKSpacing.m) {
+            PKIconChip(icon, tint: session.source == .detected ? .primary : .neutral)
+
+            VStack(alignment: .leading, spacing: PKSpacing.xs) {
+                Text(title)
+                    .font(PKTypography.row)
+                    .foregroundStyle(PKColor.textPrimary)
+                if style == .full, session.source == .detected {
+                    // docs/19: "자동 감지 기록은 badge로 구분". A word, not a hue.
+                    PKBadge("자동")
+                }
+            }
+
+            Spacer(minLength: PKSpacing.s)
+
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(ParkingDateText.day(session.startedAt))
+                Text(ParkingDateText.time(session.startedAt))
+            }
+            .font(PKTypography.supporting)
+            .foregroundStyle(PKColor.textSecondary)
+
+            Image(systemName: "chevron.right")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(PKColor.textSecondary)
+                .accessibilityHidden(true)
+        }
+        .padding(PKSpacing.l)
+        .frame(minHeight: PKSize.minimumTouchTarget)
+        .background(PKColor.surface, in: .rect(cornerRadius: PKRadius.row))
+        .overlay {
+            RoundedRectangle(cornerRadius: PKRadius.row)
+                .strokeBorder(PKColor.divider, lineWidth: PKSize.hairline)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityText)
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private var icon: String {
+        session.source == .detected ? "car.fill" : "parkingsign"
+    }
+
+    /// `B3 · A구역 142` in the full list; just the floor on home.
+    private var title: String {
+        let floor = session.floor?.displayText ?? "층 미입력"
+        guard style == .full else { return floor }
+        let place = [session.zone, session.spot].compactMap(\.self).joined(separator: " ")
+        return place.isEmpty ? floor : "\(floor) · \(place)"
+    }
+
+    private var accessibilityText: String {
+        var parts = [session.floor?.accessibilityText ?? "층 미입력"]
+        if style == .full {
+            if let zone = session.zone {
+                parts.append(zone)
+            }
+            if let spot = session.spot {
+                parts.append(spot)
+            }
+            parts.append(session.source == .detected ? "자동 감지" : "직접 저장")
+        }
+        parts.append("\(ParkingDateText.day(session.startedAt)) \(ParkingDateText.time(session.startedAt))")
+        return parts.joined(separator: ", ")
+    }
+}
