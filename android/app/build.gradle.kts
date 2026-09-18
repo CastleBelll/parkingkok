@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.compose.compiler)
     alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.ksp)
 }
 
 android {
@@ -17,6 +18,11 @@ android {
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
+
+    // Room writes the schema of every version here. The files are committed so a schema
+    // change shows up as a reviewable diff, and so ParkingDatabaseMigrationTest can assert
+    // the current version was actually exported.
+    ksp { arg("room.schemaLocation", layout.projectDirectory.dir("schemas").asFile.path) }
 
     buildTypes {
         release {
@@ -59,6 +65,9 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
 
+    implementation(libs.androidx.room.runtime)
+    ksp(libs.androidx.room.compiler)
+
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
@@ -71,9 +80,18 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.androidx.sqlite.bundled.jvm)
 
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+}
+
+// CLAUDE.md quality gate: Kotlin warnings are zero. Enforcing it here rather than reading
+// build output means a new warning fails the build instead of sitting in a log.
+kotlin {
+    compilerOptions {
+        allWarningsAsErrors.set(true)
+    }
 }

@@ -1,50 +1,110 @@
 package com.parkingkok.app.theme
 
-import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.ReadOnlyComposable
 
-private val DarkColorScheme = darkColorScheme(primary = Purple80, secondary = PurpleGrey80, tertiary = Pink80)
+/**
+ * docs/10_DESIGN_UX_SPEC.md §2 tokens mapped onto Material 3 roles.
+ *
+ * There is no `dynamicColor` switch. §3 states that dynamic colour "is **not** allowed to
+ * replace core 주차콕 brand colours automatically"; a parameter defaulting to `true` — which
+ * is what the Compose project template ships and what this file used to hold — is exactly
+ * that prohibited behaviour, so the capability is gone rather than defaulted off.
+ *
+ * Mapping (§2 name -> Material role):
+ * - background   -> background
+ * - surface      -> surface, surfaceContainer*
+ * - textPrimary  -> onBackground / onSurface
+ * - textSecondary-> onSurfaceVariant
+ * - primary      -> primary
+ * - accent       -> tertiary
+ * - divider      -> outlineVariant
+ * - danger       -> error
+ */
+private val LightColors = lightColorScheme(
+    primary = BrandPalette.LightPrimary,
+    onPrimary = BrandPalette.OnPrimary,
+    primaryContainer = BrandPalette.LightPrimaryContainer,
+    onPrimaryContainer = BrandPalette.LightOnPrimaryContainer,
+    secondary = BrandPalette.LightPrimary,
+    onSecondary = BrandPalette.OnPrimary,
+    secondaryContainer = BrandPalette.LightPrimaryContainer,
+    onSecondaryContainer = BrandPalette.LightOnPrimaryContainer,
+    tertiary = BrandPalette.LightAccent,
+    onTertiary = BrandPalette.OnPrimary,
+    tertiaryContainer = BrandPalette.LightAccentContainer,
+    onTertiaryContainer = BrandPalette.LightOnAccentContainer,
+    background = BrandPalette.LightBackground,
+    onBackground = BrandPalette.LightTextPrimary,
+    surface = BrandPalette.LightSurface,
+    onSurface = BrandPalette.LightTextPrimary,
+    surfaceVariant = BrandPalette.LightSurfaceVariant,
+    onSurfaceVariant = BrandPalette.LightTextSecondary,
+    surfaceContainerLowest = BrandPalette.LightSurface,
+    surfaceContainerLow = BrandPalette.LightSurface,
+    surfaceContainer = BrandPalette.LightSurface,
+    surfaceContainerHigh = BrandPalette.LightSurfaceVariant,
+    surfaceContainerHighest = BrandPalette.LightSurfaceVariant,
+    outline = BrandPalette.LightTextSecondary,
+    outlineVariant = BrandPalette.LightDivider,
+    error = BrandPalette.LightDanger,
+    onError = BrandPalette.OnPrimary,
+    errorContainer = BrandPalette.LightDangerContainer,
+    onErrorContainer = BrandPalette.LightOnDangerContainer,
+)
 
-private val LightColorScheme =
-  lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40,
-
-    /* Other default colors to override
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
-    onPrimary = Color.White,
-    onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    */
-  )
+private val DarkColors = darkColorScheme(
+    primary = BrandPalette.DarkPrimary,
+    onPrimary = BrandPalette.OnPrimary,
+    primaryContainer = BrandPalette.DarkPrimaryContainer,
+    onPrimaryContainer = BrandPalette.DarkOnPrimaryContainer,
+    secondary = BrandPalette.DarkPrimary,
+    onSecondary = BrandPalette.OnPrimary,
+    secondaryContainer = BrandPalette.DarkPrimaryContainer,
+    onSecondaryContainer = BrandPalette.DarkOnPrimaryContainer,
+    tertiary = BrandPalette.DarkAccent,
+    onTertiary = BrandPalette.DarkBackground,
+    tertiaryContainer = BrandPalette.DarkAccentContainer,
+    onTertiaryContainer = BrandPalette.DarkOnAccentContainer,
+    background = BrandPalette.DarkBackground,
+    onBackground = BrandPalette.DarkTextPrimary,
+    surface = BrandPalette.DarkSurface,
+    onSurface = BrandPalette.DarkTextPrimary,
+    surfaceVariant = BrandPalette.DarkSurfaceVariant,
+    onSurfaceVariant = BrandPalette.DarkTextSecondary,
+    surfaceContainerLowest = BrandPalette.DarkBackground,
+    surfaceContainerLow = BrandPalette.DarkSurface,
+    surfaceContainer = BrandPalette.DarkSurface,
+    surfaceContainerHigh = BrandPalette.DarkSurfaceVariant,
+    surfaceContainerHighest = BrandPalette.DarkSurfaceVariant,
+    outline = BrandPalette.DarkTextSecondary,
+    outlineVariant = BrandPalette.DarkDivider,
+    error = BrandPalette.DarkDanger,
+    onError = BrandPalette.DarkBackground,
+    errorContainer = BrandPalette.DarkDangerContainer,
+    onErrorContainer = BrandPalette.DarkOnDangerContainer,
+)
 
 @Composable
 fun ParkingkokTheme(
-  darkTheme: Boolean = isSystemInDarkTheme(),
-  // Dynamic color is available on Android 12+
-  dynamicColor: Boolean = true,
-  content: @Composable () -> Unit,
+    darkTheme: Boolean = isSystemInDarkTheme(),
+    content: @Composable () -> Unit,
 ) {
-  val colorScheme =
-    when {
-      dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-        val context = LocalContext.current
-        if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-      }
-      darkTheme -> DarkColorScheme
-      else -> LightColorScheme
+    CompositionLocalProvider(LocalParkingkokSpacing provides ParkingkokSpacing()) {
+        MaterialTheme(
+            colorScheme = if (darkTheme) DarkColors else LightColors,
+            typography = ParkingkokTypography,
+            shapes = ParkingkokShapes,
+            content = content,
+        )
     }
-
-  MaterialTheme(colorScheme = colorScheme, typography = Typography, content = content)
 }
+
+/** Spacing tokens, reached the same way as `MaterialTheme.colorScheme`. */
+val MaterialTheme.spacing: ParkingkokSpacing
+    @Composable @ReadOnlyComposable get() = LocalParkingkokSpacing.current

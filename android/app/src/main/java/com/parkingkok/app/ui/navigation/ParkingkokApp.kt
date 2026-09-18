@@ -1,0 +1,232 @@
+package com.parkingkok.app.ui.navigation
+
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import androidx.activity.compose.BackHandler
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.parkingkok.app.AppContainer
+import com.parkingkok.app.ui.detail.ParkingDetailScreen
+import com.parkingkok.app.ui.detail.ParkingDetailViewModel
+import com.parkingkok.app.ui.diagnostics.DiagnosticsScreen
+import com.parkingkok.app.ui.diagnostics.DiagnosticsViewModel
+import com.parkingkok.app.ui.history.HistoryScreen
+import com.parkingkok.app.ui.history.HistoryViewModel
+import com.parkingkok.app.ui.home.HomeScreen
+import com.parkingkok.app.ui.home.HomeViewModel
+import com.parkingkok.app.ui.manual.ManualParkingScreen
+import com.parkingkok.app.ui.manual.ManualParkingViewModel
+import com.parkingkok.app.ui.settings.SettingsScreen
+import com.parkingkok.app.ui.settings.SettingsViewModel
+
+/**
+ * The app shell: one back stack, one screen at a time.
+ *
+ * The stack is held in `rememberSaveable`, so a configuration change or a process death
+ * brings the user back where they were rather than at the root
+ * (docs/01_PRODUCT_REQUIREMENTS.md §8).
+ */
+@Composable
+fun ParkingkokApp(container: AppContainer) {
+    var backStack by rememberSaveable(saver = NavBackStackSaver) {
+        mutableStateOf(NavBackStack.rootedAtHome())
+    }
+
+    BackHandler(enabled = backStack.canGoBack) { backStack = backStack.pop() }
+
+    when (val route = backStack.current) {
+        ParkingkokRoute.Home -> HomeRoute(
+            container = container,
+            onNavigate = { backStack = backStack.push(it) },
+        )
+
+        ParkingkokRoute.ManualEntry -> ManualEntryRoute(
+            container = container,
+            onSaved = { backStack = backStack.pop() },
+            onBack = { backStack = backStack.pop() },
+        )
+
+        is ParkingkokRoute.Detail -> DetailRoute(
+            container = container,
+            recordId = route.recordId,
+            onBack = { backStack = backStack.pop() },
+        )
+
+        ParkingkokRoute.History -> HistoryRoute(
+            container = container,
+            onOpenDetail = { backStack = backStack.push(ParkingkokRoute.Detail(it)) },
+            onBack = { backStack = backStack.pop() },
+        )
+
+        ParkingkokRoute.Settings -> SettingsRoute(
+            container = container,
+            onOpenDiagnostics = { backStack = backStack.push(ParkingkokRoute.Diagnostics) },
+            onBack = { backStack = backStack.pop() },
+        )
+
+        ParkingkokRoute.Diagnostics -> DiagnosticsRoute(
+            container = container,
+            onBack = { backStack = backStack.pop() },
+        )
+    }
+}
+
+@Composable
+private fun HomeRoute(container: AppContainer, onNavigate: (ParkingkokRoute) -> Unit) {
+    val viewModel: HomeViewModel = viewModel(factory = HomeViewModel.factory(container))
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+    HomeScreen(
+        state = state,
+        onStepFloor = viewModel::onStepFloor,
+        onEndParking = viewModel::onEndParking,
+        onSaveParking = { onNavigate(ParkingkokRoute.ManualEntry) },
+        onOpenDetail = { onNavigate(ParkingkokRoute.Detail(it)) },
+        onOpenHistory = { onNavigate(ParkingkokRoute.History) },
+        onOpenSettings = { onNavigate(ParkingkokRoute.Settings) },
+    )
+}
+
+@Composable
+private fun ManualEntryRoute(
+    container: AppContainer,
+    onSaved: () -> Unit,
+    onBack: () -> Unit,
+) {
+    val viewModel: ManualParkingViewModel =
+        viewModel(factory = ManualParkingViewModel.factory(container))
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+    // The save is asynchronous, so the screen leaves when the record id arrives rather
+    // than when the button is pressed — otherwise a failure would navigate away silently.
+    val savedRecordId = state.savedRecordId
+    LaunchedEffect(savedRecordId) {
+        if (savedRecordId != null) onSaved()
+    }
+
+    ManualParkingScreen(
+        state = state,
+        onFloorChange = viewModel::onFloorChange,
+        onZoneChange = viewModel::onZoneChange,
+        onSpotChange = viewModel::onSpotChange,
+        onMemoChange = viewModel::onMemoChange,
+        onSave = viewModel::onSave,
+        onBack = onBack,
+    )
+}
+
+@Composable
+private fun DetailRoute(container: AppContainer, recordId: String, onBack: () -> Unit) {
+    val viewModel: ParkingDetailViewModel =
+        viewModel(
+            key = "detail-$recordId",
+            factory = ParkingDetailViewModel.factory(container, recordId),
+        )
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+    // Deleting from here removes the thing the screen is about, so it closes itself.
+    LaunchedEffect(state.missing) {
+        if (state.missing) onBack()
+    }
+
+    ParkingDetailScreen(
+        state = state,
+        onEndParking = viewModel::onEndParking,
+        onDelete = viewModel::onDelete,
+        onBack = onBack,
+    )
+}
+
+@Composable
+private fun HistoryRoute(
+    container: AppContainer,
+    onOpenDetail: (String) -> Unit,
+    onBack: () -> Unit,
+) {
+    val viewModel: HistoryViewModel = viewModel(factory = HistoryViewModel.factory(container))
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+    HistoryScreen(
+        state = state,
+        onOpenDetail = onOpenDetail,
+        onDeleteAll = viewModel::onDeleteAll,
+        onBack = onBack,
+    )
+}
+
+@Composable
+private fun SettingsRoute(
+    container: AppContainer,
+    onOpenDiagnostics: () -> Unit,
+    onBack: () -> Unit,
+) {
+    val viewModel: SettingsViewModel = viewModel(factory = SettingsViewModel.factory(container))
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+
+    // A permission can be revoked in system Settings while this screen is backgrounded.
+    LifecycleResumeEffect(Unit) {
+        viewModel.refresh()
+        onPauseOrDispose { }
+    }
+
+    SettingsScreen(
+        state = state,
+        onDetectionEnabledChange = viewModel::onDetectionEnabledChange,
+        onOpenSystemSettings = {
+            // Background location in particular cannot be granted from an in-app prompt on
+            // modern Android (docs/10_DESIGN_UX_SPEC.md §8), so every permission row leads
+            // to the one place all of them can actually be changed.
+            context.startActivity(
+                Intent(
+                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.fromParts("package", context.packageName, null),
+                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        },
+        onDeleteHistory = viewModel::onDeleteHistory,
+        onOpenDiagnostics = onOpenDiagnostics,
+        onBack = onBack,
+    )
+}
+
+/** The P0 diagnostics screen, unchanged — only its entry point moved into Settings. */
+@Composable
+private fun DiagnosticsRoute(container: AppContainer, onBack: () -> Unit) {
+    val viewModel: DiagnosticsViewModel =
+        viewModel(factory = DiagnosticsViewModel.factory(container))
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+    LifecycleResumeEffect(Unit) {
+        viewModel.refresh()
+        onPauseOrDispose { }
+    }
+
+    DiagnosticsScreen(
+        state = state,
+        onDetectionEnabledChange = viewModel::setDetectionEnabled,
+        onPermissionResult = viewModel::refresh,
+        onCaptureModeChange = viewModel::setCaptureMode,
+        onExportDiagnostics = viewModel::exportDiagnostics,
+        onClearEvents = viewModel::clearEventLog,
+        onTraceLabelChange = viewModel::setTraceLabel,
+        onTraceSplit = viewModel::splitTraceSession,
+    )
+}
+
+/** Persists the stack as the list of strings [ParkingkokRouteCodec] produces. */
+private val NavBackStackSaver = listSaver<MutableState<NavBackStack>, String>(
+    save = { it.value.encode() },
+    restore = { mutableStateOf(NavBackStack.decode(it)) },
+)
