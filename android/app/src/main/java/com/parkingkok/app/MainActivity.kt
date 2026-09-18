@@ -46,6 +46,7 @@ class MainActivity : ComponentActivity() {
                     onExportDiagnostics = viewModel::exportDiagnostics,
                     onClearEvents = viewModel::clearEventLog,
                     onTraceLabelChange = viewModel::setTraceLabel,
+                    onTraceSplit = viewModel::splitTraceSession,
                 )
             }
         }

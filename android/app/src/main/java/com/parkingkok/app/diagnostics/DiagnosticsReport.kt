@@ -104,6 +104,10 @@ data class DiagnosticsReport(
      * is read from: "40 sessions, 12 discarded, 31 still unlabelled" is the difference
      * between a recording that is ready to convert and one that needs an evening of
      * labelling, and neither number is visible from a directory listing.
+     *
+     * It also carries §9's gap aggregate, which answers a different question from the
+     * rest of this report: not "did the detection path work" but "what should the
+     * 30-minute idle gap be?". Nothing acts on it until the numbers have accumulated.
      */
     val trace: TraceSummary = TraceSummary(),
 ) {

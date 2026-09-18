@@ -123,6 +123,23 @@ enum class TraceEventType {
 
     @SerialName("location_quality_degraded")
     LOCATION_QUALITY_DEGRADED,
+
+    ;
+
+    /**
+     * The contract string for this type, read back from the `@SerialName` that *is* the
+     * contract.
+     *
+     * The labelling screen shows it so a person cutting a session sees the same vocabulary
+     * the fixture will be written in. Derived rather than repeated, because a second
+     * hand-written table is a second thing to get out of step.
+     */
+    val wire: String get() = WIRE_NAMES[ordinal]
+}
+
+/** Computed once: [TraceEventType.wire] is read per event while the split list is open. */
+private val WIRE_NAMES: List<String> = TraceEventType.entries.map { entry ->
+    TraceEventType.serializer().descriptor.getElementName(entry.ordinal)
 }
 
 /**

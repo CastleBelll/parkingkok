@@ -9,6 +9,8 @@ import com.parkingkok.app.domain.trace.TraceEvent
 import com.parkingkok.app.domain.trace.TraceLabel
 import com.parkingkok.app.domain.trace.TraceSession
 import com.parkingkok.app.domain.trace.TraceSessionBoundaryPolicy
+import com.parkingkok.app.domain.trace.TraceSessionSplit
+import com.parkingkok.app.domain.trace.TraceSplitResult
 import com.parkingkok.app.domain.trace.TraceSummary
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
@@ -121,7 +123,12 @@ class TraceRecorder(
         mutex.withLock {
             // The file is already complete on disk; closing is purely forgetting which one
             // was open, so the next event cannot append to a finished trip.
-            runBestEffort { stateStore.setTraceOpenSessionId(null) }
+            runBestEffort {
+                // Opting out is a rotation in every sense §9's viability rule cares about:
+                // nothing more can join this session, so "더 붙을 수 있다" stops applying.
+                discardIfNonViable(openSession())
+                stateStore.setTraceOpenSessionId(null)
+            }
         }
     }
 
@@ -131,8 +138,59 @@ class TraceRecorder(
         store.write(session.copy(label = label)).also { lastFailure = it }
     }
 
+    /**
+     * Cuts a closed session in two at the event the user picked
+     * (docs/05_CROSS_PLATFORM_DOMAIN_CONTRACT.md §9 "사람이 세션을 나눈다").
+     *
+     * @return null when the split happened, or the reason it was refused. A refusal is an
+     *   ordinary outcome here, not an error: §9 forbids a cut that would leave a one-event
+     *   fragment, and the person choosing the point cannot know that until they choose it.
+     */
+    suspend fun splitSession(sessionId: String, atEventIndex: Int): TraceSplitResult.Refusal? = mutex.withLock {
+        // Openness is read here and not in the store: which session is being appended to
+        // lives beside the detection state, because the recording process dies between
+        // PendingIntent deliveries and the pointer has to survive that.
+        val openSessionId = stateStore.readTraceOpenSessionIdOnce()
+        if (openSessionId == sessionId) return@withLock TraceSplitResult.SessionIsOpen
+        val parent = store.read(sessionId) ?: return@withLock TraceSplitResult.SessionNotFound
+
+        try {
+            when (val outcome = TraceSessionSplit.split(parent, atEventIndex, sessionIdFactory)) {
+                is TraceSplitResult.Refusal -> outcome
+                is TraceSplitResult.Fragments -> {
+                    val failure = store.replace(sessionId, listOf(outcome.leading, outcome.trailing))
+                    if (failure != null) {
+                        lastFailure = failure
+                        return@withLock TraceSplitResult.StoreFailure(failure)
+                    }
+                    // One session became two, so the rolling cap is now the thing most
+                    // likely to be wrong. Not a drop of its own — splitting evicts
+                    // nothing; the cap decides that, and counts it if it happens.
+                    val discarded = store.prune(keepSessionId = openSessionId)
+                    if (discarded > 0) stateStore.addTraceDiscardedSessions(discarded)
+                    null
+                }
+            }
+        } catch (cancellation: CancellationException) {
+            // Never swallowed, for the same reason the recording path does not swallow it:
+            // the caller's scope is being torn down, and turning that into a refusal would
+            // strand the coroutine that owns the screen.
+            throw cancellation
+        } catch (error: Exception) {
+            // Same contract as the recording path: the class name only, because the
+            // message of an arbitrary exception is not something we can promise stays
+            // coordinate-free.
+            lastFailure = error.javaClass.simpleName
+            Log.e(TAG, "trace split failed: ${error.javaClass.simpleName}")
+            TraceSplitResult.StoreFailure(error.javaClass.simpleName)
+        }
+    }
+
     /** Newest first. For the labelling UI. */
     fun sessions(): List<TraceSession> = store.list()
+
+    /** Which session may still grow, so the labelling UI can refuse to cut it. */
+    suspend fun openSessionId(): String? = stateStore.readTraceOpenSessionIdOnce()
 
     /**
      * Counts for the diagnostics report.
@@ -142,11 +200,20 @@ class TraceRecorder(
      */
     suspend fun summary(): TraceSummary {
         val sessions = store.list()
+        // Only the sessions that carry a measurement. A trace recorded before gap
+        // measurement landed was never measured, and folding it in as zero would
+        // understate exactly the tail the 30-minute retune is looking for.
+        val measured = sessions.mapNotNull { it.gapStats }
         return TraceSummary(
             sessionCount = sessions.size,
             eventCount = sessions.sumOf { it.events.size },
             discardedSessionCount = stateStore.readTraceDiscardedSessionCountOnce(),
+            nonViableDropCount = stateStore.readTraceNonViableDropCountOnce(),
             unlabelledSessionCount = sessions.count { !it.isLabelled },
+            measuredSessionCount = measured.size,
+            maxGapMillis = measured.maxOfOrNull { it.maxGapMillis } ?: 0L,
+            sessionsOver10MinGapCount = measured.count { it.gapsOver10MinCount > 0 },
+            sessionsOver20MinGapCount = measured.count { it.gapsOver20MinCount > 0 },
             lastFailure = lastFailure,
         )
     }
@@ -179,11 +246,42 @@ class TraceRecorder(
 
                 if (updated.sessionId != open?.sessionId) {
                     stateStore.setTraceOpenSessionId(updated.sessionId)
+                    // Only now that the replacement is durable and the pointer has moved:
+                    // a write failure above leaves the closing session on disk, and the
+                    // next event rotates past it and judges it again.
+                    if (rotation != null) discardIfNonViable(open)
                 }
                 val discarded = store.prune(keepSessionId = updated.sessionId)
                 if (discarded > 0) stateStore.addTraceDiscardedSessions(discarded)
             }
         }
+    }
+
+    /**
+     * Applies §9's viability rule to a session that has stopped growing.
+     *
+     * **Rotation — or the user closing recording — is the only moment this may be asked.**
+     * Every session passes through one event on its way to two, and on Android the open
+     * session lives on disk precisely because the process dies between two PendingIntent
+     * deliveries: refusing to write the first event would leave nothing to reopen, and a
+     * whole trip would be cut into first events that were each discarded in turn.
+     *
+     * The file goes; the duplicate-suppression state deliberately does not move backwards.
+     * Those events were already seen, and the two things that decide whether an arriving
+     * event is new — the [com.parkingkok.app.domain.detection.DetectionCheckpoint] and
+     * [com.parkingkok.app.domain.location.LocationDiagnosticsCounters.lastSampleAtMillis],
+     * which drives the `NOT_NEWER` guard — live in DataStore and are untouched here. Rewinding
+     * either would let Fused Location's cached fixes walk straight back in and rebuild the
+     * session that was just thrown away. The only pointer naming the deleted file is the
+     * open-session id, and both callers move it in the same critical section.
+     */
+    private suspend fun discardIfNonViable(closing: TraceSession?) {
+        if (closing == null || TraceSessionBoundaryPolicy.isViable(closing.events.size)) return
+        // A file already gone means a previous call did it, and the counter must not move
+        // twice for the same session.
+        if (!store.delete(closing.sessionId)) return
+        stateStore.addTraceNonViableDrops(1)
+        Log.i(TAG, "trace discarded a non-viable session: ${closing.events.size} event(s)")
     }
 
     private suspend fun openSession(): TraceSession? =

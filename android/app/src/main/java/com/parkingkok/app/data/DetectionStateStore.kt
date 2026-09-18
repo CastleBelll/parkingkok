@@ -129,6 +129,22 @@ class DetectionStateStore(
         dataStore.edit { it[KEY_TRACE_DISCARDED] = (it[KEY_TRACE_DISCARDED] ?: 0) + count }
     }
 
+    suspend fun readTraceNonViableDropCountOnce(): Int = dataStore.data.first()[KEY_TRACE_NON_VIABLE] ?: 0
+
+    /**
+     * Records that rotation threw away a session holding one event or none
+     * (docs/05_CROSS_PLATFORM_DOMAIN_CONTRACT.md §9 "비생존 세션은 버린다").
+     *
+     * Kept apart from [addTraceDiscardedSessions] because the two numbers mean opposite
+     * things: the rolling cap climbing says the device is recording more than it can hold,
+     * while this climbing says the boundary is manufacturing single-event sessions and the
+     * 30-minute threshold is wrong. A single total would hide which one is happening.
+     */
+    suspend fun addTraceNonViableDrops(count: Int) {
+        if (count <= 0) return
+        dataStore.edit { it[KEY_TRACE_NON_VIABLE] = (it[KEY_TRACE_NON_VIABLE] ?: 0) + count }
+    }
+
     /**
      * Reads, transforms, and writes the location session state inside one [androidx.datastore.core.DataStore.updateData]
      * transform, so two location batches arriving back to back cannot lose each other's
@@ -206,5 +222,6 @@ class DetectionStateStore(
         val KEY_LOCATION_SESSION = stringPreferencesKey("location_session")
         val KEY_TRACE_OPEN_SESSION = stringPreferencesKey("trace_open_session_id")
         val KEY_TRACE_DISCARDED = intPreferencesKey("trace_discarded_session_count")
+        val KEY_TRACE_NON_VIABLE = intPreferencesKey("trace_non_viable_drop_count")
     }
 }
