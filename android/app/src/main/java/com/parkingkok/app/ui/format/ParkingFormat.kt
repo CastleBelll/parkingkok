@@ -20,17 +20,27 @@ import java.util.Locale
  * screens.
  */
 
-/** `1시간 24분째 주차 중`. Picks the coarsest unit that still says something useful. */
-@Composable
-fun elapsedText(elapsed: Elapsed): String = when {
-    elapsed.days > 0 ->
-        stringResource(R.string.elapsed_days, elapsed.days, elapsed.hours)
-    elapsed.hours > 0 ->
-        stringResource(R.string.elapsed_hours, elapsed.hours, elapsed.minutes)
-    elapsed.minutes > 0 ->
-        stringResource(R.string.elapsed_minutes, elapsed.minutes)
+/**
+ * The string resource and arguments for [elapsed]. Picks the coarsest unit that still
+ * says something useful.
+ *
+ * Split out of [elapsedText] because the widget renders outside Compose UI and must read
+ * the same wording through `Context.getString` (docs/06 §7a: the widget is the hero card
+ * of `01-home-main.png`, so "1시간 24분째 주차 중" has to be the same sentence in both).
+ */
+fun elapsedResource(elapsed: Elapsed): Pair<Int, Array<Any>> = when {
+    elapsed.days > 0 -> R.string.elapsed_days to arrayOf(elapsed.days, elapsed.hours)
+    elapsed.hours > 0 -> R.string.elapsed_hours to arrayOf(elapsed.hours, elapsed.minutes)
+    elapsed.minutes > 0 -> R.string.elapsed_minutes to arrayOf(elapsed.minutes)
     // Under a minute reads better as a sentence than as "0분째 주차 중".
-    else -> stringResource(R.string.elapsed_just_now)
+    else -> R.string.elapsed_just_now to emptyArray()
+}
+
+/** `1시간 24분째 주차 중`. */
+@Composable
+fun elapsedText(elapsed: Elapsed): String {
+    val (id, args) = elapsedResource(elapsed)
+    return stringResource(id, *args)
 }
 
 /** `오늘` / `어제` / `9월 13일`. */

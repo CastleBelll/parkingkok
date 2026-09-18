@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  2x2 (docs/06_LOCAL_DATA_AND_WIDGET_SYNC.md §7a): the floor and the elapsed duration.
+
+  `updatePeriodMillis` is 30 minutes, the platform minimum. It is what keeps the elapsed
+  line moving while the app is not running; every change to the parking itself arrives
+  immediately through `ParkingWidgetSync`, so this period only paces a duration that is
+  usually measured in hours.
+
+  Resizable in both directions so a user who wants the wide layout from a 2x2 can have it
+  without replacing the widget; `SizeMode.Responsive` has already generated that layout.
+
+  `previewLayout` is picker art and is never inflated on a home screen. There is no
+  `previewImage` beside it: that attribute could only name the launcher icon, and a logo
+  is exactly the decoration the floor must not compete with. Below API 31, where
+  `previewLayout` does not exist, the platform falls back to the app icon by itself.
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/widget_description"
+    android:initialLayout="@layout/glance_default_loading_layout"
+    android:minWidth="110dp"
+    android:minHeight="110dp"
+    android:minResizeWidth="110dp"
+    android:minResizeHeight="110dp"
+    android:previewLayout="@layout/parking_widget_compact_preview"
+    android:resizeMode="horizontal|vertical"
+    android:targetCellWidth="2"
+    android:targetCellHeight="2"
+    android:updatePeriodMillis="1800000"
+    android:widgetCategory="home_screen" />

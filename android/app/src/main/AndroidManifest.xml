@@ -111,6 +111,38 @@
             android:name=".trace.TraceLabelPromptReceiver"
             android:exported="false" />
 
+        <!-- ══ Home-screen widgets (docs/06 §7a, docs/04_ANDROID_IMPLEMENTATION.md §10) ══
+             Two providers, 2x2 and 4x2, sharing one Glance widget so both sizes appear in
+             the picker and land at the size the user chose. Exported because the launcher
+             is a different app and has to be able to bind them.
+
+             The state a widget draws from is a projection derived from Room, never a
+             second copy of the parking, and it carries no coordinate, address or photo
+             (docs/09). -->
+        <receiver
+            android:name=".widget.ParkingCompactWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/parking_widget_compact_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.ParkingWideWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_label_wide">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/parking_widget_wide_info" />
+        </receiver>
+
         <!-- Must be exported to receive the system broadcasts. -->
         <receiver
             android:name=".detection.RegistrationRecoveryReceiver"

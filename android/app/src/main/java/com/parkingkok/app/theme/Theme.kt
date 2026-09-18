@@ -27,8 +27,12 @@ import com.parkingkok.app.ui.motion.rememberMotionEnabled
  * - accent       -> tertiary
  * - divider      -> outlineVariant
  * - danger       -> error
+ *
+ * The two schemes are `internal` rather than private because the Glance widget renders
+ * outside `MaterialTheme` and must read the same tokens — see `ParkingkokGlanceColors`.
+ * A second palette declared for the widget is exactly the scattering §2 forbids.
  */
-private val LightColors = lightColorScheme(
+internal val LightColors = lightColorScheme(
     primary = BrandPalette.LightPrimary,
     onPrimary = BrandPalette.OnPrimary,
     primaryContainer = BrandPalette.LightPrimaryContainer,
@@ -60,7 +64,7 @@ private val LightColors = lightColorScheme(
     onErrorContainer = BrandPalette.LightOnDangerContainer,
 )
 
-private val DarkColors = darkColorScheme(
+internal val DarkColors = darkColorScheme(
     primary = BrandPalette.DarkPrimary,
     onPrimary = BrandPalette.OnPrimary,
     primaryContainer = BrandPalette.DarkPrimaryContainer,
