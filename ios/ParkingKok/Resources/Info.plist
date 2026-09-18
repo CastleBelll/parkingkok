@@ -24,6 +24,13 @@
 	<string>주차한 위치를 지도에 표시하고 기록하기 위해 사용 중에만 위치를 확인합니다. 위치는 기기에만 저장되며 서버로 전송하지 않습니다.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>스마트 감지를 켜면 주차한 순간을 자동으로 알아차리기 위해 앱이 꺼져 있을 때도 위치 변화를 확인합니다. 정확한 주차 위치는 기기에만 저장되며 서버로 전송하지 않습니다.</string>
+	<!-- docs/04_IOS_IMPLEMENTATION.md §10 / the M2 photo contract: declared because the
+	     app really does open the camera (FR-007's 사진 촬영). There is no
+	     NSPhotoLibraryUsageDescription beside it on purpose — `PhotosPicker` runs out of
+	     process and returns only what the user picked, so the app never gains library
+	     access and must not ask for it. -->
+	<key>NSCameraUsageDescription</key>
+	<string>주차한 자리의 기둥 번호나 주변을 사진으로 남겨두기 위해 카메라를 사용합니다. 사진은 기기에만 저장되며 서버로 전송하지 않습니다.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>차량 이동과 도보 전환을 구분해 주차 시점을 추정하기 위해 동작 및 피트니스 데이터를 사용합니다. 이 데이터는 기기에만 저장됩니다.</string>
 	<key>PKAppEnvironment</key>

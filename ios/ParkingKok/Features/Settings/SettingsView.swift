@@ -44,7 +44,9 @@ struct SettingsView: View {
             isPresented: $isConfirmingDataDeletion,
             titleVisibility: .visible
         ) {
-            Button("전체 삭제", role: .destructive) { parkingModel?.deleteAllLocalData() }
+            Button("전체 삭제", role: .destructive) {
+                Task { await parkingModel?.deleteAllLocalData() }
+            }
             Button("취소", role: .cancel) {}
         } message: {
             Text("진행 중인 주차와 모든 기록이 사라져요. 되돌릴 수 없어요.")

@@ -29,10 +29,18 @@ struct RootView: View {
             guard composition == nil else { return }
             let live = ParkingComposition.live()
             composition = live
+            // DEV fixture first: it replaces the store, so refreshing before it runs
+            // would cache rows it is about to delete.
+            await live?.seedSampleDataIfRequested()
+            if let live {
+                // docs/04 §10 "periodic orphan cleanup". Once per launch, after the
+                // store has been read — the model refuses to sweep on a failed read,
+                // where an empty history would look like "delete every photo".
+                live.model.refresh()
+                await live.model.removeOrphanPhotos()
+            }
             #if PK_DEV
-                // The model has not been asked for anything yet; the detail route
-                // needs the seeded id.
-                live?.model.refresh()
+                // The sweep above already refreshed; the detail route needs the seeded id.
                 if let live, let route = ParkingSampleSeed.initialRoute(
                     activeParkingID: live.model.activeSession?.id
                 ) {

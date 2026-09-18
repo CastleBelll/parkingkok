@@ -55,7 +55,9 @@ struct HistoryView: View {
             isPresented: $isConfirmingDeleteAll,
             titleVisibility: .visible
         ) {
-            Button("전체 삭제", role: .destructive) { model.deleteAllLocalData() }
+            Button("전체 삭제", role: .destructive) {
+                Task { await model.deleteAllLocalData() }
+            }
             Button("취소", role: .cancel) {}
         } message: {
             Text("진행 중인 주차를 포함해 이 기기의 모든 주차 기록이 사라져요. 되돌릴 수 없어요.")

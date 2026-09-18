@@ -227,8 +227,9 @@ xcrun devicectl device process launch --device <device-udid> --terminate-existin
 
 | Variable | Effect |
 | --- | --- |
-| `PK_SEED_SAMPLE_PARKING=1` | **Replaces** the local store with the fixture behind `design-references/01-home-main.png`: B3 · A구역 142 parked 1시간 24분 ago, over four earlier records. Carries no coordinate. |
+| `PK_SEED_SAMPLE_PARKING=1` | **Replaces** the local store with the fixture behind `design-references/01-home-main.png`: B3 · A구역 142 parked 1시간 24분 ago, over four earlier records. The active parking carries a Seoul City Hall coordinate at 24m accuracy and a drawn placeholder photo, so `03-parking-detail.png` can be compared against a screen with the FR-008 map and the FR-007 photo panel populated. The four history records carry no coordinate, which is the FR-001 state. |
 | `PK_INITIAL_ROUTE=history\|settings\|detail\|diagnostics` | Opens the stack on that screen instead of home. |
+| `PK_SEED_WITHOUT_LOCATION=1` | Seeds the active parking with neither a coordinate nor a photo — the FR-001 state. Use it with `PK_INITIAL_ROUTE=detail` to photograph the degraded detail screen: no map card, `길찾기` dimmed and explained, empty photo panel. |
 
 Appearance for the light/dark pass:
 
@@ -239,6 +240,38 @@ xcrun devicectl device capture screenshot --device <device-udid> --destination s
 
 Capture a few seconds after launch — a screenshot taken during the launch animation
 catches the scroll view mid-bounce and looks like a safe-area bug that is not there.
+
+## M2 field check — map and photo
+
+Neither half of M2 is fully observable in the simulator: the simulator has no camera, so
+`사진 촬영` never appears there, and MapKit tiles render differently under the simulator's
+GPU. Both need the device.
+
+```sh
+xcodebuild -project ParkingKok.xcodeproj -scheme ParkingKok \
+  -configuration DEV -destination 'id=<device-udid>' \
+  PK_DEVELOPMENT_TEAM=<team-id> -allowProvisioningUpdates build
+
+xcrun devicectl device install app --device <device-udid> <path>/ParkingKok.app
+xcrun devicectl device process launch --device <device-udid> --terminate-existing \
+  --environment-variables '{"PK_SEED_SAMPLE_PARKING":"1","PK_INITIAL_ROUTE":"detail"}' \
+  com.parkingkok.app.dev
+xcrun devicectl device capture screenshot --device <device-udid> --destination detail.png
+```
+
+Check, against `design-references/03-parking-detail.png`:
+
+1. **Map.** Centred on the stored coordinate with the accuracy circle visible, captioned
+   `마지막으로 확인된 위치 · 약 24m 이내`. No wording anywhere on the screen claims the exact
+   car position (FR-008, docs/04 §9).
+2. **Hierarchy.** The hero floor is still the largest element; the map does not outweigh
+   it. Order is map → summary → facts → `길찾기`/`사진 보기` → 주차 사진 → 주차 종료.
+3. **Photo.** The panel shows the stored image and a `…에 저장됨` caption. Tapping it opens
+   the full-screen viewer.
+4. **길찾기.** Opens Apple Maps with walking directions. On a record with no coordinate
+   (open one from history) it is dimmed and explains why.
+5. **Camera.** `사진 추가` offers 사진 촬영 and 앨범에서 선택. Denying camera access must leave
+   the album path and the rest of the screen working.
 
 ## Lint
 
