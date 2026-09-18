@@ -37,7 +37,9 @@ final class MutableAnalyticsConsentStore: AnalyticsConsentStoring, @unchecked Se
 /// One sample of every case, so a contract test can walk the whole enum. Sample values are
 /// deliberately all-different, which is what lets the "no forbidden key" assertions below
 /// see every branch of the payload mapper.
-private enum EventSamples {
+/// Shared with `FirebaseWiringTests`, which holds the Firebase-shaped copy of every payload
+/// against the same contract.
+enum EventSamples {
     static let detection = DetectionProperties(
         confidenceBucket: .medium,
         driveDurationBucket: .min5To15,

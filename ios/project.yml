@@ -23,12 +23,36 @@ configFiles:
 fileGroups:
   - Config
 
+# docs/04_IOS_IMPLEMENTATION.md §14: SPM. The version is exact, never a range —
+# docs/16 §10 forbids dynamic versions, and an SDK that moves under CI is an SDK
+# whose privacy behaviour nobody re-checked.
+packages:
+  Firebase:
+    url: https://github.com/firebase/firebase-ios-sdk
+    exactVersion: 12.19.2
+
 targets:
   ParkingKok:
     type: application
     platform: iOS
     sources:
       - path: ParkingKok
+    dependencies:
+      # docs/07 §2 lists what this app may use. Analytics and Auth are the two this
+      # milestone wires; Firestore, Functions, App Check, Remote Config and Crashlytics
+      # are deliberately absent until the feature that needs them lands, and Storage is
+      # forbidden outright.
+      #
+      # `FirebaseAnalytics` alone, and deliberately **not** the
+      # `FirebaseAnalyticsIdentitySupport` product beside it: that one is what links
+      # AdSupport and collects the IDFA. docs/17 §3 fixes the property list and no
+      # advertising identifier is on it, and docs/17 §5 forbids invasive fingerprinting —
+      # so the app must not link it. This is the iOS counterpart of the
+      # `google_analytics_adid_collection_enabled=false` flag in the Android manifest.
+      - package: Firebase
+        product: FirebaseAnalytics
+      - package: Firebase
+        product: FirebaseAuth
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(PK_BUNDLE_ID)

@@ -19,6 +19,13 @@ class ParkingkokApplication : Application() {
         super.onCreate()
         val created = AppContainer(this)
         container = created
+        // docs/07 "동의". Its own coroutine because it collects for the life of the
+        // process — putting it in the block below would keep reconciliation from ever
+        // running. Nothing here awaits it: the Firebase SDK is already at the manifest
+        // default of "collection off", so a slow first read from disk cannot leak an event.
+        // Runs in every process, broadcast-started ones included: consent is one decision
+        // and the SDK must honour it wherever it happens to be loaded.
+        created.applicationScope.launch { created.analyticsCollectionGate.run() }
         // Process death leaves the Play services subscription intact, so this normally
         // resolves to "already registered" and issues no call at all.
         created.applicationScope.launch {

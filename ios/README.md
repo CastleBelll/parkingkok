@@ -231,6 +231,33 @@ xcrun devicectl device process launch --device <device-udid> --terminate-existin
 | `PK_INITIAL_ROUTE=history\|settings\|detail\|diagnostics` | Opens the stack on that screen instead of home. |
 | `PK_SEED_WITHOUT_LOCATION=1` | Seeds the active parking with neither a coordinate nor a photo — the FR-001 state. Use it with `PK_INITIAL_ROUTE=detail` to photograph the degraded detail screen: no map card, `길찾기` dimmed and explained, empty photo panel. |
 
+### Firebase self-check
+
+There is no backend feature yet, so nothing in the product calls `AnonymousIdentityProviding`,
+and neither the simulator nor `devicectl` can tap the 사용 통계 공유 toggle. This hook
+exercises both halves against the real Firebase project. It is inside `#if PK_DEV` and is
+the Android `--ez pk_firebase_selfcheck true` extra's counterpart.
+
+```sh
+xcrun devicectl device process launch --device <device-udid> --terminate-existing \
+  --environment-variables '{"PK_FIREBASE_SELFCHECK":"1"}' com.parkingkok.app.dev
+```
+
+| Variable | Effect |
+| --- | --- |
+| `PK_FIREBASE_SELFCHECK=1` | After the first frame, signs in anonymously and records `onboarding_completed` through the ordinary recorder. The uid lands in the `lifecycle` OSLog category. **The event still passes the consent gate**, so with 사용 통계 공유 off it is dropped — which is what makes this a check of the gate and not a way around it. |
+
+To read the SDK's own decision back:
+
+```sh
+xcrun simctl spawn <udid> log stream --predicate 'subsystem CONTAINS "com.google"' --style compact
+```
+
+With consent off, Firebase is never configured at all — `FirebaseBootstrap` is the only
+caller of `FirebaseApp.configure()` and nothing calls it — so the app container holds no
+`Library/Application Support/Google` directory and nothing is logged. That absence is the
+evidence, not a log line claiming it.
+
 Appearance for the light/dark pass:
 
 ```sh

@@ -5,6 +5,19 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+// `google-services.json` is never committed (docs/18 / .gitignore), so a checkout without
+// it — CI, and any fork PR — must still build. Applying the plugin unconditionally would
+// fail those builds outright, so it is applied only when the file is there.
+//
+// The Firebase SDK is compiled in either way. What the plugin contributes is the generated
+// `values/values.xml` that `FirebaseInitProvider` reads; without it no `FirebaseApp` is
+// created, `AppContainer` sees none, and analytics falls back to the local sink. That is
+// the same "no transport" behaviour this module shipped before Firebase existed, which is
+// why a config-less build stays honest rather than half-wired.
+if (file("google-services.json").exists()) {
+    apply(plugin = libs.plugins.google.services.get().pluginId)
+}
+
 android {
     namespace = "com.parkingkok.app"
     compileSdk = 36
@@ -72,6 +85,15 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.play.services.location)
+
+    // docs/07 §2: Analytics and Auth only. No Storage — the contract forbids it — and no
+    // Firestore/Functions/App Check/Remote Config until the feature that needs them lands.
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.analytics)
+    implementation(libs.firebase.auth)
+    // `Task.await()`, so the anonymous sign-in is an ordinary suspend call that a caller
+    // can cancel, instead of a listener the app has to remember to detach.
+    implementation(libs.kotlinx.coroutines.play.services)
 
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.tooling.preview)
