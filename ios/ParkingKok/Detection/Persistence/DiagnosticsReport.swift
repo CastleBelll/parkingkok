@@ -95,6 +95,10 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
     /// September 2026 field sessions were single events. §9: "조용히 버리지 마라."
     var traceNonViableDropCount: Int
     var traceUnlabeledSessionCount: Int
+    /// Closed sessions that were worth a label prompt and did not get one, because
+    /// notifications are not permitted. The number that tells a field weekend with no
+    /// labels apart from a field weekend with no travel. Same name on Android.
+    var traceLabelPromptSuppressedCount: Int
     /// Sessions carrying a gap measurement, so the three numbers below can be read as a
     /// sample size rather than as a claim about every trace on disk.
     var traceMeasuredSessionCount: Int
@@ -200,6 +204,7 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
         traceDroppedSessionCount = traceSummary.droppedSessionCount
         traceNonViableDropCount = traceSummary.nonViableDropCount
         traceUnlabeledSessionCount = traceSummary.unlabeledSessionCount
+        traceLabelPromptSuppressedCount = traceSummary.labelPromptSuppressedCount
         traceMeasuredSessionCount = traceSummary.measuredSessionCount
         traceMaxGapMillis = traceSummary.maxGapMillis
         traceSessionsOver10MinGapCount = traceSummary.sessionsOver10MinGapCount

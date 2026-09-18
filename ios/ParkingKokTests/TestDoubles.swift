@@ -213,6 +213,7 @@ final class StubTraceStore: TraceStoring, @unchecked Sendable {
     private var prunes: [UUID?] = []
     private var openId: UUID?
     private var discardedNonViableIds: [UUID] = []
+    private var suppressedPrompts = 0
 
     init(writeError: TraceStoreError? = nil) {
         self.writeError = writeError
@@ -232,6 +233,10 @@ final class StubTraceStore: TraceStoring, @unchecked Sendable {
 
     var nonViableDiscards: [UUID] {
         lock.withLock { discardedNonViableIds }
+    }
+
+    var labelPromptSuppressedCount: Int {
+        lock.withLock { suppressedPrompts }
     }
 
     func write(_ session: TraceSession) throws {
@@ -301,14 +306,57 @@ final class StubTraceStore: TraceStoring, @unchecked Sendable {
         }
     }
 
+    func recordLabelPromptSuppressed() {
+        lock.withLock { suppressedPrompts += 1 }
+    }
+
     func summary() -> TraceSummary {
         let stored = storedSessions
         return TraceSummary(
             sessionCount: stored.count,
             eventCount: stored.reduce(0) { $0 + $1.events.count },
             droppedSessionCount: 0,
-            unlabeledSessionCount: stored.filter { !$0.label.isLabeled }.count
+            unlabeledSessionCount: stored.filter { !$0.label.isLabeled }.count,
+            labelPromptSuppressedCount: suppressedPrompts
         )
+    }
+}
+
+/// Records what the recorder asked a label for, so "a closed session is prompted for" is
+/// observable without the notification service.
+final class StubLabelPrompter: TraceLabelPrompting, @unchecked Sendable {
+    private let lock = NSLock()
+    private var requested: [TraceLabelPrompt] = []
+
+    var prompts: [TraceLabelPrompt] {
+        lock.withLock { requested }
+    }
+
+    func requestPrompt(_ prompt: TraceLabelPrompt) {
+        lock.withLock { requested.append(prompt) }
+    }
+}
+
+/// Stands in for `UNUserNotificationCenter`, which a unit test cannot reach.
+final class StubLabelPromptDelivery: LabelPromptDelivering, @unchecked Sendable {
+    private let lock = NSLock()
+    private let authorized: Bool
+    private var delivered: [TraceLabelPrompt] = []
+
+    init(authorized: Bool) {
+        self.authorized = authorized
+    }
+
+    var deliveredPrompts: [TraceLabelPrompt] {
+        lock.withLock { delivered }
+    }
+
+    func isAuthorized() async -> Bool {
+        authorized
+    }
+
+    func deliver(_ prompt: TraceLabelPrompt) async {
+        lock.withLock { delivered.append(prompt) }
     }
 }
 

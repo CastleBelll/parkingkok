@@ -7,6 +7,7 @@ import com.parkingkok.app.domain.trace.LocationQualityBucket
 import com.parkingkok.app.domain.trace.TraceDeviceInfo
 import com.parkingkok.app.domain.trace.TraceEvent
 import com.parkingkok.app.domain.trace.TraceLabel
+import com.parkingkok.app.domain.trace.TraceLabelPrompt
 import com.parkingkok.app.domain.trace.TraceSession
 import com.parkingkok.app.domain.trace.TraceSessionBoundaryPolicy
 import com.parkingkok.app.domain.trace.TraceSessionSplit
@@ -80,6 +81,11 @@ class TraceRecorder(
     private val stateStore: DetectionStateStore,
     private val device: TraceDeviceInfo,
     private val sessionIdFactory: () -> String = { UUID.randomUUID().toString() },
+    /**
+     * Asked for a label whenever a viable session stops growing (§9 labelling). The no-op
+     * default is what every test that is not about prompting uses.
+     */
+    private val prompter: TraceLabelPrompting = NoOpTraceLabelPrompting,
 ) : TraceRecording {
 
     private val mutex = Mutex()
@@ -125,8 +131,9 @@ class TraceRecorder(
             // was open, so the next event cannot append to a finished trip.
             runBestEffort {
                 // Opting out is a rotation in every sense §9's viability rule cares about:
-                // nothing more can join this session, so "더 붙을 수 있다" stops applying.
-                discardIfNonViable(openSession())
+                // nothing more can join this session, so "더 붙을 수 있다" stops applying —
+                // including being worth a label prompt.
+                closeSession(openSession())
                 stateStore.setTraceOpenSessionId(null)
             }
         }
@@ -210,6 +217,7 @@ class TraceRecorder(
             discardedSessionCount = stateStore.readTraceDiscardedSessionCountOnce(),
             nonViableDropCount = stateStore.readTraceNonViableDropCountOnce(),
             unlabelledSessionCount = sessions.count { !it.isLabelled },
+            labelPromptSuppressedCount = stateStore.readTraceLabelPromptSuppressedCountOnce(),
             measuredSessionCount = measured.size,
             maxGapMillis = measured.maxOfOrNull { it.maxGapMillis } ?: 0L,
             sessionsOver10MinGapCount = measured.count { it.gapsOver10MinCount > 0 },
@@ -249,7 +257,7 @@ class TraceRecorder(
                     // Only now that the replacement is durable and the pointer has moved:
                     // a write failure above leaves the closing session on disk, and the
                     // next event rotates past it and judges it again.
-                    if (rotation != null) discardIfNonViable(open)
+                    if (rotation != null) closeSession(open)
                 }
                 val discarded = store.prune(keepSessionId = updated.sessionId)
                 if (discarded > 0) stateStore.addTraceDiscardedSessions(discarded)
@@ -258,7 +266,12 @@ class TraceRecorder(
     }
 
     /**
-     * Applies §9's viability rule to a session that has stopped growing.
+     * Settles a session that has stopped growing: §9's viability rule first, then the label
+     * prompt on whatever survived it.
+     *
+     * A discarded session is never prompted for — the file is about to be deleted, so the
+     * answer would have nowhere to go. That is also why the two decisions are one function
+     * rather than two calls a future edit could reorder.
      *
      * **Rotation — or the user closing recording — is the only moment this may be asked.**
      * Every session passes through one event on its way to two, and on Android the open
@@ -275,13 +288,21 @@ class TraceRecorder(
      * session that was just thrown away. The only pointer naming the deleted file is the
      * open-session id, and both callers move it in the same critical section.
      */
-    private suspend fun discardIfNonViable(closing: TraceSession?) {
-        if (closing == null || TraceSessionBoundaryPolicy.isViable(closing.events.size)) return
-        // A file already gone means a previous call did it, and the counter must not move
-        // twice for the same session.
-        if (!store.delete(closing.sessionId)) return
-        stateStore.addTraceNonViableDrops(1)
-        Log.i(TAG, "trace discarded a non-viable session: ${closing.events.size} event(s)")
+    private suspend fun closeSession(closing: TraceSession?) {
+        if (closing == null) return
+
+        if (!TraceSessionBoundaryPolicy.isViable(closing.events.size)) {
+            // A file already gone means a previous call did it, and the counter must not
+            // move twice for the same session.
+            if (!store.delete(closing.sessionId)) return
+            stateStore.addTraceNonViableDrops(1)
+            Log.i(TAG, "trace discarded a non-viable session: ${closing.events.size} event(s)")
+            return
+        }
+
+        // `of` refuses a session with no motion event: three location fixes are not a
+        // question anyone could answer (§9 labelling).
+        TraceLabelPrompt.of(closing)?.let { prompter.requestPrompt(it) }
     }
 
     private suspend fun openSession(): TraceSession? =

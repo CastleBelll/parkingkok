@@ -2,6 +2,7 @@ package com.parkingkok.app
 
 import android.content.Context
 import android.os.Build
+import androidx.core.app.NotificationManagerCompat
 import com.parkingkok.app.core.Clock
 import com.parkingkok.app.core.SystemClock
 import com.parkingkok.app.data.DetectionStateStore
@@ -15,6 +16,8 @@ import com.parkingkok.app.diagnostics.DiagnosticsExporter
 import com.parkingkok.app.diagnostics.FileDiagnosticsReportStore
 import com.parkingkok.app.domain.trace.TraceDeviceInfo
 import com.parkingkok.app.trace.FileTraceStore
+import com.parkingkok.app.trace.NotificationLabelPromptDelivery
+import com.parkingkok.app.trace.TraceLabelPrompter
 import com.parkingkok.app.trace.TraceRecorder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -54,6 +57,13 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
             osVersion = "${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})",
             appVersion = APP_VERSION,
         ),
+        // §9's labelling problem: the in-app screen went unused for three days because the
+        // user carries the phone without opening the app. P0 instrumentation — this wiring
+        // and the two `trace/TraceLabelPrompt*` files go together when it is removed.
+        prompter = TraceLabelPrompter(
+            delivery = NotificationLabelPromptDelivery(appContext),
+            stateStore = detectionStateStore,
+        ),
     )
 
     val locationSessionController: FusedLocationSessionController = FusedLocationSessionController(
@@ -77,6 +87,17 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
     )
 
     fun hasActivityRecognitionPermission(): Boolean = registrar.hasPermission()
+
+    /**
+     * Whether a label prompt would be shown at all.
+     *
+     * Covers more than the runtime grant: notifications switched off for the app, or the
+     * diagnostics channel blocked, read the same way here as they do in
+     * [com.parkingkok.app.trace.NotificationLabelPromptDelivery], which is the point —
+     * the screen and the poster must not disagree about whether prompting works.
+     */
+    fun hasNotificationPermission(): Boolean =
+        NotificationManagerCompat.from(appContext).areNotificationsEnabled()
 
     private companion object {
         /**
