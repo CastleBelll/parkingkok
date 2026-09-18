@@ -66,6 +66,9 @@ struct RehydrationSnapshot: Sendable, Equatable {
     var movementEvidenceRejectReason: MovementEvidenceRejection?
     var drivingOutlierDropCount = 0
     var drivingDistanceMeters: Double = 0
+    /// Legs §7's noise floor kept out of `drivingDistanceMeters`. Large next to a distance
+    /// that never grows means the floor is wrong for this device, not that nothing moved.
+    var drivingDistanceNoiseFloorRejectCount = 0
     /// Accepted `lastReliableLocation` updates. Zero with a non-zero fix count means the
     /// §6 gate is set wrong for this device.
     var reliableLocationUpdateCount = 0
@@ -246,6 +249,7 @@ actor BackgroundCoordinator {
         snapshot.movementEvidenceRejectReason = evidence.movementEvidenceRejection
         snapshot.drivingOutlierDropCount = evidence.outlierCount
         snapshot.drivingDistanceMeters = evidence.distanceMeters
+        snapshot.drivingDistanceNoiseFloorRejectCount = evidence.distanceNoiseFloorRejectCount
 
         if accepted {
             updateReliableLocation(with: fix, now: now)
@@ -432,6 +436,7 @@ actor BackgroundCoordinator {
         snapshot.movementEvidenceRejectReason = nil
         snapshot.drivingOutlierDropCount = 0
         snapshot.drivingDistanceMeters = 0
+        snapshot.drivingDistanceNoiseFloorRejectCount = 0
         snapshot.captureFailure = nil
 
         await locationCapture?.start()

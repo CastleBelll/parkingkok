@@ -15,8 +15,9 @@ import Foundation
 /// coordinate-bearing ones are deliberately absent, and a test on the encoded bytes
 /// enforces it. **Adding a coordinate here is never the fix for a failing test.**
 struct DiagnosticsReport: Sendable, Equatable, Codable {
-    /// Bumped to 4 by the §7 movement-evidence instrumentation.
-    static let schemaVersion = 4
+    /// Bumped to 5 by the §7 distance-clause instrumentation; 4 was the movement-evidence
+    /// counters before it.
+    static let schemaVersion = 5
 
     var schemaVersion: Int = DiagnosticsReport.schemaVersion
     var generatedAt: Date
@@ -68,6 +69,9 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
     var movementEvidenceRejectReason: String?
     var drivingOutlierDropCount: Int
     var drivingDistanceMeters: Double
+    /// Legs §7's noise floor kept out of `drivingDistanceMeters`. Same name and meaning on
+    /// Android, so one number can be compared across a pair of field runs.
+    var distanceNoiseFloorRejectCount: Int
     /// How often a fix was accepted as `lastReliableLocation` — never which fix.
     var reliableLocationUpdateCount: Int
     var reliableLocationRejectCount: Int
@@ -174,6 +178,7 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
         movementEvidenceRejectReason = snapshot.movementEvidenceRejectReason?.rawValue
         drivingOutlierDropCount = snapshot.drivingOutlierDropCount
         drivingDistanceMeters = snapshot.drivingDistanceMeters
+        distanceNoiseFloorRejectCount = snapshot.drivingDistanceNoiseFloorRejectCount
         reliableLocationUpdateCount = snapshot.reliableLocationUpdateCount
         reliableLocationRejectCount = snapshot.reliableLocationRejectCount
         lastReliableLocationRejection = snapshot.lastReliableLocationRejection?.rawValue

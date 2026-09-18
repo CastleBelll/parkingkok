@@ -287,6 +287,16 @@ private fun SessionCard(session: LocationSessionState, onCaptureModeChange: (Loc
             stringResource(R.string.diagnostics_session_movement_reject),
             movement?.rejectReason?.wire ?: stringResource(R.string.diagnostics_absent),
         )
+        // §7's distance clause and what its noise floor kept out of it. The pair matters:
+        // a distance that never grows is only readable next to the count of legs refused.
+        LabelledValue(
+            stringResource(R.string.diagnostics_session_travel_distance),
+            "%.0f m / %d".format(
+                Locale.US,
+                session.evidence?.travelDistanceMeters ?: 0.0,
+                session.evidence?.distanceNoiseFloorRejectCount ?: 0,
+            ),
+        )
         session.lastStopReason?.let {
             LabelledValue(stringResource(R.string.diagnostics_session_stop_reason), it.name)
         }

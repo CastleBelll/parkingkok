@@ -6,7 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Replays the September 2026 iOS field traces through [MovementEvidence].
+ * Replays the September 2026 iOS field traces through [DrivingSessionEvidence].
  *
  * ### Why an iOS trace on Android
  * The trace format is the platform-neutral contract in
@@ -41,13 +41,20 @@ class FieldTraceReplayTest {
     /**
      * Rebuilds one bounded run and folds it in. **No fix carries a speed**, because not
      * one of the 87 recovered bounded fixes did.
+     *
+     * The whole session evidence rather than the movement clause alone, because §7's two
+     * measured clauses share a noise floor and this file is where they are checked against
+     * the same recorded metres.
      */
-    private fun replay(run: List<Sample>): MovementEvidence {
+    private fun replay(run: List<Sample>): DrivingSessionEvidence {
         var metersNorth = 0.0
-        var evidence = MovementEvidence()
+        var evidence = DrivingSessionEvidence(
+            vehicleFirstSeenAtMillis = start,
+            lastVehicleEvidenceAtMillis = start,
+        )
         for (sample in run) {
             metersNorth += sample.stepMeters
-            evidence = evidence.recording(
+            evidence = evidence.recordingFix(
                 TestGeo.sample(
                     atMillis = start + sample.atMillis,
                     metersNorth = metersNorth,
@@ -59,15 +66,29 @@ class FieldTraceReplayTest {
         return evidence
     }
 
-    private fun totals(runs: List<List<Sample>>): MovementEvidence =
-        runs.map(::replay).fold(MovementEvidence()) { acc, run ->
-            acc.copy(
-                movingSampleCount = acc.movingSampleCount + run.movingSampleCount,
-                derivedMovingSampleCount = acc.derivedMovingSampleCount + run.derivedMovingSampleCount,
-                speedAvailableCount = acc.speedAvailableCount + run.speedAvailableCount,
-                speedMissingCount = acc.speedMissingCount + run.speedMissingCount,
+    /** Run totals. A bounded run is its own session, so each starts from a clean anchor. */
+    private fun totals(runs: List<List<Sample>>): Totals =
+        runs.map(::replay).fold(Totals()) { acc, run ->
+            Totals(
+                movingSampleCount = acc.movingSampleCount + run.movement.movingSampleCount,
+                derivedMovingSampleCount =
+                    acc.derivedMovingSampleCount + run.movement.derivedMovingSampleCount,
+                speedAvailableCount = acc.speedAvailableCount + run.movement.speedAvailableCount,
+                speedMissingCount = acc.speedMissingCount + run.movement.speedMissingCount,
+                travelDistanceMeters = acc.travelDistanceMeters + run.travelDistanceMeters,
+                distanceNoiseFloorRejectCount =
+                    acc.distanceNoiseFloorRejectCount + run.distanceNoiseFloorRejectCount,
             )
         }
+
+    private data class Totals(
+        val movingSampleCount: Int = 0,
+        val derivedMovingSampleCount: Int = 0,
+        val speedAvailableCount: Int = 0,
+        val speedMissingCount: Int = 0,
+        val travelDistanceMeters: Double = 0.0,
+        val distanceNoiseFloorRejectCount: Int = 0,
+    )
 
     @Test
     fun `not one recorded bounded fix carried a speed, so the speed-only rule scored zero`() {
@@ -119,12 +140,51 @@ class FieldTraceReplayTest {
         val wholeRun = replay(run)
 
         // Assert — 2·sqrt(24.9² + 521²) ≈ 1043 m against 0.05 m of measured displacement.
-        assertEquals(0, throughCoarseFix.derivedMovingSampleCount)
-        assertEquals(MovementEvidenceRejectReason.ACCURACY_TOO_COARSE, throughCoarseFix.rejectReason)
+        assertEquals(0, throughCoarseFix.movement.derivedMovingSampleCount)
+        assertEquals(
+            MovementEvidenceRejectReason.ACCURACY_TOO_COARSE,
+            throughCoarseFix.movement.rejectReason,
+        )
         // And the 47.9 m fix, measured against the 24.9 m anchor 58 s earlier, clears a
         // 108 m floor at 57 km/h — which is simply the train.
-        assertEquals(1, wholeRun.derivedMovingSampleCount)
-        assertNull(wholeRun.rejectReason)
+        assertEquals(1, wholeRun.movement.derivedMovingSampleCount)
+        assertNull(wholeRun.movement.rejectReason)
+    }
+
+    @Test
+    fun `the noise floor keeps recorded jitter out of the accumulated distance`() {
+        // Arrange — every recorded step is under §5's 90 m/s cap, so the pre-unification
+        // iOS rule accumulated all of it and the pre-unification Android rule, gated on
+        // §6's 35 m bar, accumulated almost none of it.
+        val recordedSteps = SUBWAY_COMMUTE.flatten().sumOf { it.stepMeters }
+
+        // Act
+        val subway = totals(SUBWAY_COMMUTE)
+        val walk = totals(OFFICE_WALK)
+
+        // Assert — these exact figures are asserted on iOS too; a difference is a parity
+        // defect, not a tuning difference.
+        assertEquals(4_120.30, recordedSteps, 0.01)
+        assertEquals(3_966.49, subway.travelDistanceMeters, 0.1)
+        assertEquals(50, subway.distanceNoiseFloorRejectCount)
+        assertEquals(43.82, walk.travelDistanceMeters, 0.1)
+        assertEquals(33, walk.distanceNoiseFloorRejectCount)
+    }
+
+    @Test
+    fun `the stationary office runs accumulate nothing at all`() {
+        // Arrange — runs 1 and 2 are 30 fixes at a desk before the commute, 26.5 m of
+        // jitter between them. Under the old iOS rule every centimetre of that was
+        // distance towards §7's 800 m clause.
+        val atTheDesk = SUBWAY_COMMUTE.take(2)
+
+        // Act
+        val evidence = totals(atTheDesk)
+
+        // Assert
+        assertEquals(26.47, atTheDesk.flatten().sumOf { it.stepMeters }, 0.01)
+        assertEquals(0.0, evidence.travelDistanceMeters, 0.001)
+        assertEquals(28, evidence.distanceNoiseFloorRejectCount)
     }
 
     private companion object {

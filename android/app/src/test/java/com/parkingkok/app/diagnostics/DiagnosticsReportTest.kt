@@ -104,15 +104,17 @@ class DiagnosticsReportTest {
     }
 
     @Test
-    fun `the movement clause is exported as counts, and its anchor never is`() {
-        // Arrange — §7's movement evidence is the one part of the driving guard that has
-        // to hold a position to do its job, so this is where a coordinate could escape.
-        // The session below has travelled underground: no speed on any fix, two pairs
-        // decided by the distance fallback, and an anchor holding a real position.
+    fun `the measured clauses are exported as counts, and their anchors never are`() {
+        // Arrange — §7's two measured clauses are the only parts of the driving guard that
+        // have to hold a position to do their job, so this is where a coordinate could
+        // escape. The session below has travelled underground: no speed on any fix, two
+        // pairs decided by the distance fallback, and both anchors holding a real position.
         val evidence = DrivingSessionEvidence(
             vehicleFirstSeenAtMillis = now - 600_000L,
             lastVehicleEvidenceAtMillis = now - 30_000L,
             travelDistanceMeters = 4_100.0,
+            distanceNoiseFloorRejectCount = 46,
+            distanceAnchor = MovementAnchor(now - 20_000L, 37.111_222_3, 127.444_555_6, 120f),
             movement = MovementEvidence(
                 movingSampleCount = 2,
                 speedAvailableCount = 0,
@@ -135,9 +137,15 @@ class DiagnosticsReportTest {
         assertEquals(2, exported.derivedMovingSampleCount)
         assertEquals("accuracyTooCoarse", exported.movementEvidenceRejectReason)
         assertEquals(1, exported.movementOutlierCount)
-        // And the anchor stayed behind.
+        // The distance clause, as the metres it accumulated and the legs it refused. The
+        // pair is the point: metres alone cannot say whether the floor is set wrong.
+        assertEquals(4_100.0, requireNotNull(exported.travelDistanceMeters), 0.001)
+        assertEquals(46, exported.distanceNoiseFloorRejectCount)
+        // And both anchors stayed behind.
         assertFalse(encoded.contains("37.123"))
         assertFalse(encoded.contains("127.987"))
+        assertFalse(encoded.contains("37.111"))
+        assertFalse(encoded.contains("127.444"))
         assertFalse(encoded.lowercase().contains("anchor"))
     }
 

@@ -156,6 +156,19 @@ object MovementEvidencePolicy {
      */
     const val MAX_BASELINE_MILLIS: Long = 180_000L
 
+    /**
+     * The displacement a pair of fixes has to clear before it describes travel rather than
+     * noise.
+     *
+     * Shared with the `distance >= 800m` accumulation in [DrivingSessionEvidence]: docs/05
+     * §7 puts both clauses behind one floor, so there is one definition of it.
+     */
+    fun noiseFloorMeters(anchor: MovementAnchor, fix: LocationSample): Double {
+        val combinedVariance = anchor.horizontalAccuracyM.toDouble().squared() +
+            fix.horizontalAccuracyM.toDouble().squared()
+        return NOISE_FLOOR_SIGMAS * sqrt(combinedVariance)
+    }
+
     fun evaluate(anchor: MovementAnchor, fix: LocationSample): MovementEvidenceOutcome {
         val baselineMillis = fix.atMillis - anchor.atMillis
         if (baselineMillis > MAX_BASELINE_MILLIS) {
@@ -167,9 +180,7 @@ object MovementEvidencePolicy {
 
         val displacement =
             GeoDistance.meters(anchor.latitude, anchor.longitude, fix.latitude, fix.longitude)
-        val combinedVariance = anchor.horizontalAccuracyM.toDouble().squared() +
-            fix.horizontalAccuracyM.toDouble().squared()
-        if (displacement < NOISE_FLOOR_SIGMAS * sqrt(combinedVariance)) {
+        if (displacement < noiseFloorMeters(anchor, fix)) {
             return MovementEvidenceOutcome.Rejected(MovementEvidenceRejectReason.ACCURACY_TOO_COARSE)
         }
 
@@ -229,13 +240,25 @@ data class MovementEvidence(
      */
     fun recording(sample: LocationSample): MovementEvidence {
         if (!sample.quality.isValid) return this
-        val previous = lastFix
-        if (previous != null && !LocationOutlierPolicy.isPlausibleStep(previous, sample)) {
+        if (!admits(sample)) {
             // Deliberately does not advance [lastFix]: anchoring on a jump would make the
             // *next* legitimate fix look like a jump too.
             return copy(outlierCount = outlierCount + 1)
         }
         return withFixAccepted(sample).copy(lastFix = MovementAnchor.of(sample))
+    }
+
+    /**
+     * Whether this fix will be folded in rather than counted as an implausible jump (§5).
+     *
+     * Public because §7's distance clause has to reach the same verdict on the same pair:
+     * a GPS jump must not become metres any more than it may become movement evidence, and
+     * asking this one question twice is what keeps it one gate rather than two.
+     */
+    fun admits(sample: LocationSample): Boolean {
+        if (!sample.quality.isValid) return false
+        val previous = lastFix ?: return true
+        return LocationOutlierPolicy.isPlausibleStep(previous, sample)
     }
 
     /**
