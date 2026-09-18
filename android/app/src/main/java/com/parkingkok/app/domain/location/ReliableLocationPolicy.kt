@@ -49,11 +49,7 @@ object LocationFreshnessPolicy {
 sealed interface ReliableLocationDecision {
 
     /** The fix is the new `lastReliableLocation`. */
-    data class Accepted(
-        val location: ReliableLocation,
-        /** Metres between the previous reliable fix and this one, or null if there was none. */
-        val movedMeters: Double?,
-    ) : ReliableLocationDecision
+    data class Accepted(val location: ReliableLocation) : ReliableLocationDecision
 
     data class Rejected(val reason: LocationDropReason) : ReliableLocationDecision
 }
@@ -118,12 +114,7 @@ object ReliableLocationSelector {
         }
         if (rejection != null) return ReliableLocationDecision.Rejected(rejection)
 
-        return ReliableLocationDecision.Accepted(
-            location = sample.toReliableLocation(),
-            movedMeters = current?.let {
-                GeoDistance.meters(it.latitude, it.longitude, sample.latitude, sample.longitude)
-            },
-        )
+        return ReliableLocationDecision.Accepted(location = sample.toReliableLocation())
     }
 
     private fun isImprovement(current: ReliableLocation, sample: LocationSample): Boolean = when {

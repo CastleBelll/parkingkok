@@ -30,8 +30,16 @@ struct DrivingEvidence: Sendable, Equatable {
     let startedAt: Date
     /// Newest Core Motion observation that said `automotive`.
     private(set) var lastVehicleEvidenceAt: Date?
-    /// Metres accumulated across plausible steps only; outliers never land here.
+    /// Metres accumulated for §7's `distance >= 800m` clause, one anchored leg at a time.
+    /// Outliers never land here, and neither does jitter: see `accumulateDistance(to:)`.
     private(set) var distanceMeters: Double = 0
+    /// Legs the noise floor kept out of `distanceMeters`.
+    ///
+    /// Instrumented rather than silently dropped. A session that accumulates nothing
+    /// underground and one that never moved look identical from the outside, and this is
+    /// the field that separates them: a count far above the accepted legs says the floor
+    /// is wrong for this device, not that the car stood still.
+    private(set) var distanceNoiseFloorRejectCount: Int = 0
     /// Fixes that showed the device actually travelling. docs/05 §7 requires movement
     /// evidence *and* forbids confirming on one event, so this is a count, not a flag.
     ///
@@ -60,6 +68,11 @@ struct DrivingEvidence: Sendable, Equatable {
     /// (`MovementEvidencePolicy.minimumBaseline`), so at 1 Hz it spans many fixes.
     /// In memory only, exactly like `lastFix`.
     private var movementAnchor: LocationFix?
+    /// The fix `distanceMeters` measures its next leg from. A second anchor rather than a
+    /// reuse of `movementAnchor`, because §7 asks the two clauses different questions:
+    /// distance has no baseline bounds and no speed gate, only the noise floor they share.
+    /// In memory only, exactly like `lastFix`.
+    private var distanceAnchor: LocationFix?
     /// When the guard in `DrivingConfirmationPolicy` fired for this session. Latched so
     /// confirmation is reported — and checkpointed — exactly once.
     private(set) var confirmedAt: Date?
@@ -104,12 +117,43 @@ struct DrivingEvidence: Sendable, Equatable {
                 // the *next* legitimate fix look like a jump too.
                 return false
             }
-            distanceMeters += GeoDistance.meters(from: previous, to: fix)
         }
         lastFix = fix
 
+        accumulateDistance(to: fix)
         recordMovementEvidence(from: fix)
         return true
+    }
+
+    /// docs/05 §7 `distance >= 800m`, under the same noise floor as movement evidence.
+    ///
+    /// A leg is added only when its displacement clears the combined positional
+    /// uncertainty of the two fixes. The §5 outlier cap alone is no gate at all on a
+    /// coarse fix: two fixes accurate to 1000 m recorded 60 s and 900 m apart read as
+    /// 15 m/s and pass it, and that is jitter, not travel.
+    ///
+    /// Failing keeps the anchor, exactly as the movement clause does, so slow travel still
+    /// accumulates — one leg later, measured from further back. Clearing it advances the
+    /// anchor, which is what stops the same metres being counted twice.
+    ///
+    /// The baseline bounds and the speed gate stay out of this deliberately. Those ask
+    /// whether a leg looks like travel, which is the movement clause's question; this one
+    /// only asks how far.
+    private mutating func accumulateDistance(to fix: LocationFix) {
+        guard let anchor = distanceAnchor else {
+            // The first fix of a session has nothing to measure from: the one before it
+            // belongs to the previous trip, and counting that gap would credit this drive
+            // with the whole distance since the last parking spot.
+            distanceAnchor = fix
+            return
+        }
+        let displacement = GeoDistance.meters(from: anchor, to: fix)
+        guard displacement >= MovementEvidencePolicy.noiseFloor(from: anchor, to: fix) else {
+            distanceNoiseFloorRejectCount += 1
+            return
+        }
+        distanceMeters += displacement
+        distanceAnchor = fix
     }
 
     /// docs/05 §7 "movement evidence consistent with travel", for one accepted fix.
@@ -251,6 +295,16 @@ enum MovementEvidencePolicy {
     /// vehicle was last seen — so they were never required to match.
     static let maximumBaseline: TimeInterval = 180
 
+    /// The displacement a pair of fixes has to clear before it describes travel rather
+    /// than noise.
+    ///
+    /// Shared with the `distance >= 800m` accumulation in `DrivingEvidence`: docs/05 §7
+    /// puts both clauses behind one floor, so there is one definition of it.
+    static func noiseFloor(from anchor: LocationFix, to fix: LocationFix) -> Double {
+        let combinedVariance = anchor.horizontalAccuracy.squared + fix.horizontalAccuracy.squared
+        return noiseFloorSigmas * combinedVariance.squareRoot()
+    }
+
     static func evaluate(from anchor: LocationFix, to fix: LocationFix) -> MovementEvidenceOutcome {
         let baseline = fix.timestamp.timeIntervalSince(anchor.timestamp)
         if baseline > maximumBaseline {
@@ -261,9 +315,9 @@ enum MovementEvidencePolicy {
         guard baseline >= minimumBaseline else { return .inconclusive }
 
         let displacement = GeoDistance.meters(from: anchor, to: fix)
-        let combinedVariance = anchor.horizontalAccuracy.squared + fix.horizontalAccuracy.squared
-        let noiseFloor = noiseFloorSigmas * combinedVariance.squareRoot()
-        guard displacement >= noiseFloor else { return .rejected(.accuracyTooCoarse) }
+        guard displacement >= noiseFloor(from: anchor, to: fix) else {
+            return .rejected(.accuracyTooCoarse)
+        }
 
         guard displacement / baseline >= DrivingConfirmationPolicy.movingSpeedThreshold else {
             return .rejected(.distanceTooShort)

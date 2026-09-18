@@ -41,6 +41,7 @@
     <string name="diagnostics_session_moving_samples">moving / derived samples</string>
     <string name="diagnostics_session_speed_available">speed present / missing</string>
     <string name="diagnostics_session_movement_reject">movement reject reason</string>
+    <string name="diagnostics_session_travel_distance">travel distance / noise floor rejects</string>
     <string name="diagnostics_session_stop_reason">last stop reason</string>
     <string name="diagnostics_session_failure">last failure</string>
     <string name="diagnostics_session_start">캡처 시작</string>

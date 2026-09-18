@@ -52,12 +52,24 @@ struct FieldTraceReplayTests {
         return evidence
     }
 
-    private func totals(_ runs: [[Sample]]) -> (moving: Int, derived: Int, speedAvailable: Int, speedMissing: Int) {
-        runs.map(replay).reduce(into: (0, 0, 0, 0)) {
-            $0.0 += $1.movingSampleCount
-            $0.1 += $1.derivedMovingSampleCount
-            $0.2 += $1.speedAvailableCount
-            $0.3 += $1.speedMissingCount
+    /// Run totals. A bounded run is its own session, so each starts from a clean anchor.
+    private struct Totals {
+        var moving = 0
+        var derived = 0
+        var speedAvailable = 0
+        var speedMissing = 0
+        var distanceMeters = 0.0
+        var distanceNoiseFloorRejects = 0
+    }
+
+    private func totals(_ runs: [[Sample]]) -> Totals {
+        runs.map(replay).reduce(into: Totals()) {
+            $0.moving += $1.movingSampleCount
+            $0.derived += $1.derivedMovingSampleCount
+            $0.speedAvailable += $1.speedAvailableCount
+            $0.speedMissing += $1.speedMissingCount
+            $0.distanceMeters += $1.distanceMeters
+            $0.distanceNoiseFloorRejects += $1.distanceNoiseFloorRejectCount
         }
     }
 
@@ -133,6 +145,46 @@ struct FieldTraceReplayTests {
         // And the 47.9 m fix, measured against the 24.9 m anchor, clears a 108 m floor.
         #expect(wholeRun.derivedMovingSampleCount == 1)
         #expect(wholeRun.movementEvidenceRejection == nil)
+    }
+
+    // MARK: - The §7 distance clause, under the same noise floor
+
+    /// The other half of the 2026-09-18 unification, on the same recorded metres.
+    @Test("The noise floor keeps recorded jitter out of the accumulated distance")
+    func distanceAccumulatesOnlyWhatClearsTheFloor() {
+        // Arrange — every recorded step is under §5's 90 m/s cap, so the pre-unification
+        // rule here accumulated all of it, and Android's ≤35 m gate accumulated almost
+        // none of it.
+        let recordedSteps = Self.subwayCommute.joined().reduce(0) { $0 + $1.step }
+
+        // Act
+        let subway = totals(Self.subwayCommute)
+        let walk = totals(Self.officeWalk)
+
+        // Assert — these exact figures are asserted on Android too; a difference is a
+        // parity defect, not a tuning difference.
+        #expect(abs(recordedSteps - 4120.30) < 0.01)
+        #expect(abs(subway.distanceMeters - 3966.49) < 0.1)
+        #expect(subway.distanceNoiseFloorRejects == 50)
+        #expect(abs(walk.distanceMeters - 43.82) < 0.1)
+        #expect(walk.distanceNoiseFloorRejects == 33)
+    }
+
+    /// The control that says the floor is doing something, not merely passing everything.
+    @Test("The stationary office runs accumulate nothing at all")
+    func deskJitterAccumulatesNothing() {
+        // Arrange — runs 1 and 2 are 30 fixes at a desk before the commute, 26.5 m of
+        // jitter between them. Under the old rule every centimetre of that was distance
+        // towards §7's 800 m clause.
+        let atTheDesk = Array(Self.subwayCommute.prefix(2))
+
+        // Act
+        let evidence = totals(atTheDesk)
+
+        // Assert
+        #expect(abs(atTheDesk.joined().reduce(0) { $0 + $1.step } - 26.47) < 0.01)
+        #expect(evidence.distanceMeters == 0)
+        #expect(evidence.distanceNoiseFloorRejects == 28)
     }
 
     // MARK: - Fixtures

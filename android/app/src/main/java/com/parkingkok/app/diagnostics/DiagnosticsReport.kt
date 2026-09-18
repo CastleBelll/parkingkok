@@ -69,6 +69,17 @@ data class DiagnosticsReport(
     val lastVehicleEvidenceAtMillis: Long?,
     val reliableSampleCount: Int?,
     val maxSpeedMps: Float?,
+    /** Metres §7's `distance >= 800m` clause has accumulated, one anchored leg at a time. */
+    val travelDistanceMeters: Double?,
+    /**
+     * Legs the §7 noise floor kept out of [travelDistanceMeters].
+     *
+     * Same name and meaning on iOS, so one number compares across a pair of field runs. A
+     * count far above the accepted legs says the floor is wrong for this device, not that
+     * the car stood still — which is the question the old ≤35 m gate could not answer at
+     * all, because it rejected almost every underground fix before it got here.
+     */
+    val distanceNoiseFloorRejectCount: Int?,
 
     /**
      * §7's movement clause, as counts rather than as a verdict.
@@ -132,7 +143,7 @@ data class DiagnosticsReport(
 
     companion object {
         /** Bump whenever the shape changes, so an older payload is rejected, not half-read. */
-        const val SCHEMA_VERSION: Int = 3
+        const val SCHEMA_VERSION: Int = 4
 
         @Suppress("LongParameterList")
         fun from(
@@ -181,6 +192,8 @@ data class DiagnosticsReport(
                 lastVehicleEvidenceAtMillis = evidence?.lastVehicleEvidenceAtMillis,
                 reliableSampleCount = evidence?.reliableSampleCount,
                 maxSpeedMps = evidence?.maxSpeedMps,
+                travelDistanceMeters = evidence?.travelDistanceMeters,
+                distanceNoiseFloorRejectCount = evidence?.distanceNoiseFloorRejectCount,
                 movingSampleCount = evidence?.movement?.movingSampleCount,
                 speedAvailableCount = evidence?.movement?.speedAvailableCount,
                 speedMissingCount = evidence?.movement?.speedMissingCount,
