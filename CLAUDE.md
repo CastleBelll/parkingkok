@@ -1,4 +1,4 @@
-# CLAUDE.md — 주차콕 iOS + Android 개발 지침
+# CLAUDE.md — 주차핀 iOS + Android 개발 지침
 
 ## Document Priority
 1. `docs/00_CORE_RULES.md`
@@ -13,7 +13,7 @@
 10. ADR
 
 ## Product Goal
-주차콕은 사용자가 차량을 주차한 상황을 스마트하게 감지하고, 마지막으로 신뢰 가능한 위치와 주차 시각을 로컬에 기록하며, 사용자는 층/구역 정보만 최소 입력하는 iOS/Android 생활 유틸리티다.
+주차핀은 사용자가 차량을 주차한 상황을 스마트하게 감지하고, 마지막으로 신뢰 가능한 위치와 주차 시각을 로컬에 기록하며, 사용자는 층/구역 정보만 최소 입력하는 iOS/Android 생활 유틸리티다.
 
 ## Platform Strategy
 - iOS: SwiftUI + Swift 6, iOS 18+

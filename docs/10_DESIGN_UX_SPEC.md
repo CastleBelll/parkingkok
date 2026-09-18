@@ -1,24 +1,58 @@
 # 10. Design & UX Specification — iOS + Android
 
 ## 1. Brand
-Name: 주차콕
+Name: **주차핀** (user-facing only — every internal identifier stays `parkingkok`; see CLAUDE.md).
+
 Personality:
 - calm
 - quick
 - trustworthy
 - everyday utility
 
-Avoid:
-- AI-purple SaaS
-- heavy automotive dashboard aesthetic
-- childish mascot-heavy UI
-- excessive gradients/glow
+The mark is a car inside a location pin, matching the name. Nothing more elaborate, and no
+lettering inside the app icon.
+
+### 1a. The one goal
+주차핀 should look like **a small team built it carefully**, not like **an AI generated it**.
+Every rule below exists to serve that sentence, and when a rule seems to cost something, that
+sentence is the tiebreaker.
+
+The reference feeling is Apple's own apps for composure and Toss for hierarchy: a utility that
+is understood at a glance. Not a map app's density, not an automotive black-and-red, not a
+dashboard.
+
+**A well-ordered app beats a pretty one.**
+
+### 1b. Avoid — the specific tells
+These are not stylistic preferences. They are the patterns that make an app read as
+machine-generated, and they are forbidden:
+
+- purple or violet in any form, including inside gradients, tints and icons
+- purple→blue gradients, neon, large gradient CTAs
+- heavy or layered drop shadows on cards
+- decorative background blobs, glows and washes
+- glassmorphism beyond a native OS material
+- a card around every row — the AI dashboard
+- pill-shaping everything
+- decorative icons and illustrations that carry no meaning
+- AI-SaaS landing-page styling
+- many pastels mixed together; a different colour per button or card
+- paywalls with crowns, sparkles, fake discounts or "BEST VALUE" badges
+- cute mascot-driven design
+
+### 1c. Depth without shadow
+Layers are separated by **background difference, border and spacing**. Shadow is the last
+resort, and when unavoidable it must be barely perceptible. This reverses the earlier craft
+direction, which used two-pass shadows and gradient blooms; those are now a defect.
+
+The mocks in `design-references/` were drawn with that older treatment. They remain binding for
+information hierarchy, content and grouping, and are no longer binding for surface finish.
 
 ## 2. Shared Semantic Color Tokens
 Light:
-- background `#F7F9FC`
+- background `#F7F8FA`
 - surface `#FFFFFF`
-- textPrimary `#0F2747`
+- textPrimary `#111827`
 - textSecondary `#6B7280`
 - primary `#2563EB`
 - accent `#14B8A6`
@@ -48,7 +82,7 @@ Design language is shared, controls feel native.
 - system/Roboto typography through Material 3 baseline
 - Compose/Material navigation/dialog semantics
 - Android edge-to-edge/insets
-- dynamic color is **not** allowed to replace core 주차콕 brand colors automatically; it may be used only if product explicitly approves a dynamic-theme mode later
+- dynamic color is **not** allowed to replace core 주차핀 brand colors automatically; it may be used only if product explicitly approves a dynamic-theme mode later
 
 Do not force iOS-styled switches/navigation onto Android or vice versa.
 
@@ -65,12 +99,24 @@ Respect:
 
 Hero value may scale down within safe minimum but must remain readable.
 
-## 5. Shapes
-- primary card radius ~22
-- secondary row ~16
-- button ~16
-- Android/iOS actual shape implementation may vary slightly
-- avoid excessive shadows; prefer border/surface separation
+## 5. Shapes and Surfaces
+Radius bands:
+- major card 18–22
+- button 12–16
+- small control 10–14
+
+Android/iOS actual shape implementation may vary slightly. Not everything is a pill.
+
+**Shadow is not how this app shows depth.** Separate layers with background difference, border
+and spacing. A shadow, if genuinely needed, is barely perceptible. This rule already existed and
+was violated once by a craft pass that added two-pass shadows and gradient blooms; §1c states
+the reversal.
+
+### Card usage
+A card groups information that belongs together. It is not the default wrapper for a row.
+A screen that is a stack of five cards is the AI dashboard the brand is avoiding — use dividers
+and spacing instead. One large card for the screen's core subject is fine; wrapping every row
+is not.
 
 ## 6. Home Hierarchy
 1. current floor
@@ -106,6 +152,26 @@ iOS Always screen should explain background detection directly.
 - one product MVP, no fake “추천/Best” badge
 - price comes from store
 
+Forbidden on the paywall: purple gradients, sparkling or animated backgrounds, oversized crown
+icons, fake discount badges, "BEST VALUE" labels, heavy animation. The shape is a title, one
+plain sentence, a checklist of what Plus gives, the store's price, and one button:
+
+```text
+주차핀 Plus
+
+광고 없이
+조금 더 편하게.
+
+✓ 광고 제거
+✓ 무제한 기록
+✓ 고급 위젯
+✓ 가족 공유
+
+월 ₩X,XXX
+
+[ Plus 시작하기 ]
+```
+
 ## 10. Ads
 - banner visually separated
 - no fake close
@@ -125,6 +191,32 @@ WidgetKit layout/system tint.
 Glance responsive sizes; launcher variations tested.
 
 No mini map in smallest widget.
+
+## 11a. Detail, History and Settings
+
+### Parking detail
+Map, floor, zone/number, parked-at, elapsed, photo, directions, end parking. The map and the
+text must not compete for attention — one of them leads and the other supports.
+
+### History
+A list, not a dashboard. No charts, no graphs, no summary tiles.
+
+```text
+B3 · A구역 142
+오늘 오후 8:14
+
+B2 · C구역 38
+어제 오후 6:24
+```
+
+A detected record carries a small `자동` badge and nothing else distinguishes it — not a
+different icon, not a different colour (docs/01 §8 forbids colour-only state).
+
+### Settings
+Ordinary OS-style grouped sections, the way the platform's own Settings looks. Each setting is
+a row, not its own large card.
+
+Sections: 자동 감지 · 알림 · 권한 · 주차핀 Plus · 가족 공유 · 데이터 · 개인정보
 
 ## 12. Accessibility
 ### iOS VoiceOver

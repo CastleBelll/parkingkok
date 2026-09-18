@@ -1,7 +1,7 @@
 # 05. Parking Detection Engine Specification — Cross-platform
 
 ## 1. Why This Is the Product
-주차콕의 차별화는 UI가 아니라:
+주차핀의 차별화는 UI가 아니라:
 1. parking candidate precision
 2. 적절한 candidate timing
 3. low battery cost
@@ -134,7 +134,7 @@ iOS 구현은 이 조항을 `speed >= threshold`로 읽었기 때문에 movement
 **구조적으로 성립 불가능**했다: speed가 nil이면 카운터가 영원히 0이고
 `minimumMovingSamples`를 넘을 수 없다. 거리는 이미 쌓여 있는데 판정에 쓰이지 않았다.
 
-지하·터널·도심 협곡은 GPS 도플러 속도가 나오지 않는 환경이고, 그게 주차콕의 주 무대다
+지하·터널·도심 협곡은 GPS 도플러 속도가 나오지 않는 환경이고, 그게 주차핀의 주 무대다
 (지하주차장, 아파트 지하). §13의 underground parking 패턴 자체가 이 조건을 전제한다.
 
 **따라서 movement evidence는 두 경로를 가진다.**

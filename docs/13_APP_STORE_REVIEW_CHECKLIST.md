@@ -39,7 +39,7 @@ Reward redemption must use StoreKit-supported mechanism for paid digital feature
 Review Notes draft:
 
 ```text
-주차콕은 사용자가 차량 이동을 마치고 걸음을 시작한 상황을 감지하여
+주차핀은 사용자가 차량 이동을 마치고 걸음을 시작한 상황을 감지하여
 주차 후보를 생성하는 기능이 핵심 기능입니다.
 
 앱은 유휴 상태에서 고정밀 GPS를 계속 사용하지 않고 significant-change
