@@ -21,6 +21,23 @@ Enough signal to improve detection/monetization, without uploading parking locat
 
 Properties always include `platform` where useful.
 
+### Automatic SDK events
+
+Firebase Analytics also reports its own events once consent is on, including
+`screen_view` (`ga_screen_class`, e.g. `MainActivity`) and the `_f`/`_s`/`_e`
+lifecycle set. These are listed here because this section is the contract for what
+leaves the device, and a contract that omits what the SDK sends is not true.
+
+They are kept rather than suppressed. The value is a screen class name, which is none
+of the forbidden properties in §3 — not a coordinate, route, address, or floor. And
+automatic screen reporting can be disabled on iOS
+(`FirebaseAutomaticScreenReportingEnabled`) but has no Android equivalent, so
+disabling it would leave the two platforms collecting different things, which this
+project treats as a defect in its own right.
+
+Nothing here is sent before consent: the collection switch gates the SDK itself, not
+just our call sites (§5).
+
 ## 3. Allowed Detection Properties
 - confidenceBucket
 - driveDurationBucket
