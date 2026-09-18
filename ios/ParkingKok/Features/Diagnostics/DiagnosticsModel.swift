@@ -17,6 +17,9 @@ final class DiagnosticsModel {
     private(set) var isMonitoring = false
     private(set) var storeSetupFailure: String?
     private(set) var traceSummary: TraceSummary = .empty
+    /// What the system says about alerts. The label prompt is the only notification this
+    /// build posts, so an unauthorized reading here explains an empty label harvest.
+    private(set) var notificationAuthorization = "unknown"
     var isSmartDetectionEnabled = false
 
     init(runtime: DetectionRuntime = .shared) {
@@ -39,6 +42,7 @@ final class DiagnosticsModel {
         isSmartDetectionEnabled = runtime.isSmartDetectionEnabled
         storeSetupFailure = runtime.storeSetupFailure
         traceSummary = runtime.traceStore?.summary() ?? .empty
+        notificationAuthorization = await runtime.notificationAuthorization()
         snapshot = await runtime.snapshot()
     }
 
@@ -54,6 +58,11 @@ final class DiagnosticsModel {
 
     func requestMotionPermission() async {
         await runtime.requestMotionPermission()
+        await refresh()
+    }
+
+    func requestNotificationPermission() async {
+        await runtime.requestNotificationPermission()
         await refresh()
     }
 }

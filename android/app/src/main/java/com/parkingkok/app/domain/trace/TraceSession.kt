@@ -254,6 +254,12 @@ data class TraceSummary(
     val nonViableDropCount: Int = 0,
     val unlabelledSessionCount: Int = 0,
     /**
+     * Closed sessions that were worth a label prompt and did not get one, because
+     * notifications are not permitted. The number that tells a field run which collected no
+     * labels apart from a field run where nothing moved. Same name on iOS.
+     */
+    val labelPromptSuppressedCount: Int = 0,
+    /**
      * Sessions on disk carrying a measurement, so the three numbers below read as a sample
      * size rather than as a claim about every trace. Below [sessionCount] only while
      * traces recorded before gap measurement landed are still retained.

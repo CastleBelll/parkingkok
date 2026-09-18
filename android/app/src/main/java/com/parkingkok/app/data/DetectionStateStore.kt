@@ -145,6 +145,26 @@ class DetectionStateStore(
         dataStore.edit { it[KEY_TRACE_NON_VIABLE] = (it[KEY_TRACE_NON_VIABLE] ?: 0) + count }
     }
 
+    suspend fun readTraceLabelPromptSuppressedCountOnce(): Int =
+        dataStore.data.first()[KEY_TRACE_LABEL_PROMPT_SUPPRESSED] ?: 0
+
+    /**
+     * Records that a closed session went unprompted because notifications are not permitted
+     * (docs/05_CROSS_PLATFORM_DOMAIN_CONTRACT.md §9 labelling).
+     *
+     * Persisted rather than held in memory, and for the sharper of the two reasons the drop
+     * counters are: the prompt is posted from a process that dies between two PendingIntent
+     * deliveries, so an in-memory count would read zero by the time anyone opened the
+     * diagnostics screen. It is the only thing that tells a field weekend which collected no
+     * labels apart from a field weekend where nobody travelled. Same name on iOS.
+     */
+    suspend fun addTraceLabelPromptSuppressed(count: Int) {
+        if (count <= 0) return
+        dataStore.edit {
+            it[KEY_TRACE_LABEL_PROMPT_SUPPRESSED] = (it[KEY_TRACE_LABEL_PROMPT_SUPPRESSED] ?: 0) + count
+        }
+    }
+
     /**
      * Reads, transforms, and writes the location session state inside one [androidx.datastore.core.DataStore.updateData]
      * transform, so two location batches arriving back to back cannot lose each other's
@@ -223,5 +243,6 @@ class DetectionStateStore(
         val KEY_TRACE_OPEN_SESSION = stringPreferencesKey("trace_open_session_id")
         val KEY_TRACE_DISCARDED = intPreferencesKey("trace_discarded_session_count")
         val KEY_TRACE_NON_VIABLE = intPreferencesKey("trace_non_viable_drop_count")
+        val KEY_TRACE_LABEL_PROMPT_SUPPRESSED = intPreferencesKey("trace_label_prompt_suppressed_count")
     }
 }

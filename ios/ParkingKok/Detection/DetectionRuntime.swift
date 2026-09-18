@@ -1,4 +1,5 @@
 import Foundation
+import UserNotifications
 
 /// Composition root for the detection stack, and the only thing `AppDelegate` talks to
 /// (docs/04_IOS_IMPLEMENTATION.md §2: the delegate forwards, it does not decide).
@@ -30,6 +31,10 @@ final class DetectionRuntime {
     /// them through its own `TraceRecorder`. `nil` when the directory is unavailable, in
     /// which case recording is simply off — never an app failure (docs/05 §9 best-effort).
     private(set) var traceStore: (any TraceStoring)?
+    /// Holds the notification delegate for the app's lifetime: the tap can arrive in a
+    /// process that was launched for it, and a delegate nobody retains is never called.
+    /// P0 instrumentation (docs/05 §9 labelling) — delete with `TraceLabelPrompt`.
+    private let labelPromptResponder: TraceLabelPromptResponder?
 
     init(
         monitor: SignificantLocationMonitor = SignificantLocationMonitor(),
@@ -38,7 +43,8 @@ final class DetectionRuntime {
         preference: SmartDetectionPreference = SmartDetectionPreference(),
         checkpointStore: (any DetectionCheckpointStoring)? = nil,
         diagnosticsStore: (any DiagnosticsReportStoring)? = nil,
-        traceStore: (any TraceStoring)? = nil
+        traceStore: (any TraceStoring)? = nil,
+        labelPromptDelivery: (any LabelPromptDelivering)? = nil
     ) {
         self.monitor = monitor
         self.locationCapture = locationCapture
@@ -75,11 +81,23 @@ final class DetectionRuntime {
         let traces = traceStore ?? (try? FileTraceStore(directory: FileTraceStore.defaultDirectoryURL()))
         self.traceStore = traces
 
+        // §9's labelling problem: the in-app screen went unused for three days because the
+        // user carries the phone without opening the app. The prompt is posted from
+        // whichever process closed the session, so the responder that answers the tap is
+        // built here and held for the process's lifetime.
+        labelPromptResponder = traces.map(TraceLabelPromptResponder.init(store:))
+        let prompter = traces.map { store in
+            TraceLabelPrompter(
+                delivery: labelPromptDelivery ?? UserNotificationLabelPromptDelivery(),
+                onSuppressed: { store.recordLabelPromptSuppressed() }
+            )
+        }
+
         coordinator = BackgroundCoordinator(
             checkpointStore: store,
             motionHistory: motionHistory,
             locationCapture: locationCapture,
-            traceRecorder: traces.map { TraceRecorder(store: $0) }
+            traceRecorder: traces.map { TraceRecorder(store: $0, prompter: prompter) }
         )
         locationAuthorization = monitor.authorization
         motionAuthorization = motionHistory.authorization
@@ -110,6 +128,11 @@ final class DetectionRuntime {
     func bootstrap(launchReason: LaunchReason) {
         monitor.delegate = self
         locationCapture.delegate = self
+        // Before anything async, for the same reason the Core Location work is synchronous:
+        // a tap that launched this process is delivered as soon as launch returns.
+        if let labelPromptResponder {
+            UNUserNotificationCenter.current().delegate = labelPromptResponder
+        }
         locationAuthorization = monitor.authorization
         startMonitoringIfPermitted()
         hasBootstrapped = true
@@ -198,6 +221,34 @@ final class DetectionRuntime {
         case nil: break
         }
         return request
+    }
+
+    /// Whether an alert may be shown, and what the system currently says.
+    ///
+    /// The label prompt is the only notification this build posts, so this row is the whole
+    /// answer to "why did a weekend of travel produce no labels" (docs/05 §9).
+    func notificationAuthorization() async -> String {
+        switch await UNUserNotificationCenter.current().notificationSettings().authorizationStatus {
+        case .authorized: "authorized"
+        case .provisional: "provisional"
+        case .ephemeral: "ephemeral"
+        case .denied: "denied"
+        case .notDetermined: "notDetermined"
+        @unknown default: "unknown"
+        }
+    }
+
+    /// Asked for from the diagnostics screen only, never at launch: a refusal has to stay a
+    /// refusal, and the recording path is unaffected either way.
+    func requestNotificationPermission() async {
+        do {
+            _ = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+        } catch {
+            let nsError = error as NSError
+            AppLog.detection.notice(
+                "notification authorization failed: \(nsError.domain, privacy: .public)(\(nsError.code, privacy: .public))"
+            )
+        }
     }
 
     /// Motion permission is granted by the first query, so this doubles as the prompt.

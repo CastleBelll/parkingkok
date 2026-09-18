@@ -27,6 +27,8 @@ data class DiagnosticsPermissions(
     val activityRecognitionGranted: Boolean = false,
     val foregroundLocationGranted: Boolean = false,
     val backgroundLocationGranted: Boolean = false,
+    /** Whether a label prompt would be shown (docs/05 §9 labelling). */
+    val notificationsGranted: Boolean = false,
 )
 
 /** Everything the P0 diagnostics screen renders. Contains no coordinates. */
@@ -217,6 +219,7 @@ class DiagnosticsViewModel(private val container: AppContainer) : ViewModel() {
         activityRecognitionGranted = container.hasActivityRecognitionPermission(),
         foregroundLocationGranted = container.locationSessionController.hasForegroundLocationPermission(),
         backgroundLocationGranted = container.locationSessionController.hasBackgroundLocationPermission(),
+        notificationsGranted = container.hasNotificationPermission(),
     )
 
     companion object {

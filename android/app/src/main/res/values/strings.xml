@@ -105,4 +105,12 @@
     <string name="diagnostics_trace_split_refused_range">첫 이벤트 앞이나 마지막 이벤트 뒤로는 나눌 수 없습니다.</string>
     <string name="diagnostics_trace_split_refused_not_viable">나누면 %1$d개 / %2$d개가 되어 한쪽이 이벤트 %3$d개 미만입니다. 이벤트 1개짜리 세션은 fixture가 될 수 없어 거부합니다.</string>
     <string name="diagnostics_trace_split_refused_store">저장 실패: %1$s</string>
+
+    <!-- Label prompt (docs/05 §9 labelling). A diagnostics channel of its own, never the
+         §9 product channels: muting "what was that trip?" must not mute a parking alert. -->
+    <string name="trace_label_prompt_channel_name">이동 기록 라벨 (진단)</string>
+    <string name="trace_label_prompt_channel_description">세션이 끝나면 무엇이었는지 한 번 탭으로 물어봅니다. 현장 데이터 수집용입니다.</string>
+    <string name="diagnostics_permission_notifications">알림</string>
+    <string name="diagnostics_request_permission_notifications">알림 권한 요청</string>
+    <string name="diagnostics_trace_label_prompt_suppressed">알림 못 띄움</string>
 </resources>
