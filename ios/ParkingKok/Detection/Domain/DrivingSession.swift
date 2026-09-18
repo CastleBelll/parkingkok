@@ -242,10 +242,13 @@ enum MovementEvidencePolicy {
     ///
     /// Past this the average hides its own shape: a drive, a five-minute stop and another
     /// drive average out to something that is not "consistent with travel" at any point in
-    /// between. It is also the horizon on which the vehicle evidence that must accompany
-    /// movement evidence expires (`DrivingConfirmationPolicy.vehicleEvidenceMaxAge`), and
-    /// it is far below the significant-change cadence, which is what a gap this long in a
-    /// bounded session actually means.
+    /// between. It is also far below the significant-change cadence, which is what a gap
+    /// this long inside a bounded session actually means.
+    ///
+    /// It used to equal `vehicleEvidenceMaxAge`; that coincidence ended when docs/05 §7
+    /// fixed the vehicle window at 300s across both platforms. The two answer different
+    /// questions — how long an average still describes travel, against how long ago the
+    /// vehicle was last seen — so they were never required to match.
     static let maximumBaseline: TimeInterval = 180
 
     static func evaluate(from anchor: LocationFix, to fix: LocationFix) -> MovementEvidenceOutcome {
@@ -286,7 +289,12 @@ private extension Double {
 enum DrivingConfirmationPolicy {
     /// How recent "recent vehicle evidence" is. Longer than a red light, shorter than a
     /// coffee stop.
-    static let vehicleEvidenceMaxAge: TimeInterval = 180
+    ///
+    /// 300s is the cross-platform value fixed in docs/05 §7. It was 180 here and 300 on
+    /// Android, and the longer one won on the measured subway trip: Core Motion edges ran
+    /// minutes apart there, so 180 is tight. Missing a trip costs the whole recording,
+    /// while opening one too early costs a single timeout window.
+    static let vehicleEvidenceMaxAge: TimeInterval = 300
 
     /// docs/05 §7 initial conceptual guard.
     static let minimumDuration: TimeInterval = 120
