@@ -171,3 +171,30 @@ struct PKSoftButtonStyle: ButtonStyle {
             .opacity(configuration.isPressed ? 0.7 : 1)
     }
 }
+
+/// A full-width advisory — a storage fallback, a store error, a photo that would not save.
+///
+/// Shared rather than per-screen: the home screen and the detail screen both surface
+/// `ParkingModel.failure`, and two copies of the same card would drift.
+struct PKNoticeCard: View {
+    private let text: String
+
+    init(text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        PKCard(radius: PKRadius.row) {
+            HStack(alignment: .top, spacing: PKSpacing.m) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(PKColor.danger)
+                    .accessibilityHidden(true)
+                Text(text)
+                    .font(PKTypography.supporting)
+                    .foregroundStyle(PKColor.textPrimary)
+            }
+            .padding(PKSpacing.l)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}

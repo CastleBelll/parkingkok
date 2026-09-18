@@ -196,7 +196,7 @@ struct ManualParkingTests {
         _ = await model.saveManualParking(ManualParkingDraft(floorText: "B1"))
 
         // Act
-        let deleted = model.deleteAllLocalData()
+        let deleted = await model.deleteAllLocalData()
 
         // Assert
         #expect(deleted)

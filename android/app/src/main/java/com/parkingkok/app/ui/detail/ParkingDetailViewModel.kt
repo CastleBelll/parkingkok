@@ -5,12 +5,25 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.parkingkok.app.AppContainer
 import com.parkingkok.app.core.Clock
+import com.parkingkok.app.data.photo.ParkingPhotoImage
+import com.parkingkok.app.data.photo.ParkingPhotoImageLoader
 import com.parkingkok.app.domain.parking.ParkingRecord
+import com.parkingkok.app.domain.parking.usecase.AttachParkingPhotoResult
+import com.parkingkok.app.domain.parking.usecase.AttachParkingPhotoUseCase
 import com.parkingkok.app.domain.parking.usecase.DeleteParkingRecordUseCase
 import com.parkingkok.app.domain.parking.usecase.EndParkingUseCase
 import com.parkingkok.app.domain.parking.usecase.ObserveParkingRecordUseCase
+import com.parkingkok.app.domain.parking.usecase.RemoveParkingPhotoUseCase
+import com.parkingkok.app.domain.photo.PhotoSaveResult
+import com.parkingkok.app.domain.photo.PhotoSource
+import com.parkingkok.app.map.MapOpenResult
+import com.parkingkok.app.ui.UiNotice
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -18,30 +31,68 @@ import kotlinx.coroutines.launch
 /** What `03-parking-detail.png` renders. */
 data class ParkingDetailUiState(
     val record: ParkingRecord? = null,
+    /**
+     * The decoded photo, or null while it loads and when there is none.
+     *
+     * Held here rather than decoded at the draw site so no bitmap work happens on the
+     * main thread, and so the screen has nothing to decide.
+     */
+    val photo: ParkingPhotoImage? = null,
     val nowMillis: Long = 0L,
     val loaded: Boolean = false,
+    val photoBusy: Boolean = false,
+    val notice: UiNotice? = null,
 ) {
     /** True once the record is known to be gone — deleted here, or from another screen. */
     val missing: Boolean get() = loaded && record == null
+
+    /** FR-008: with no stored coordinate there is nowhere to send a maps app. */
+    val canOpenMap: Boolean get() = record?.location != null
+
+    val hasPhoto: Boolean get() = record?.photoRelativePath != null
 }
 
 /** Drives the parking detail screen. */
 class ParkingDetailViewModel(
     private val recordId: String,
     observeRecord: ObserveParkingRecordUseCase,
+    photoLoader: ParkingPhotoImageLoader,
     private val endParking: EndParkingUseCase,
     private val deleteRecord: DeleteParkingRecordUseCase,
+    private val attachPhoto: AttachParkingPhotoUseCase,
+    private val removePhoto: RemoveParkingPhotoUseCase,
     clock: Clock,
 ) : ViewModel() {
 
+    private val notice = MutableStateFlow<UiNotice?>(null)
+    private val photoBusy = MutableStateFlow(false)
+
+    private val record: Flow<ParkingRecord?> = observeRecord(recordId)
+
+    /**
+     * Re-decoded only when the stored path changes, not on every edit: stepping the floor
+     * emits a new record, and re-reading a 1600px JPEG for that would be a decode per tap.
+     */
+    private val photo: Flow<ParkingPhotoImage?> = record
+        .map { it?.photoRelativePath }
+        .distinctUntilChanged()
+        .map { photoLoader.load(it) }
+
     val uiState: StateFlow<ParkingDetailUiState> =
-        observeRecord(recordId)
-            .map { ParkingDetailUiState(it, clock.nowEpochMillis(), loaded = true) }
-            .stateIn(
-                scope = viewModelScope,
-                started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
-                initialValue = ParkingDetailUiState(),
+        combine(record, photo, notice, photoBusy) { record, photo, notice, busy ->
+            ParkingDetailUiState(
+                record = record,
+                photo = photo,
+                nowMillis = clock.nowEpochMillis(),
+                loaded = true,
+                photoBusy = busy,
+                notice = notice,
             )
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = ParkingDetailUiState(),
+        )
 
     fun onEndParking() {
         viewModelScope.launch { endParking() }
@@ -49,6 +100,47 @@ class ParkingDetailViewModel(
 
     fun onDelete() {
         viewModelScope.launch { deleteRecord(recordId) }
+    }
+
+    /** FR-007: downsample and store what the picker or the camera returned. */
+    fun onPhotoSelected(source: PhotoSource) {
+        viewModelScope.launch {
+            photoBusy.value = true
+            notice.value = when (val result = attachPhoto(recordId, source)) {
+                is AttachParkingPhotoResult.Failed -> result.reason.toNotice()
+                // The record vanished mid-pick; the screen is already closing itself.
+                AttachParkingPhotoResult.RecordGone -> null
+                is AttachParkingPhotoResult.Attached -> null
+            }
+            photoBusy.value = false
+        }
+    }
+
+    fun onRemovePhoto() {
+        viewModelScope.launch { removePhoto(recordId) }
+    }
+
+    fun onCameraUnavailable() {
+        notice.value = UiNotice.CAMERA_UNAVAILABLE
+    }
+
+    /** Reported by the shell, which is what owns the Activity the intent starts from. */
+    fun onMapOpened(result: MapOpenResult) {
+        notice.value = when (result) {
+            MapOpenResult.NO_MAPS_APP -> UiNotice.NO_MAPS_APP
+            // NO_LOCATION cannot be reached from a screen that disables the action, and
+            // if it ever is, saying nothing beats an error about a normal record.
+            MapOpenResult.NO_LOCATION, MapOpenResult.OPENED -> null
+        }
+    }
+
+    fun onNoticeShown() {
+        notice.value = null
+    }
+
+    private fun PhotoSaveResult.Failed.Reason.toNotice(): UiNotice = when (this) {
+        PhotoSaveResult.Failed.Reason.UNREADABLE -> UiNotice.PHOTO_UNREADABLE
+        PhotoSaveResult.Failed.Reason.STORAGE -> UiNotice.PHOTO_NOT_SAVED
     }
 
     companion object {
@@ -61,11 +153,25 @@ class ParkingDetailViewModel(
                     ParkingDetailViewModel(
                         recordId = recordId,
                         observeRecord = ObserveParkingRecordUseCase(container.parkingRepository),
+                        photoLoader = container.parkingPhotoImageLoader,
                         endParking = EndParkingUseCase(
                             container.parkingRepository,
                             container.clock,
                         ),
-                        deleteRecord = DeleteParkingRecordUseCase(container.parkingRepository),
+                        deleteRecord = DeleteParkingRecordUseCase(
+                            container.parkingRepository,
+                            container.parkingPhotoStore,
+                        ),
+                        attachPhoto = AttachParkingPhotoUseCase(
+                            container.parkingRepository,
+                            container.parkingPhotoStore,
+                            container.clock,
+                        ),
+                        removePhoto = RemoveParkingPhotoUseCase(
+                            container.parkingRepository,
+                            container.parkingPhotoStore,
+                            container.clock,
+                        ),
                         clock = container.clock,
                     ) as T
             }

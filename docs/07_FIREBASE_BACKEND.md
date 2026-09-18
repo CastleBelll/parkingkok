@@ -12,11 +12,35 @@ Firebase exists for trusted subscription/referral/account/config operations. Par
   - Android Play Integrity
 - Remote Config
 - Crashlytics optional/privacy scrubbed
+- **Firebase Analytics** — `docs/17`의 이벤트 전송 수단 (2026-09-18 결정)
 - no Firebase Storage
 
 Additional Google Play integration:
 - Cloud Pub/Sub for RTDN
 - Google Play Developer API service credentials
+
+### Analytics 전송 수단 (2026-09-18 결정)
+`docs/17`이 이벤트 14종과 허용 속성을 정의했지만 **무엇으로 보내는지는 어디에도 없었다.**
+Firebase Analytics로 정한다 — 이미 Firebase 스택 안에 있고, 배칭·오프라인 큐·재시도를
+직접 만들 이유가 없다. Cloud Functions로 이벤트를 직접 받는 대안은 그 전부를 재발명하면서
+호출 비용까지 든다.
+
+**대신 SDK를 피처 코드에서 직접 부르지 않는다.** `docs/17` §2의 이벤트 이름과 §3의 허용
+속성만 받는 타입 계층을 두고, Firebase는 그 뒤의 어댑터다. 이유는 §3의 금지 목록
+(lat/lon, route, address, floor/spot/memo)이 **호출자의 주의가 아니라 타입으로** 막혀야
+하기 때문이다. 임의 키/값을 받는 `logEvent(name, params)`를 열어두면 언젠가 층이 들어간다.
+
+### 동의 (consent)
+**동의 전에는 이벤트를 하나도 보내지 않는다.** 버퍼링도 하지 않는다 — 나중에 동의하면
+그때부터 보내고, 거절하면 보낼 것이 애초에 쌓여 있지 않아야 한다.
+
+- 기본값은 **꺼짐**. 사용자가 명시적으로 켜야 한다
+- 동의 상태는 로컬에 영속. 설정에서 언제든 끌 수 있다
+- 끄면 즉시 중단한다
+- **절대 문구 금지.** `docs/09` §13이 명시한다 — ad/Firebase SDK 메타데이터는 기기를
+  떠나므로 "아무 데이터도 나가지 않는다"고 말하면 거짓이 된다.
+  쓸 수 있는 문구는 §13이 준 것뿐이다:
+  > 주차 위치 좌표와 주차 사진은 주차콕 서버에 저장하지 않습니다.
 
 ## 3. Runtime
 - TypeScript strict

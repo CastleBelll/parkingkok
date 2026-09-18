@@ -7,11 +7,18 @@ import com.parkingkok.app.AppContainer
 import com.parkingkok.app.core.Clock
 import com.parkingkok.app.domain.parking.ParkingRecord
 import com.parkingkok.app.domain.parking.usecase.AdjustParkingFloorUseCase
+import com.parkingkok.app.domain.parking.usecase.AttachParkingPhotoResult
+import com.parkingkok.app.domain.parking.usecase.AttachParkingPhotoUseCase
 import com.parkingkok.app.domain.parking.usecase.EndParkingUseCase
 import com.parkingkok.app.domain.parking.usecase.ObserveActiveParkingUseCase
 import com.parkingkok.app.domain.parking.usecase.ObserveParkingHistoryUseCase
+import com.parkingkok.app.domain.photo.PhotoSaveResult
+import com.parkingkok.app.domain.photo.PhotoSource
+import com.parkingkok.app.map.MapOpenResult
+import com.parkingkok.app.ui.UiNotice
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -32,7 +39,15 @@ data class HomeUiState(
      * rules out covering that with a global spinner.
      */
     val loaded: Boolean = false,
-)
+    /** True while a chosen photo is being downsampled and written (FR-007). */
+    val photoBusy: Boolean = false,
+    val notice: UiNotice? = null,
+) {
+    /** FR-008: with no stored coordinate there is nowhere to send a maps app. */
+    val canOpenMap: Boolean get() = active?.location != null
+
+    val hasPhoto: Boolean get() = active?.photoRelativePath != null
+}
 
 /**
  * Drives the home screen.
@@ -45,16 +60,29 @@ class HomeViewModel(
     observeHistory: ObserveParkingHistoryUseCase,
     private val endParking: EndParkingUseCase,
     private val adjustParkingFloor: AdjustParkingFloorUseCase,
+    private val attachPhoto: AttachParkingPhotoUseCase,
     private val clock: Clock,
 ) : ViewModel() {
+
+    private val notice = MutableStateFlow<UiNotice?>(null)
+    private val photoBusy = MutableStateFlow(false)
 
     val uiState: StateFlow<HomeUiState> =
         combine(
             observeActive(),
             observeHistory(limit = ObserveParkingHistoryUseCase.HOME_PREVIEW),
             minuteTicker(),
-        ) { active, recent, nowMillis ->
-            HomeUiState(active = active, recent = recent, nowMillis = nowMillis, loaded = true)
+            notice,
+            photoBusy,
+        ) { active, recent, nowMillis, notice, busy ->
+            HomeUiState(
+                active = active,
+                recent = recent,
+                nowMillis = nowMillis,
+                loaded = true,
+                photoBusy = busy,
+                notice = notice,
+            )
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
@@ -67,6 +95,47 @@ class HomeViewModel(
 
     fun onStepFloor(delta: Int) {
         viewModelScope.launch { adjustParkingFloor(delta) }
+    }
+
+    /**
+     * FR-007 from the home card's `사진 추가` row.
+     *
+     * The record id is read at the moment of the save rather than captured when the picker
+     * opened, so a parking ended while the album was in front of the user attaches nothing
+     * instead of attaching to a record the user has moved on from.
+     */
+    fun onPhotoSelected(source: PhotoSource) {
+        val recordId = uiState.value.active?.id ?: return
+        viewModelScope.launch {
+            photoBusy.value = true
+            notice.value = when (val result = attachPhoto(recordId, source)) {
+                is AttachParkingPhotoResult.Failed -> result.reason.toNotice()
+                AttachParkingPhotoResult.RecordGone -> null
+                is AttachParkingPhotoResult.Attached -> null
+            }
+            photoBusy.value = false
+        }
+    }
+
+    fun onCameraUnavailable() {
+        notice.value = UiNotice.CAMERA_UNAVAILABLE
+    }
+
+    /** Reported by the shell, which owns the Activity the maps intent starts from. */
+    fun onMapOpened(result: MapOpenResult) {
+        notice.value = when (result) {
+            MapOpenResult.NO_MAPS_APP -> UiNotice.NO_MAPS_APP
+            MapOpenResult.NO_LOCATION, MapOpenResult.OPENED -> null
+        }
+    }
+
+    fun onNoticeShown() {
+        notice.value = null
+    }
+
+    private fun PhotoSaveResult.Failed.Reason.toNotice(): UiNotice = when (this) {
+        PhotoSaveResult.Failed.Reason.UNREADABLE -> UiNotice.PHOTO_UNREADABLE
+        PhotoSaveResult.Failed.Reason.STORAGE -> UiNotice.PHOTO_NOT_SAVED
     }
 
     /**
@@ -99,6 +168,11 @@ class HomeViewModel(
                     endParking = EndParkingUseCase(container.parkingRepository, container.clock),
                     adjustParkingFloor = AdjustParkingFloorUseCase(
                         container.parkingRepository,
+                        container.clock,
+                    ),
+                    attachPhoto = AttachParkingPhotoUseCase(
+                        container.parkingRepository,
+                        container.parkingPhotoStore,
                         container.clock,
                     ),
                     clock = container.clock,

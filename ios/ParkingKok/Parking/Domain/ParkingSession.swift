@@ -38,8 +38,10 @@ struct ParkingSession: Sendable, Equatable, Identifiable {
     var zone: String?
     var spot: String?
     var memo: String?
-    /// Relative to the app's photo directory. FR-007 is out of scope here; the column
-    /// exists because docs/06 §2 makes the schema shared across platforms.
+    /// FR-007's one photo, as `{recordId}.heic` relative to the app's photo directory
+    /// (`FileSystemParkingPhotoStore`). Local-only: docs/06 §1 classifies the photo as
+    /// sensitive and docs/07 §2 forbids Firebase Storage, so this names a file inside the
+    /// sandbox and never a remote object.
     var photoRelativePath: String?
 
     let createdAt: Date

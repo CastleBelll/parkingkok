@@ -11,12 +11,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.core.net.toUri
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.parkingkok.app.AppContainer
+import com.parkingkok.app.R
+import com.parkingkok.app.map.ExternalMapOpener
 import com.parkingkok.app.ui.detail.ParkingDetailScreen
 import com.parkingkok.app.ui.detail.ParkingDetailViewModel
 import com.parkingkok.app.ui.diagnostics.DiagnosticsScreen
@@ -42,6 +47,11 @@ fun ParkingkokApp(container: AppContainer) {
     var backStack by rememberSaveable(saver = NavBackStackSaver) {
         mutableStateOf(NavBackStack.rootedAtHome())
     }
+
+    // The orphan photo sweep (FR-007). It runs here, once a screen exists, rather than in
+    // `ParkingkokApplication`: it is the first thing that would open the database, and a
+    // process started by a detection broadcast must not pay for one (see `AppContainer`).
+    LaunchedEffect(container) { container.cleanUpOrphanPhotos() }
 
     BackHandler(enabled = backStack.canGoBack) { backStack = backStack.pop() }
 
@@ -86,9 +96,14 @@ fun ParkingkokApp(container: AppContainer) {
 private fun HomeRoute(container: AppContainer, onNavigate: (ParkingkokRoute) -> Unit) {
     val viewModel: HomeViewModel = viewModel(factory = HomeViewModel.factory(container))
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val mapOpener = rememberMapOpener()
 
     HomeScreen(
         state = state,
+        onDirections = { viewModel.onMapOpened(mapOpener.openDirections(state.active?.location)) },
+        onPhotoSelected = viewModel::onPhotoSelected,
+        onCameraUnavailable = viewModel::onCameraUnavailable,
+        onNoticeShown = viewModel::onNoticeShown,
         onStepFloor = viewModel::onStepFloor,
         onEndParking = viewModel::onEndParking,
         onSaveParking = { onNavigate(ParkingkokRoute.ManualEntry) },
@@ -134,6 +149,7 @@ private fun DetailRoute(container: AppContainer, recordId: String, onBack: () ->
             factory = ParkingDetailViewModel.factory(container, recordId),
         )
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val mapOpener = rememberMapOpener()
 
     // Deleting from here removes the thing the screen is about, so it closes itself.
     LaunchedEffect(state.missing) {
@@ -144,8 +160,34 @@ private fun DetailRoute(container: AppContainer, recordId: String, onBack: () ->
         state = state,
         onEndParking = viewModel::onEndParking,
         onDelete = viewModel::onDelete,
+        onDirections = {
+            viewModel.onMapOpened(mapOpener.openDirections(state.record?.location))
+        },
+        onPhotoSelected = viewModel::onPhotoSelected,
+        onRemovePhoto = viewModel::onRemovePhoto,
+        onCameraUnavailable = viewModel::onCameraUnavailable,
+        onNoticeShown = viewModel::onNoticeShown,
         onBack = onBack,
     )
+}
+
+/**
+ * The `길찾기` action's launcher.
+ *
+ * It is built here, in the shell, because `startActivity` belongs to the Activity and a
+ * ViewModel holding one would outlive it. What it does with the coordinate — and what it
+ * does when no app answers — is [ExternalMapOpener]'s, and is unit tested there.
+ */
+@Composable
+private fun rememberMapOpener(): ExternalMapOpener {
+    val context = LocalContext.current
+    val pinLabel = stringResource(R.string.map_pin_label)
+    return remember(context, pinLabel) {
+        ExternalMapOpener(
+            starter = { uri -> context.startActivity(Intent(Intent.ACTION_VIEW, uri.toUri())) },
+            pinLabel = pinLabel,
+        )
+    }
 }
 
 @Composable
@@ -184,6 +226,7 @@ private fun SettingsRoute(
     SettingsScreen(
         state = state,
         onDetectionEnabledChange = viewModel::onDetectionEnabledChange,
+        onAnalyticsConsentChange = viewModel::onAnalyticsConsentChange,
         onOpenSystemSettings = {
             // Background location in particular cannot be granted from an in-app prompt on
             // modern Android (docs/10_DESIGN_UX_SPEC.md §8), so every permission row leads

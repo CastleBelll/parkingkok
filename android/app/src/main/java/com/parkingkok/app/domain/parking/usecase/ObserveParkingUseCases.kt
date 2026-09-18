@@ -39,11 +39,3 @@ class ObserveParkingHistoryUseCase(private val repository: ParkingRepository) {
 class ObserveParkingRecordUseCase(private val repository: ParkingRepository) {
     operator fun invoke(id: String): Flow<ParkingRecord?> = repository.observeRecord(id)
 }
-
-class DeleteParkingRecordUseCase(private val repository: ParkingRepository) {
-    suspend operator fun invoke(id: String) = repository.delete(id)
-}
-
-class DeleteParkingHistoryUseCase(private val repository: ParkingRepository) {
-    suspend operator fun invoke() = repository.deleteCompleted()
-}

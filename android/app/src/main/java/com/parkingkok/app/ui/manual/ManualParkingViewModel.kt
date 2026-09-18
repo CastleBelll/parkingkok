@@ -87,6 +87,7 @@ class ManualParkingViewModel(
                             locationProvider = container.parkingLocationProvider,
                             clock = container.clock,
                             idGenerator = { UUID.randomUUID().toString() },
+                            analytics = container.analyticsRecorder,
                         ),
                     ) as T
             }

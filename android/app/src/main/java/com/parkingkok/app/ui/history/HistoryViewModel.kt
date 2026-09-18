@@ -62,7 +62,10 @@ class HistoryViewModel(
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : ViewModel> create(modelClass: Class<T>): T = HistoryViewModel(
                     observeHistory = ObserveParkingHistoryUseCase(container.parkingRepository),
-                    deleteHistory = DeleteParkingHistoryUseCase(container.parkingRepository),
+                    deleteHistory = DeleteParkingHistoryUseCase(
+                        container.parkingRepository,
+                        container.cleanUpOrphanPhotos,
+                    ),
                     clock = container.clock,
                 ) as T
             }

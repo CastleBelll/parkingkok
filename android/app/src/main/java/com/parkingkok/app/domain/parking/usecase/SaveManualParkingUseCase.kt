@@ -1,5 +1,8 @@
 package com.parkingkok.app.domain.parking.usecase
 
+import com.parkingkok.app.analytics.AnalyticsEvent
+import com.parkingkok.app.analytics.AnalyticsRecording
+import com.parkingkok.app.analytics.DisabledAnalyticsRecorder
 import com.parkingkok.app.core.Clock
 import com.parkingkok.app.domain.parking.FloorParser
 import com.parkingkok.app.domain.parking.ParkingLocation
@@ -44,6 +47,12 @@ class SaveManualParkingUseCase(
     private val locationProvider: ParkingLocationProvider,
     private val clock: Clock,
     private val idGenerator: () -> String,
+    /**
+     * docs/17 §2 `parking_manual_saved`. Defaulted so a composition without an analytics
+     * stack — a test, a preview — keeps working; [DisabledAnalyticsRecorder] reports
+     * nothing rather than pretending to.
+     */
+    private val analytics: AnalyticsRecording = DisabledAnalyticsRecorder,
 ) {
 
     suspend operator fun invoke(input: ManualParkingInput): SaveManualParkingResult {
@@ -67,6 +76,10 @@ class SaveManualParkingUseCase(
             revision = 1,
         )
         repository.insert(record)
+        // After the write, never before: an event for a save that failed would overstate
+        // the feature. The payload is the event name and `platform` — floor, zone, spot and
+        // memo are §3 forbidden and `AnalyticsEvent` gives them nowhere to go.
+        analytics.record(AnalyticsEvent.ParkingManualSaved)
         return SaveManualParkingResult.Saved(record)
     }
 

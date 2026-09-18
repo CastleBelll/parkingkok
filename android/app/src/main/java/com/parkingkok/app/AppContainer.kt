@@ -1,14 +1,25 @@
 package com.parkingkok.app
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.os.Build
 import androidx.core.app.NotificationManagerCompat
+import com.parkingkok.app.analytics.AnalyticsConsentStore
+import com.parkingkok.app.analytics.AnalyticsRecorder
+import com.parkingkok.app.analytics.AnalyticsRecording
+import com.parkingkok.app.analytics.LogAnalyticsSink
+import com.parkingkok.app.analytics.NoOpAnalyticsSink
 import com.parkingkok.app.core.Clock
 import com.parkingkok.app.core.SystemClock
 import com.parkingkok.app.data.DetectionStateStore
 import com.parkingkok.app.data.detectionDataStore
 import com.parkingkok.app.data.parking.ParkingDatabase
 import com.parkingkok.app.data.parking.RoomParkingRepository
+import com.parkingkok.app.data.photo.FileParkingPhotoImageLoader
+import com.parkingkok.app.data.photo.FileParkingPhotoStore
+import com.parkingkok.app.data.photo.JpegPhotoEncoder
+import com.parkingkok.app.data.photo.ParkingPhotoFiles
+import com.parkingkok.app.data.photo.ParkingPhotoImageLoader
 import com.parkingkok.app.detection.ActivityTransitionRegistrar
 import com.parkingkok.app.detection.DetectionRegistrationCoordinator
 import com.parkingkok.app.detection.FusedLocationSessionController
@@ -18,6 +29,8 @@ import com.parkingkok.app.diagnostics.DiagnosticsExporter
 import com.parkingkok.app.diagnostics.FileDiagnosticsReportStore
 import com.parkingkok.app.domain.parking.ParkingLocationProvider
 import com.parkingkok.app.domain.parking.ParkingRepository
+import com.parkingkok.app.domain.parking.usecase.CleanUpOrphanPhotosUseCase
+import com.parkingkok.app.domain.photo.ParkingPhotoStore
 import com.parkingkok.app.domain.trace.TraceDeviceInfo
 import com.parkingkok.app.location.CheckpointParkingLocationProvider
 import com.parkingkok.app.trace.FileTraceStore
@@ -45,6 +58,35 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
     val detectionStateStore: DetectionStateStore = DetectionStateStore(detectionDataStore(appContext))
 
     /**
+     * docs/07 "동의". Off until the user turns it on; [analyticsRecorder] re-reads it on
+     * every event, so the settings toggle stops transmission without any further wiring.
+     */
+    val analyticsConsentStore: AnalyticsConsentStore =
+        AnalyticsConsentStore(detectionDataStore(appContext))
+
+    /**
+     * **What changes when a Firebase project exists:** add a `FirebaseAnalyticsSink` that
+     * maps [com.parkingkok.app.analytics.AnalyticsPayload] onto
+     * `FirebaseAnalytics.logEvent(name, bundle)`, and pass it as `sink` here. That is the
+     * entire change — the event hierarchy, the consent gate and every call site stay as
+     * they are. Until then nothing is transmitted, because there is no
+     * `google-services.json` to transmit through (docs/07 §2).
+     */
+    val analyticsRecorder: AnalyticsRecording = AnalyticsRecorder(
+        consentStore = analyticsConsentStore,
+        sink = if (isDebuggable) LogAnalyticsSink else NoOpAnalyticsSink,
+        clock = clock,
+    )
+
+    /**
+     * Read from the merged manifest rather than `BuildConfig.DEBUG`, which does not exist —
+     * `buildConfig` is off for this module and turning it on to read one flag would slow
+     * every build. Mirrors iOS's `#if PK_DEV` guard on `OSLogAnalyticsSink`.
+     */
+    private val isDebuggable: Boolean
+        get() = (appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+
+    /**
      * Local parking storage. Opened lazily so a process started by a detection broadcast
      * does not pay for a database it will not read — the receivers touch the detection
      * DataStore only.
@@ -53,6 +95,35 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
 
     val parkingRepository: ParkingRepository by lazy {
         RoomParkingRepository(parkingDatabase.parkingRecordDao())
+    }
+
+    /**
+     * Where parking photos live: `filesDir/parking-photos`, app-private (docs/06 §4).
+     *
+     * Lazy for the same reason the database is — a process started by a detection
+     * broadcast never looks at a photo.
+     */
+    private val parkingPhotoFiles: ParkingPhotoFiles by lazy {
+        ParkingPhotoFiles(ParkingPhotoFiles.defaultDirectory(appContext.filesDir))
+    }
+
+    val parkingPhotoStore: ParkingPhotoStore by lazy {
+        FileParkingPhotoStore(parkingPhotoFiles, JpegPhotoEncoder())
+    }
+
+    val parkingPhotoImageLoader: ParkingPhotoImageLoader by lazy {
+        FileParkingPhotoImageLoader(parkingPhotoFiles)
+    }
+
+    /**
+     * The orphan sweep (FR-007 photos are sensitive local data, docs/06 §1).
+     *
+     * Exposed rather than run from [ParkingkokApplication] because it is the first thing
+     * that would open the database on a process a broadcast started, which is the cost the
+     * lazy database above exists to avoid. The shell runs it once, when there is a screen.
+     */
+    val cleanUpOrphanPhotos: CleanUpOrphanPhotosUseCase by lazy {
+        CleanUpOrphanPhotosUseCase(parkingRepository, parkingPhotoStore)
     }
 
     /**
