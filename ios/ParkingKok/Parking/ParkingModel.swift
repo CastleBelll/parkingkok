@@ -45,17 +45,20 @@ final class ParkingModel {
     private let locationProvider: any ParkingLocationProviding
     private let photoStore: any ParkingPhotoStoring
     private let clock: any DateProviding
+    private let analytics: any AnalyticsRecording
 
     init(
         store: any ParkingStoring,
         locationProvider: any ParkingLocationProviding = DetectionParkingLocationProvider(),
         photoStore: any ParkingPhotoStoring = UnavailableParkingPhotoStore(),
-        clock: any DateProviding = SystemDateProvider()
+        clock: any DateProviding = SystemDateProvider(),
+        analytics: any AnalyticsRecording = DisabledAnalyticsRecorder()
     ) {
         self.store = store
         self.locationProvider = locationProvider
         self.photoStore = photoStore
         self.clock = clock
+        self.analytics = analytics
     }
 
     var homePreviewSessions: [ParkingSession] {
@@ -107,10 +110,18 @@ final class ParkingModel {
             createdAt: now,
             updatedAt: now
         )
-        return perform {
+        let saved = perform {
             try store.startSession(session)
             refreshAfterWrite()
         }
+        // docs/17 §2 `parking_manual_saved`. After the write, never before: an event for a
+        // save that failed would overstate the feature. The payload is the event name and
+        // `platform` — floor, zone, spot and memo are §3 forbidden and `AnalyticsEvent`
+        // gives them nowhere to go.
+        if saved {
+            analytics.record(.parkingManualSaved)
+        }
+        return saved
     }
 
     /// The `-` / `+` keys on home. FR-005: only a numerically parsed floor moves.

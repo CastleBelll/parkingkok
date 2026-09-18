@@ -14,4 +14,9 @@ enum AppLog {
 
     /// Detection rehydration, checkpoint IO, motion history reconstruction.
     static let detection = Logger(subsystem: subsystem, category: "detection")
+
+    /// Analytics payloads, DEV builds only (`OSLogAnalyticsSink`). Safe by construction:
+    /// a payload's keys are `AnalyticsPayload.Key.all` and its values are buckets and
+    /// booleans, never a coordinate.
+    static let analytics = Logger(subsystem: subsystem, category: "analytics")
 }

@@ -27,7 +27,11 @@ struct ParkingComposition {
         if let container = try? SwiftDataParkingStore.makeContainer() {
             let store = SwiftDataParkingStore(container: container)
             return ParkingComposition(
-                model: ParkingModel(store: store, photoStore: photoStore),
+                model: ParkingModel(
+                    store: store,
+                    photoStore: photoStore,
+                    analytics: AnalyticsComposition.recorder
+                ),
                 storageWarning: nil,
                 store: store,
                 photoStore: photoStore
@@ -39,7 +43,11 @@ struct ParkingComposition {
         }
         let fallbackStore = SwiftDataParkingStore(container: fallback)
         return ParkingComposition(
-            model: ParkingModel(store: fallbackStore, photoStore: photoStore),
+            model: ParkingModel(
+                store: fallbackStore,
+                photoStore: photoStore,
+                analytics: AnalyticsComposition.recorder
+            ),
             storageWarning: volatileStorageWarning,
             store: fallbackStore,
             photoStore: photoStore

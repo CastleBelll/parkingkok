@@ -10,14 +10,25 @@ import UIKit
 @Observable
 final class SettingsModel {
     private let runtime: DetectionRuntime
+    private let analyticsConsent: any AnalyticsConsentStoring
+    private let analytics: any AnalyticsRecording
 
     private(set) var locationAuthorization: LocationAuthorization = .notDetermined
     private(set) var motionAuthorization: MotionAuthorization = .notDetermined
     private(set) var notificationAuthorization = "unknown"
     var isSmartDetectionEnabled = false
+    /// docs/07 "동의". Off until the user turns it on, and read back from the store rather
+    /// than assumed, so the row cannot claim a consent that was never persisted.
+    var isAnalyticsConsentGranted = false
 
-    init(runtime: DetectionRuntime = .shared) {
+    init(
+        runtime: DetectionRuntime = .shared,
+        analyticsConsent: any AnalyticsConsentStoring = AnalyticsComposition.consent,
+        analytics: any AnalyticsRecording = AnalyticsComposition.recorder
+    ) {
         self.runtime = runtime
+        self.analyticsConsent = analyticsConsent
+        self.analytics = analytics
     }
 
     func refresh() async {
@@ -25,6 +36,7 @@ final class SettingsModel {
         locationAuthorization = runtime.locationAuthorization
         motionAuthorization = runtime.motionAuthorization
         isSmartDetectionEnabled = runtime.isSmartDetectionEnabled
+        isAnalyticsConsentGranted = analyticsConsent.isGranted
         notificationAuthorization = await runtime.notificationAuthorization()
     }
 
@@ -34,6 +46,20 @@ final class SettingsModel {
         if enabled {
             runtime.requestNextLocationPermission()
         }
+        // docs/17 §2 `smart_detection_enabled` — the detection opt-in, which is a product
+        // signal. The analytics opt-in below is not reported at all.
+        analytics.record(.smartDetectionEnabled(enabled))
+        await refresh()
+    }
+
+    /// docs/07 "동의": persisted immediately, and a revocation takes effect on the next
+    /// event because `AnalyticsRecorder` re-reads the flag every time.
+    ///
+    /// Nothing is reported here, in either direction. An event on the grant would be
+    /// decided by the state before consent existed, and one on the revocation would be a
+    /// transmission after it was withdrawn.
+    func setAnalyticsConsent(_ granted: Bool) async {
+        analyticsConsent.setGranted(granted)
         await refresh()
     }
 
