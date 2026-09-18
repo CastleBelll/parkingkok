@@ -200,6 +200,18 @@ xcrun devicectl device copy from --device <device-udid> \
 8. **The boundary itself.** After a commute and half an hour at the desk, the return trip
    must be a *separate* file starting at its own first event. One file spanning both is the
    boundary failing; a file per wake is the open-session pointer failing.
+9. **The label prompt.** The only step that needs a human hand, because notification
+   permission cannot be granted from the command line on a physical device. Grant it from
+   `감지 진단 → 권한 → 알림 권한 요청`, then travel and stop for half an hour. When the
+   session rotates, a notification must appear reading
+   `이 이동, 무엇이었나요?` over a line like `14:03–14:32 · 29분 · 차량 17분 + 도보 · 이벤트 12개`,
+   with 자동차 / 버스 / 지하철 / 도보 buttons when expanded. Tap one and confirm, after
+   retrieving the directory, that the session's `label` carries that mode — and that
+   `알림 못 띄움` on the diagnostics screen stayed put. **A body containing a coordinate or
+   an address is a privacy defect, not a formatting one.** Without the grant nothing is
+   shown and `알림 못 띄움`/`traceLabelPromptSuppressedCount` climbs instead, which is the
+   expected reading and not a failure. A session with no motion event is deliberately never
+   prompted for: there is nothing a person could answer about three location fixes.
 
 ## Lint
 

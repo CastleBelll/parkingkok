@@ -58,6 +58,10 @@ protocol TraceStoring: Sendable {
     func summaries() -> [TraceSessionSummary]
     func load(id: UUID) -> TraceSession?
     func updateLabel(_ label: TraceLabel, for id: UUID) throws
+    /// Records that a closed session went unprompted because notifications are not
+    /// permitted. Cumulative and persisted — the prompt is posted from a background
+    /// process, so this is the only trace of the fact anyone will ever see.
+    func recordLabelPromptSuppressed()
     func summary() -> TraceSummary
 }
 
@@ -94,6 +98,7 @@ final class FileTraceStore: TraceStoring, @unchecked Sendable {
     private var index: [UUID: IndexEntry]?
     private var droppedSessionCount = 0
     private var nonViableDropCount = 0
+    private var labelPromptSuppressedCount = 0
     private var openSessionIdValue: UUID?
     private var hasLoadedState = false
 
@@ -258,6 +263,14 @@ final class FileTraceStore: TraceStoring, @unchecked Sendable {
         }
     }
 
+    func recordLabelPromptSuppressed() {
+        lock.withLock {
+            loadStateIfNeeded()
+            labelPromptSuppressedCount += 1
+            persistState()
+        }
+    }
+
     func summary() -> TraceSummary {
         lock.withLock {
             loadStateIfNeeded()
@@ -269,6 +282,7 @@ final class FileTraceStore: TraceStoring, @unchecked Sendable {
                 droppedSessionCount: droppedSessionCount,
                 nonViableDropCount: nonViableDropCount,
                 unlabeledSessionCount: entries.filter { !$0.isLabeled }.count,
+                labelPromptSuppressedCount: labelPromptSuppressedCount,
                 measuredSessionCount: measured.count,
                 maxGapMillis: measured.map(\.maxGapMillis).max() ?? 0,
                 sessionsOver10MinGapCount: measured.count { $0.gapsOver10MinCount > 0 },
@@ -376,6 +390,9 @@ final class FileTraceStore: TraceStoring, @unchecked Sendable {
         /// Absent in files written before the viability rule landed, where the honest
         /// reading is that nothing had been discarded for it yet.
         var nonViableDropCount: Int?
+        /// Absent in files written before label prompting landed — nothing had been
+        /// suppressed then either, because nothing was being prompted for.
+        var labelPromptSuppressedCount: Int?
     }
 
     private var stateURL: URL {
@@ -391,6 +408,7 @@ final class FileTraceStore: TraceStoring, @unchecked Sendable {
         droppedSessionCount = state.droppedSessionCount
         openSessionIdValue = state.openSessionId
         nonViableDropCount = state.nonViableDropCount ?? 0
+        labelPromptSuppressedCount = state.labelPromptSuppressedCount ?? 0
     }
 
     /// Best-effort: losing the counter costs one number in diagnostics, never a trace.
@@ -398,7 +416,8 @@ final class FileTraceStore: TraceStoring, @unchecked Sendable {
         let state = StoredState(
             droppedSessionCount: droppedSessionCount,
             openSessionId: openSessionIdValue,
-            nonViableDropCount: nonViableDropCount
+            nonViableDropCount: nonViableDropCount,
+            labelPromptSuppressedCount: labelPromptSuppressedCount
         )
         guard let data = try? JSONEncoder().encode(state) else { return }
         try? data.write(to: stateURL, options: [.atomic])

@@ -287,6 +287,12 @@ struct TraceSummary: Sendable, Equatable, Codable {
     /// 버린다"). Persisted for the same reason, and never folded into the count above.
     var nonViableDropCount = 0
     var unlabeledSessionCount = 0
+    /// Closed sessions that were worth a label prompt but could not get one because
+    /// notifications are not permitted. Persisted and cumulative, for the same reason as
+    /// the drop counters: the prompt is posted from a process nobody is watching, so a
+    /// field run that collected no labels has to be able to say *why* rather than looking
+    /// like a run where nothing moved. Named to match Android's `labelPromptSuppressedCount`.
+    var labelPromptSuppressedCount = 0
     /// Sessions carrying a measurement. Below `sessionCount` only while traces recorded
     /// before gap measurement landed are still on disk.
     var measuredSessionCount = 0

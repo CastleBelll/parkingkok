@@ -59,6 +59,9 @@ struct TraceRecorder {
     static let minimumLocationInterval: TimeInterval = 15
 
     private let store: any TraceStoring
+    /// Asked for a label whenever a viable session stops growing. `nil` disables prompting
+    /// entirely, which is what every test that is not about prompting uses.
+    private let prompter: (any TraceLabelPrompting)?
     private let metadata: TraceDeviceMetadata
     private var session: OpenSession?
     /// Newest Core Motion sample already folded in. Recorder-scoped rather than
@@ -82,9 +85,14 @@ struct TraceRecorder {
     /// signal that the watermark is rejecting live fixes, and nothing else would show it.
     private(set) var replayDropCount = 0
 
-    init(store: any TraceStoring, metadata: TraceDeviceMetadata = .current) {
+    init(
+        store: any TraceStoring,
+        metadata: TraceDeviceMetadata = .current,
+        prompter: (any TraceLabelPrompting)? = nil
+    ) {
         self.store = store
         self.metadata = metadata
+        self.prompter = prompter
     }
 
     var isRecording: Bool {
@@ -199,8 +207,9 @@ struct TraceRecorder {
     /// the history that is already recorded in the closed session.
     mutating func closeOpenSession() {
         // Opting out is a rotation in every sense that matters to §9's rule: nothing more
-        // can join this session, so "더 붙을 수 있다" no longer applies to it.
-        discardClosingSessionIfNonViable()
+        // can join this session, so "더 붙을 수 있다" no longer applies to it — including
+        // being worth a label prompt.
+        closeSession()
         session = nil
         // Nothing left on disk may be reopened either, so the lazy restore is spent.
         hasRestoredOpenSession = true
@@ -226,7 +235,7 @@ struct TraceRecorder {
         }
         if let rotation = rotationReason(at: date) {
             AppLog.detection.notice("trace session rotated: \(rotation.rawValue, privacy: .public)")
-            discardClosingSessionIfNonViable()
+            closeSession()
         }
         let opened = OpenSession(id: UUID(), startedAt: date)
         // Make room before recording, never during: eviction mid-trip would compete with
@@ -235,27 +244,40 @@ struct TraceRecorder {
         return opened
     }
 
-    /// Applies §9's viability rule to the session that just stopped growing.
+    /// Settles the session that just stopped growing: §9's viability rule first, then the
+    /// label prompt on whatever survived it.
     ///
-    /// **Rotation is the only moment this may be asked**, which is why it lives here and
-    /// not in `persist()`. Every session passes through one event on its way to two, and a
-    /// recorder that refused to write the first one would have nothing on disk to reopen
-    /// after a process death — iOS is relaunched for every significant change, so a trip
-    /// would be cut into first events that were each discarded in turn.
+    /// **Rotation — or the user switching recording off — is the only moment this may be
+    /// asked**, which is why it lives here and not in `persist()`. Every session passes
+    /// through one event on its way to two, and a recorder that refused to write the first
+    /// one would have nothing on disk to reopen after a process death — iOS is relaunched
+    /// for every significant change, so a trip would be cut into first events that were
+    /// each discarded in turn.
     ///
-    /// The file is deleted; the watermarks deliberately are not rewound. Those events were
-    /// seen, and both input streams re-deliver what they have already delivered, so a
-    /// rewind would let Core Motion's history or Core Location's cached fixes walk straight
-    /// back in and rebuild the very session that was just thrown away.
-    private mutating func discardClosingSessionIfNonViable() {
-        guard let closing = session,
-              !TraceSessionBoundaryPolicy.isViable(eventCount: closing.events.count)
-        else { return }
+    /// A discarded session is never prompted for: the file is about to be deleted, so the
+    /// answer would have nowhere to go. That is also why the two decisions are one function
+    /// rather than two calls a future edit could reorder.
+    ///
+    /// When a session is discarded the file is deleted; the watermarks deliberately are not
+    /// rewound. Those events were seen, and both input streams re-deliver what they have
+    /// already delivered, so a rewind would let Core Motion's history or Core Location's
+    /// cached fixes walk straight back in and rebuild the very session that was just
+    /// thrown away.
+    private mutating func closeSession() {
+        guard let closing = session else { return }
 
-        store.discardNonViable(id: closing.id)
-        if openSessionIdOnDisk == closing.id {
-            openSessionIdOnDisk = nil
+        guard TraceSessionBoundaryPolicy.isViable(eventCount: closing.events.count) else {
+            store.discardNonViable(id: closing.id)
+            if openSessionIdOnDisk == closing.id {
+                openSessionIdOnDisk = nil
+            }
+            return
         }
+
+        // `of` refuses a session with no motion event: three location fixes are not a
+        // question anyone could answer (docs/05 §9 labelling).
+        guard let prompter, let prompt = TraceLabelPrompt.of(closing.snapshot(metadata: metadata)) else { return }
+        prompter.requestPrompt(prompt)
     }
 
     private func rotationReason(at date: Date) -> TraceSessionBoundaryPolicy.RotationReason? {

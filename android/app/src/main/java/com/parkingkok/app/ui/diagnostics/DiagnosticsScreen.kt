@@ -1,6 +1,7 @@
 package com.parkingkok.app.ui.diagnostics
 
 import android.Manifest
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -172,6 +173,12 @@ private fun PermissionsCard(permissions: DiagnosticsPermissions, onPermissionRes
             stringResource(R.string.diagnostics_permission_location_background),
             grantedLabel(permissions.backgroundLocationGranted),
         )
+        // The label prompt is the only notification this build posts (docs/05 §9). Without
+        // it every closed session is counted as suppressed instead of being asked about.
+        LabelledValue(
+            stringResource(R.string.diagnostics_permission_notifications),
+            grantedLabel(permissions.notificationsGranted),
+        )
         Text(
             text = stringResource(R.string.diagnostics_permission_optional_note),
             style = MaterialTheme.typography.bodySmall,
@@ -180,6 +187,13 @@ private fun PermissionsCard(permissions: DiagnosticsPermissions, onPermissionRes
         if (!permissions.activityRecognitionGranted) {
             OutlinedButton(onClick = { singleLauncher.launch(Manifest.permission.ACTIVITY_RECOGNITION) }) {
                 Text(stringResource(R.string.diagnostics_request_permission))
+            }
+        }
+        // Below Android 13 there is no runtime permission to ask for: notifications are on
+        // unless the user switched them off in Settings, which no prompt can undo.
+        if (!permissions.notificationsGranted && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            OutlinedButton(onClick = { singleLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }) {
+                Text(stringResource(R.string.diagnostics_request_permission_notifications))
             }
         }
         if (!permissions.foregroundLocationGranted) {
@@ -422,6 +436,10 @@ private fun TraceGapCard(summary: TraceSummary) {
         LabelledValue(
             stringResource(R.string.diagnostics_trace_drop_non_viable),
             summary.nonViableDropCount.toString(),
+        )
+        LabelledValue(
+            stringResource(R.string.diagnostics_trace_label_prompt_suppressed),
+            summary.labelPromptSuppressedCount.toString(),
         )
         LabelledValue(
             stringResource(R.string.diagnostics_trace_unlabelled),

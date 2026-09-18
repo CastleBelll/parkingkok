@@ -78,6 +78,15 @@ struct DiagnosticsView: View {
                     Task { await model.requestMotionPermission() }
                 }
             }
+
+            // The label prompt is the only notification this build posts (docs/05 §9). No
+            // grant means every closed session is counted as suppressed instead.
+            LabeledContent("알림", value: model.notificationAuthorization)
+            if model.notificationAuthorization == "notDetermined" {
+                Button("알림 권한 요청") {
+                    Task { await model.requestNotificationPermission() }
+                }
+            }
         }
     }
 
@@ -193,6 +202,7 @@ struct DiagnosticsView: View {
             LabeledContent("상한으로 버림", value: "\(summary.droppedSessionCount)개")
             LabeledContent("이벤트 1개 이하로 버림", value: "\(summary.nonViableDropCount)개")
             LabeledContent("라벨 없음", value: "\(summary.unlabeledSessionCount)개")
+            LabeledContent("알림 못 띄움", value: "\(summary.labelPromptSuppressedCount)개")
             if model.snapshot.traceReplayDropCount > 0 {
                 LabeledContent("재전달 위치 무시", value: "\(model.snapshot.traceReplayDropCount)회")
             }
