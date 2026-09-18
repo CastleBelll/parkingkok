@@ -4,10 +4,18 @@ import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.os.Build
 import androidx.core.app.NotificationManagerCompat
+import com.google.firebase.FirebaseApp
+import com.google.firebase.analytics.FirebaseAnalytics
+import com.google.firebase.auth.FirebaseAuth
+import com.parkingkok.app.analytics.AnalyticsCollectionGate
 import com.parkingkok.app.analytics.AnalyticsConsentStore
 import com.parkingkok.app.analytics.AnalyticsRecorder
 import com.parkingkok.app.analytics.AnalyticsRecording
+import com.parkingkok.app.analytics.AnalyticsSink
+import com.parkingkok.app.analytics.FirebaseAnalyticsCollectionControl
+import com.parkingkok.app.analytics.FirebaseAnalyticsSink
 import com.parkingkok.app.analytics.LogAnalyticsSink
+import com.parkingkok.app.analytics.NoAnalyticsCollectionControl
 import com.parkingkok.app.analytics.NoOpAnalyticsSink
 import com.parkingkok.app.core.Clock
 import com.parkingkok.app.core.SystemClock
@@ -32,6 +40,10 @@ import com.parkingkok.app.domain.parking.ParkingRepository
 import com.parkingkok.app.domain.parking.usecase.CleanUpOrphanPhotosUseCase
 import com.parkingkok.app.domain.photo.ParkingPhotoStore
 import com.parkingkok.app.domain.trace.TraceDeviceInfo
+import com.parkingkok.app.identity.AnonymousIdentity
+import com.parkingkok.app.identity.FirebaseAnonymousSignIn
+import com.parkingkok.app.identity.LazyAnonymousIdentity
+import com.parkingkok.app.identity.UnavailableAnonymousIdentity
 import com.parkingkok.app.location.CheckpointParkingLocationProvider
 import com.parkingkok.app.trace.FileTraceStore
 import com.parkingkok.app.trace.NotificationLabelPromptDelivery
@@ -65,18 +77,68 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
         AnalyticsConsentStore(detectionDataStore(appContext))
 
     /**
-     * **What changes when a Firebase project exists:** add a `FirebaseAnalyticsSink` that
-     * maps [com.parkingkok.app.analytics.AnalyticsPayload] onto
-     * `FirebaseAnalytics.logEvent(name, bundle)`, and pass it as `sink` here. That is the
-     * entire change — the event hierarchy, the consent gate and every call site stay as
-     * they are. Until then nothing is transmitted, because there is no
-     * `google-services.json` to transmit through (docs/07 §2).
+     * The Firebase project, or null on a build that had no `google-services.json`
+     * (CI, fork PRs — see the conditional plugin in `app/build.gradle.kts`).
+     *
+     * Read rather than created: `FirebaseInitProvider` has already run by the time an
+     * `Application` exists. Creating the [FirebaseApp] is local work — it reads the
+     * generated resources and builds an options object — and the manifest's
+     * `firebase_analytics_collection_enabled=false` is what keeps the SDK from doing
+     * anything else with it until consent arrives.
      */
-    val analyticsRecorder: AnalyticsRecording = AnalyticsRecorder(
-        consentStore = analyticsConsentStore,
-        sink = if (isDebuggable) LogAnalyticsSink else NoOpAnalyticsSink,
-        clock = clock,
-    )
+    private val firebaseApp: FirebaseApp? = FirebaseApp.getApps(appContext).firstOrNull()
+
+    private val firebaseAnalytics: FirebaseAnalytics? by lazy {
+        firebaseApp?.let { FirebaseAnalytics.getInstance(appContext) }
+    }
+
+    /**
+     * docs/07 "동의", the half the settings toggle alone cannot cover: Firebase collects
+     * `session_start` and friends on its own, behind [analyticsRecorder]'s back.
+     * [ParkingkokApplication] runs this for the life of the process.
+     */
+    val analyticsCollectionGate: AnalyticsCollectionGate by lazy {
+        AnalyticsCollectionGate(
+            consentStore = analyticsConsentStore,
+            control = firebaseAnalytics?.let(::FirebaseAnalyticsCollectionControl)
+                ?: NoAnalyticsCollectionControl,
+        )
+    }
+
+    /**
+     * docs/07 §2 fixed Firebase Analytics as the transport. A build without a Firebase
+     * project keeps the pre-Firebase behaviour — a local readout in a debuggable build,
+     * nothing at all otherwise — rather than pretending to have one.
+     */
+    private val analyticsSink: AnalyticsSink by lazy {
+        firebaseAnalytics?.let(::FirebaseAnalyticsSink)
+            ?: if (isDebuggable) LogAnalyticsSink else NoOpAnalyticsSink
+    }
+
+    /**
+     * Lazy so that a process started by a detection broadcast does not spin up
+     * AppMeasurement for a recorder it never calls — the same reason the database and the
+     * photo store below are lazy.
+     */
+    val analyticsRecorder: AnalyticsRecording by lazy {
+        AnalyticsRecorder(
+            consentStore = analyticsConsentStore,
+            sink = analyticsSink,
+            clock = clock,
+        )
+    }
+
+    /**
+     * docs/07 §4 / §13: the technical anonymous identity, created at the moment a backend
+     * call first needs a caller and never before. No screen awaits it — see
+     * [AnonymousIdentity].
+     */
+    val anonymousIdentity: AnonymousIdentity by lazy {
+        firebaseApp
+            ?.let { LazyAnonymousIdentity(FirebaseAnonymousSignIn(FirebaseAuth.getInstance(it))) }
+            ?: UnavailableAnonymousIdentity
+    }
+
 
     /**
      * Read from the merged manifest rather than `BuildConfig.DEBUG`, which does not exist —

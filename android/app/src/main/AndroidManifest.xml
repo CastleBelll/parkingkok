@@ -39,6 +39,33 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.Parkingkok">
+
+        <!-- ══ Firebase Analytics starts switched OFF (docs/07 "동의") ══════════════
+             The SDK collects by default, and `FirebaseInitProvider` runs before
+             `Application.onCreate`, so by the time any of our code could object the first
+             automatic events would already be queued. These flags are what make the
+             consent gate real rather than advisory: nothing is collected or uploaded until
+             `FirebaseAnalyticsCollectionControl` turns collection on, which happens only
+             while the stored consent flag is true.
+
+             `firebase_analytics_collection_enabled`, not `..._deactivated`: deactivated is
+             permanent and could never be undone at runtime, so consenting later would do
+             nothing. This one is a default that `setAnalyticsCollectionEnabled` overrides.
+
+             The adid/ssaid flags stay off permanently. docs/17 §3 fixes the property list
+             and no advertising or device identifier is on it; docs/17 §5 forbids invasive
+             fingerprinting outright. There is no consent state in which the app wants
+             these, so they are not wired to the toggle. -->
+        <meta-data
+            android:name="firebase_analytics_collection_enabled"
+            android:value="false" />
+        <meta-data
+            android:name="google_analytics_adid_collection_enabled"
+            android:value="false" />
+        <meta-data
+            android:name="google_analytics_ssaid_collection_enabled"
+            android:value="false" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true">
