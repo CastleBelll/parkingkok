@@ -1,5 +1,17 @@
 package com.parkingkok.app.ui.home
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -8,10 +20,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -37,6 +49,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.parkingkok.app.R
 import com.parkingkok.app.domain.parking.ElapsedTime
@@ -47,16 +60,22 @@ import com.parkingkok.app.domain.parking.ParkingRecord
 import com.parkingkok.app.domain.parking.ParkingSource
 import com.parkingkok.app.domain.photo.PhotoSource
 import com.parkingkok.app.theme.ParkingkokTheme
+import com.parkingkok.app.theme.elevation
 import com.parkingkok.app.theme.spacing
 import com.parkingkok.app.ui.components.BrandFooter
 import com.parkingkok.app.ui.components.BrandHeader
 import com.parkingkok.app.ui.components.IconChip
 import com.parkingkok.app.ui.components.ParkingkokCard
+import com.parkingkok.app.ui.components.PrimaryCtaButton
 import com.parkingkok.app.ui.components.ParkingkokRow
 import com.parkingkok.app.ui.components.ParkingkokScreen
 import com.parkingkok.app.ui.components.StaticLocationArtwork
 import com.parkingkok.app.ui.components.RowChevron
+import com.parkingkok.app.ui.components.NotificationsAction
 import com.parkingkok.app.ui.components.SettingsAction
+import com.parkingkok.app.ui.motion.LocalMotionEnabled
+import com.parkingkok.app.ui.motion.MotionDurations
+import com.parkingkok.app.ui.motion.pressScale
 import com.parkingkok.app.ui.UiNotice
 import com.parkingkok.app.ui.photo.ParkingPhotoPicker
 import com.parkingkok.app.ui.format.dayText
@@ -80,6 +99,7 @@ fun HomeScreen(
     onOpenDetail: (String) -> Unit,
     onOpenHistory: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenNotificationSettings: () -> Unit,
     onDirections: () -> Unit,
     onPhotoSelected: (PhotoSource) -> Unit,
     onCameraUnavailable: () -> Unit,
@@ -90,22 +110,28 @@ fun HomeScreen(
 
     ParkingkokScreen(
         modifier = modifier,
-        header = { BrandHeader(action = { SettingsAction(onOpenSettings) }) },
+        header = {
+            BrandHeader(
+                actions = {
+                    NotificationsAction(onOpenNotificationSettings)
+                    SettingsAction(onOpenSettings)
+                },
+            )
+        },
         footer = { BrandFooter() },
     ) {
         if (!state.loaded) return@ParkingkokScreen
 
         val active = state.active
-        if (active == null) {
-            item("empty") { NotParkedCard(onSaveParking = onSaveParking) }
-        } else {
-            item("active") {
-                ActiveParkingCard(
-                    record = active,
-                    nowMillis = state.nowMillis,
-                    onStepFloor = onStepFloor,
-                )
-            }
+        item("hero") {
+            HeroSlot(
+                active = active,
+                nowMillis = state.nowMillis,
+                onStepFloor = onStepFloor,
+                onSaveParking = onSaveParking,
+            )
+        }
+        if (active != null) {
             item("actions") {
                 PrimaryActions(
                     canOpenMap = state.canOpenMap,
@@ -161,6 +187,51 @@ fun HomeScreen(
 }
 
 /**
+ * The one card at the top of the screen, whichever card that currently is.
+ *
+ * Saving or ending a parking swaps the whole hero. It crossfades and resizes rather than
+ * appearing, because the two cards are the same object in two states — a pop would read as
+ * a second card arriving, and would put a bounce on the most important moment in the app.
+ */
+@Composable
+private fun HeroSlot(
+    active: ParkingRecord?,
+    nowMillis: Long,
+    onStepFloor: (Int) -> Unit,
+    onSaveParking: () -> Unit,
+) {
+    val motionEnabled = LocalMotionEnabled.current
+    AnimatedContent(
+        targetState = active,
+        // Keyed on identity, so the ticking elapsed line updates the card in place instead
+        // of crossfading it once a minute.
+        contentKey = { it?.id },
+        transitionSpec = {
+            if (motionEnabled) {
+                val spec = tween<Float>(MotionDurations.CARD_SWAP_MS)
+                fadeIn(spec) togetherWith fadeOut(spec) using
+                    SizeTransform(clip = false) { _, _ ->
+                        tween(MotionDurations.CARD_SWAP_MS)
+                    }
+            } else {
+                EnterTransition.None togetherWith ExitTransition.None using null
+            }
+        },
+        label = "hero",
+    ) { record ->
+        if (record == null) {
+            NotParkedCard(onSaveParking = onSaveParking)
+        } else {
+            ActiveParkingCard(
+                record = record,
+                nowMillis = nowMillis,
+                onStepFloor = onStepFloor,
+            )
+        }
+    }
+}
+
+/**
  * The hero. Floor first and largest, then zone/spot, then elapsed — §6 items 1 to 3.
  *
  * The mockup puts a map thumbnail beside the hero. It is drawn, never fetched: Android's
@@ -175,7 +246,8 @@ private fun ActiveParkingCard(
     nowMillis: Long,
     onStepFloor: (Int) -> Unit,
 ) {
-    ParkingkokCard {
+    // One step nearer than the rows below it: this is the card the screen is about.
+    ParkingkokCard(elevation = MaterialTheme.elevation.hero) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             // The live dot is paired with the words beside it; §8 of
             // docs/01_PRODUCT_REQUIREMENTS.md rules out signalling state by colour alone.
@@ -229,8 +301,9 @@ private fun ActiveParkingCard(
             if (record.location != null) {
                 Spacer(Modifier.width(MaterialTheme.spacing.medium))
                 StaticLocationArtwork(
-                    modifier = Modifier.size(width = 132.dp, height = 112.dp),
+                    modifier = Modifier.size(width = 136.dp, height = 116.dp),
                     pinLabel = record.floor?.displayLabel,
+                    zoneLabel = record.zone,
                     pinSize = 26.dp,
                 )
             }
@@ -258,22 +331,57 @@ private fun ActiveParkingCard(
 private fun FloorHero(floor: Floor?, spokenPrefix: String) {
     val label = floor?.displayLabel ?: stringResource(R.string.home_no_floor)
     val spoken = floor?.spokenLabel ?: label
-    Text(
-        text = label,
-        style = if (label.length <= HERO_MAX_CHARS) {
-            MaterialTheme.typography.displayLarge
-        } else {
-            MaterialTheme.typography.displayMedium
+    val motionEnabled = LocalMotionEnabled.current
+    // The ladder position, so a `+` rolls the value upward and a `-` rolls it down.
+    val rung = floor?.signedIndex ?: 0
+
+    AnimatedContent(
+        targetState = label to rung,
+        transitionSpec = {
+            if (!motionEnabled) {
+                EnterTransition.None togetherWith ExitTransition.None using null
+            } else {
+                val rising = targetState.second > initialState.second
+                val spec = tween<Float>(MotionDurations.FLOOR_SWAP_MS)
+                val travel = tween<IntOffset>(MotionDurations.FLOOR_SWAP_MS)
+                val enter = fadeIn(spec) + slideInVertically(travel) { height ->
+                    if (rising) height / HERO_ROLL_DIVISOR else -height / HERO_ROLL_DIVISOR
+                }
+                val exit = fadeOut(spec) + slideOutVertically(travel) { height ->
+                    if (rising) -height / HERO_ROLL_DIVISOR else height / HERO_ROLL_DIVISOR
+                }
+                // clip = false so a value rolling past the edge is not cut off mid-flight.
+                enter togetherWith exit using SizeTransform(clip = false)
+            }
         },
-        color = MaterialTheme.colorScheme.onSurface,
-        maxLines = 2,
-        overflow = TextOverflow.Ellipsis,
-        // TalkBack reads "B3" letter by letter; docs/10 §12 asks for "지하 3층".
+        // The whole hero is one TalkBack node, so the animation cannot make it stutter.
         modifier = Modifier.semantics { contentDescription = "$spokenPrefix, $spoken" },
-    )
+        label = "floorHero",
+    ) { (value, _) ->
+        Text(
+            text = value,
+            style = if (value.length <= HERO_MAX_CHARS) {
+                MaterialTheme.typography.displayLarge
+            } else {
+                MaterialTheme.typography.displayMedium
+            },
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.clearAndSetSemantics { },
+        )
+    }
 }
 
-/** The `-` / `+` keys of §6 item 4. Disabled, with a reason, when the floor is free text. */
+/**
+ * The `-` / `+` keys of §6 item 4. Disabled, with a reason, when the floor is free text.
+ *
+ * Two keys sized to what they hold, with a hairline between them — `01-home-main.png`
+ * gives them about half the card's width in total. They used to be a pair of full-bleed
+ * slabs, which made nudging the floor look like the card's primary action; it is not, the
+ * floor itself is. They stay [STEPPER_HEIGHT] tall so the touch target is never below the
+ * minimum in docs/01_PRODUCT_REQUIREMENTS.md §8.
+ */
 @Composable
 private fun FloorStepper(floor: Floor?, onStepFloor: (Int) -> Unit) {
     val steppable = floor?.isSteppable == true
@@ -288,6 +396,12 @@ private fun FloorStepper(floor: Floor?, onStepFloor: (Int) -> Unit) {
                 enabled = steppable && FloorParser.step(floor, -1) != null,
                 onClick = { onStepFloor(-1) },
             )
+            Box(
+                Modifier
+                    .width(1.dp)
+                    .height(STEPPER_DIVIDER_HEIGHT)
+                    .background(MaterialTheme.colorScheme.outlineVariant),
+            )
             StepperKey(
                 iconRes = R.drawable.ic_plus,
                 contentDescription = stringResource(R.string.home_floor_increase),
@@ -295,7 +409,7 @@ private fun FloorStepper(floor: Floor?, onStepFloor: (Int) -> Unit) {
                 onClick = { onStepFloor(1) },
             )
         }
-        Spacer(Modifier.height(MaterialTheme.spacing.small))
+        Spacer(Modifier.height(MaterialTheme.spacing.medium))
         Text(
             text = stringResource(
                 if (steppable) R.string.home_floor_hint else R.string.home_floor_hint_fixed,
@@ -314,6 +428,7 @@ private fun StepperKey(
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
     Button(
         onClick = onClick,
         enabled = enabled,
@@ -322,12 +437,18 @@ private fun StepperKey(
             containerColor = MaterialTheme.colorScheme.primaryContainer,
             contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
         ),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+        contentPadding = PaddingValues(0.dp),
+        interactionSource = interactionSource,
         modifier = Modifier
-            .width(96.dp)
-            .height(MaterialTheme.spacing.touchTarget + 8.dp),
+            .width(STEPPER_WIDTH)
+            .height(STEPPER_HEIGHT)
+            .pressScale(interactionSource),
     ) {
-        Icon(painter = painterResource(iconRes), contentDescription = contentDescription)
+        Icon(
+            painter = painterResource(iconRes),
+            contentDescription = contentDescription,
+            modifier = Modifier.size(STEPPER_GLYPH),
+        )
     }
 }
 
@@ -440,32 +561,12 @@ private fun PrimaryActions(
                 trailing = { RowChevron() },
             )
         }
-        Button(
+        PrimaryCtaButton(
+            iconRes = R.drawable.ic_flag,
+            label = stringResource(R.string.home_end_parking),
+            caption = stringResource(R.string.home_end_parking_caption),
             onClick = onEndParking,
-            shape = MaterialTheme.shapes.small,
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 64.dp),
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_flag),
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp),
-                    )
-                    Spacer(Modifier.width(MaterialTheme.spacing.small))
-                    Text(
-                        text = stringResource(R.string.home_end_parking),
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                }
-                Text(
-                    text = stringResource(R.string.home_end_parking_caption),
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-        }
+        )
     }
 }
 
@@ -508,12 +609,19 @@ private fun NotParkedCard(onSaveParking: () -> Unit) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(MaterialTheme.spacing.large))
+        val saveInteraction = remember { MutableInteractionSource() }
         Button(
             onClick = onSaveParking,
             shape = MaterialTheme.shapes.small,
+            contentPadding = PaddingValues(
+                horizontal = MaterialTheme.spacing.large,
+                vertical = MaterialTheme.spacing.medium,
+            ),
+            interactionSource = saveInteraction,
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = MaterialTheme.spacing.touchTarget + 8.dp),
+                .heightIn(min = MaterialTheme.spacing.touchTarget + 8.dp)
+                .pressScale(saveInteraction),
         ) {
             Icon(
                 painter = painterResource(R.drawable.ic_place),
@@ -594,6 +702,20 @@ private fun RecentRow(record: ParkingRecord, nowMillis: Long, onClick: () -> Uni
 /** Longer than this and the 60sp hero stops fitting on a narrow phone. */
 private const val HERO_MAX_CHARS = 4
 
+/** A floor rolls in from a third of its own height away — a nudge, not a slot machine. */
+private const val HERO_ROLL_DIVISOR = 3
+
+/** Wide enough for the glyph and a thumb, narrow enough not to look like the main action. */
+private val STEPPER_WIDTH = 64.dp
+
+/** The minimum touch target of docs/01_PRODUCT_REQUIREMENTS.md §8, exactly. */
+private val STEPPER_HEIGHT = 48.dp
+
+private val STEPPER_GLYPH = 22.dp
+
+/** Shorter than the keys, so it reads as a separator and not as a third control. */
+private val STEPPER_DIVIDER_HEIGHT = 26.dp
+
 @Preview(name = "Home - parked", showBackground = true)
 @Composable
 private fun HomeParkedPreview() {
@@ -611,6 +733,7 @@ private fun HomeParkedPreview() {
             onOpenDetail = {},
             onOpenHistory = {},
             onOpenSettings = {},
+            onOpenNotificationSettings = {},
             onDirections = {},
             onPhotoSelected = {},
             onCameraUnavailable = {},
@@ -631,6 +754,7 @@ private fun HomeEmptyPreview() {
             onOpenDetail = {},
             onOpenHistory = {},
             onOpenSettings = {},
+            onOpenNotificationSettings = {},
             onDirections = {},
             onPhotoSelected = {},
             onCameraUnavailable = {},

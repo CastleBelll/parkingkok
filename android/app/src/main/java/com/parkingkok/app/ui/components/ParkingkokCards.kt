@@ -20,6 +20,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -28,22 +29,47 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.parkingkok.app.R
+import com.parkingkok.app.theme.elevation
 import com.parkingkok.app.theme.spacing
 
 /**
- * The primary card of `01-home-main.png` — a white panel on the page tint, separated by
- * radius and surface colour rather than shadow (docs/10_DESIGN_UX_SPEC.md §5: "avoid
- * excessive shadows; prefer border/surface separation").
+ * The primary card of `01-home-main.png` — a white panel lifted off the page tint.
+ *
+ * ## Why there is a shadow
+ *
+ * docs/10_DESIGN_UX_SPEC.md §5 says "avoid excessive shadows; prefer border/surface
+ * separation", and this card used to read that as "no shadow at all". On a `#F7F9FC` page
+ * a `#FFFFFF` card with no shadow and no border is a rectangle you have to look for, and
+ * a screen of them reads as a wireframe rather than a product. The mockups §5 points at
+ * do lift their cards, with one wide and very soft shadow. That is what
+ * [com.parkingkok.app.theme.ParkingkokElevation] provides: a single low elevation, tinted
+ * navy rather than black, and nothing stacked inside it.
+ *
+ * [elevation] exists so the active-parking hero can sit one step nearer than the rows
+ * under it, and so a card nested inside another can go flat — a shadow inside a shadow is
+ * the excess §5 is about.
  */
 @Composable
 fun ParkingkokCard(
     modifier: Modifier = Modifier,
     contentPadding: Dp = MaterialTheme.spacing.card,
+    elevation: Dp = MaterialTheme.elevation.card,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    val shape = MaterialTheme.shapes.extraLarge
+    val shadowTint = MaterialTheme.elevation.tint
     Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.extraLarge,
+        modifier = modifier
+            .fillMaxWidth()
+            .shadow(
+                elevation = elevation,
+                shape = shape,
+                // The card clips itself; clipping here as well would cost a second layer.
+                clip = false,
+                ambientColor = shadowTint,
+                spotColor = shadowTint,
+            ),
+        shape = shape,
         color = MaterialTheme.colorScheme.surface,
     ) {
         Column(Modifier.padding(contentPadding), content = content)
