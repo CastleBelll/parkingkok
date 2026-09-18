@@ -678,11 +678,15 @@ private fun RecentEmpty() {
 
 @Composable
 private fun RecentRow(record: ParkingRecord, nowMillis: Long, onClick: () -> Unit) {
-    val title = listOfNotNull(record.floor?.displayLabel, record.zone).joinToString(" · ")
-        .ifEmpty { stringResource(R.string.home_no_floor) }
+    // `01-home-main.png` draws this row on one line: floor and day in the title, the
+    // clock alone on the right. The zone belongs to the full history screen, whose title
+    // is not already carrying the date. Keeping the day on a second supporting line cost
+    // the row a whole line and drifted from iOS, which reads `B2 · 어제  오후 2:32`.
+    val floor = record.floor?.displayLabel ?: stringResource(R.string.home_no_floor)
+    val title = "$floor · ${dayText(record.startedAtMillis, nowMillis)}"
     ParkingkokRow(
         title = title,
-        supporting = dayText(record.startedAtMillis, nowMillis),
+        supporting = null,
         iconRes = R.drawable.ic_car,
         onClick = onClick,
         trailing = {
