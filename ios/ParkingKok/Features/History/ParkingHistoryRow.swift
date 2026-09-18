@@ -33,8 +33,13 @@ struct ParkingHistoryRow: View {
 
             Spacer(minLength: PKSpacing.s)
 
+            // Home carries the day in the title, so only the clock is left here and the
+            // row collapses to a single line, the way `01-home-main.png` draws it. The
+            // full list keeps both stacked: its title is already spent on zone and spot.
             VStack(alignment: .trailing, spacing: 2) {
-                Text(ParkingDateText.day(session.startedAt))
+                if style == .full {
+                    Text(ParkingDateText.day(session.startedAt))
+                }
                 Text(ParkingDateText.time(session.startedAt))
             }
             .font(PKTypography.supporting)
@@ -54,10 +59,12 @@ struct ParkingHistoryRow: View {
         .accessibilityAddTraits(.isButton)
     }
 
-    /// `B3 · A구역 142` in the full list; just the floor on home.
+    /// `B3 · A구역 142` in the full list; `B2 · 어제` on home.
     private var title: String {
         let floor = session.floor?.displayText ?? "층 미입력"
-        guard style == .full else { return floor }
+        guard style == .full else {
+            return "\(floor) · \(ParkingDateText.day(session.startedAt))"
+        }
         let place = [session.zone, session.spot].compactMap(\.self).joined(separator: " ")
         return place.isEmpty ? floor : "\(floor) · \(place)"
     }

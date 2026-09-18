@@ -144,13 +144,17 @@ private struct PKTagline: View {
     var body: some View {
         HStack(alignment: .center, spacing: PKSpacing.xs) {
             Text("주차는 쉽고\n일상은 더 가볍게")
-                .font(.system(.caption2, design: .rounded, weight: .medium))
+                .font(.system(.caption2, design: .rounded, weight: .regular))
                 .multilineTextAlignment(.trailing)
                 .lineSpacing(1)
             Image(systemName: "face.smiling")
-                .font(.system(size: 13, weight: .regular))
+                .font(.system(size: 12, weight: .regular))
         }
-        .foregroundStyle(PKColor.textSecondary)
+        // The mock's aside sits *behind* the controls above it, not beside them. At the
+        // token's full strength it reads as a second caption competing with the bell and
+        // the gear; damped, it recedes the way handwriting on a card does. This applies
+        // the existing token rather than introducing a tertiary one — same palette.
+        .foregroundStyle(PKColor.textSecondary.opacity(0.7))
         .padding(.trailing, PKSpacing.xs)
         // Brand decoration, not information: it says nothing the screen does not, and
         // VoiceOver reading it before the parking would bury the one thing that matters.
