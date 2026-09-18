@@ -286,7 +286,7 @@ struct ParkingDetailView: View {
                 systemImage: "flag.checkered"
             ) {
                 pkWithAnimation(PKMotion.sessionChange, reduceMotion: reduceMotion) {
-                    model.endActiveParking()
+                    _ = model.endActiveParking()
                 }
                 dismiss()
             }

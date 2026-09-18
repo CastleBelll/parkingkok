@@ -70,7 +70,7 @@ struct HomeView: View {
                         systemImage: "flag.checkered"
                     ) {
                         pkWithAnimation(PKMotion.sessionChange, reduceMotion: reduceMotion) {
-                            model.endActiveParking()
+                            _ = model.endActiveParking()
                         }
                     }
                     .pkEntrance(3)
