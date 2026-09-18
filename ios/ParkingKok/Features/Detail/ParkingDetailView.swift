@@ -1,11 +1,20 @@
+import PhotosUI
 import SwiftUI
+import UIKit
 
 /// One parking in full (`design-references/03-parking-detail.png`).
 ///
-/// The mock's map and photo panels are absent: FR-008 (map) and FR-007 (photo) are not
-/// in this milestone, and a placeholder map would claim a precision the app does not
-/// have. What the map was there to communicate — how well the location is known — is
-/// stated instead, with FR-008's `마지막으로 확인된 위치` wording.
+/// Order follows the mock: map, summary, facts, the two secondary calls to action
+/// (`길찾기` · `사진 보기`), the photo panel, then `주차 종료`. docs/19 §3 fixes those
+/// three as the primary CTAs of this screen.
+///
+/// Two things the mock shows that this cannot honestly reproduce:
+/// - Its map pin claims a spot. FR-008 forbids wording or imagery that asserts the exact
+///   car position, so `ParkingMapCard` draws the `horizontalAccuracy` circle under the
+///   pin and captions it `마지막으로 확인된 위치`.
+/// - Its `길찾기` and `사진 보기` are always live. A record saved without location
+///   permission (FR-001) has nothing to navigate to, so `길찾기` is disabled and says
+///   why rather than opening a map of nowhere.
 struct ParkingDetailView: View {
     @Bindable private var model: ParkingModel
     private let sessionID: UUID
@@ -15,6 +24,13 @@ struct ParkingDetailView: View {
     @State private var isConfirmingDelete = false
     @State private var displayNow = Date()
 
+    @State private var photoPhase: ParkingPhotoPhase = .empty
+    @State private var isChoosingPhotoSource = false
+    @State private var isPickingFromLibrary = false
+    @State private var isCapturingPhoto = false
+    @State private var isViewingPhoto = false
+    @State private var libraryItem: PhotosPickerItem?
+
     init(model: ParkingModel, sessionID: UUID) {
         self.model = model
         self.sessionID = sessionID
@@ -23,9 +39,24 @@ struct ParkingDetailView: View {
     var body: some View {
         PKScreen {
             if let session {
+                if let point = ParkingMapPoint(session) {
+                    ParkingMapCard(point: point, floorText: session.floor?.displayText)
+                } else {
+                    ParkingMapUnavailableCard()
+                }
                 summaryCard(session)
                 factsCard(session)
-                actions(session)
+                if let failure = model.failure {
+                    PKNoticeCard(text: failure)
+                }
+                secondaryActions(session)
+                ParkingPhotoCard(
+                    phase: photoPhase,
+                    now: displayNow,
+                    onAdd: beginAddingPhoto,
+                    onOpen: { isViewingPhoto = true }
+                )
+                primaryActions(session)
             } else {
                 Text("기록을 찾을 수 없어요.")
                     .font(PKTypography.supporting)
@@ -43,6 +74,9 @@ struct ParkingDetailView: View {
             }
         }
         .onAppear { displayNow = model.now }
+        // Storage work belongs in a task, never in `body` (docs/16 §5). Keyed on the
+        // stored path so attaching or removing a photo reloads exactly once.
+        .task(id: session?.photoRelativePath) { await loadPhoto() }
         .sheet(isPresented: $isEditing) {
             if let session {
                 ManualParkingSheet(model: model, editing: session)
@@ -50,22 +84,58 @@ struct ParkingDetailView: View {
         }
         .confirmationDialog("이 주차 기록을 삭제할까요?", isPresented: $isConfirmingDelete, titleVisibility: .visible) {
             Button("삭제", role: .destructive) {
-                model.delete(id: sessionID)
-                dismiss()
+                Task {
+                    await model.delete(id: sessionID)
+                    dismiss()
+                }
             }
             Button("취소", role: .cancel) {}
         } message: {
-            Text("삭제한 기록은 되돌릴 수 없어요.")
+            Text("삭제한 기록은 되돌릴 수 없어요. 저장된 사진도 함께 삭제돼요.")
+        }
+        .confirmationDialog("사진 추가", isPresented: $isChoosingPhotoSource, titleVisibility: .visible) {
+            ForEach(ParkingPhotoSource.available) { source in
+                Button(source.title) { present(source) }
+            }
+            Button("취소", role: .cancel) {}
+        }
+        // The system picker runs out of process, so no photo-library permission is
+        // requested and none is declared in Info.plist.
+        .photosPicker(
+            isPresented: $isPickingFromLibrary,
+            selection: $libraryItem,
+            matching: .images,
+            photoLibrary: .shared()
+        )
+        .fullScreenCover(isPresented: $isCapturingPhoto) {
+            CameraPhotoPicker(
+                onPicked: { data in
+                    isCapturingPhoto = false
+                    Task { await model.attachPhoto(data, to: sessionID) }
+                },
+                onCancel: { isCapturingPhoto = false }
+            )
+            .ignoresSafeArea()
+        }
+        .fullScreenCover(isPresented: $isViewingPhoto) {
+            if case let .loaded(image, _) = photoPhase {
+                ParkingPhotoViewer(image: image) {
+                    Task { await model.removePhoto(from: sessionID) }
+                }
+            }
+        }
+        .onChange(of: libraryItem) { _, item in
+            guard let item else { return }
+            Task { await attachPickedLibraryItem(item) }
         }
     }
 
     /// Read through the model so an edit made in the sheet is reflected here.
     private var session: ParkingSession? {
-        if let active = model.activeSession, active.id == sessionID {
-            return active
-        }
-        return model.completedSessions.first { $0.id == sessionID }
+        model.session(id: sessionID)
     }
+
+    // ── Cards ───────────────────────────────────────────────────────────────
 
     private func summaryCard(_ session: ParkingSession) -> some View {
         PKCard {
@@ -133,7 +203,7 @@ struct ParkingDetailView: View {
                 divider
                 DetailFactRow(
                     icon: "scope",
-                    title: "마지막으로 확인된 위치",
+                    title: ParkingMapPoint.label,
                     value: locationText(session)
                 )
             }
@@ -144,10 +214,7 @@ struct ParkingDetailView: View {
     /// FR-008 forbids wording that implies the exact car position, and the accuracy is
     /// the honest version of it. No location at all is the FR-001 case and says so.
     private func locationText(_ session: ParkingSession) -> String {
-        guard let location = session.location else {
-            return "저장 안 됨"
-        }
-        return "약 \(Int(location.horizontalAccuracy.rounded()))m 이내"
+        ParkingMapPoint(session)?.accuracyText ?? "저장 안 됨"
     }
 
     private var divider: some View {
@@ -157,8 +224,50 @@ struct ParkingDetailView: View {
             .padding(.leading, PKSpacing.xxl + PKSpacing.l)
     }
 
+    // ── Actions ─────────────────────────────────────────────────────────────
+
+    /// The mock's pair: `길찾기` and `사진 보기`, side by side under the facts.
     @ViewBuilder
-    private func actions(_ session: ParkingSession) -> some View {
+    private func secondaryActions(_ session: ParkingSession) -> some View {
+        let point = ParkingMapPoint(session)
+        VStack(spacing: PKSpacing.s) {
+            HStack(spacing: PKSpacing.m) {
+                Button {
+                    if let point {
+                        ParkingDirections.open(point)
+                    }
+                } label: {
+                    Label("길찾기", systemImage: "location.fill")
+                }
+                .buttonStyle(PKSoftButtonStyle())
+                .disabled(point == nil)
+                .opacity(point == nil ? 0.4 : 1)
+                .accessibilityHint("지도 앱에서 걸어가는 길을 엽니다")
+
+                Button(action: openOrAddPhoto) {
+                    Label(photoActionTitle, systemImage: "camera.fill")
+                }
+                .buttonStyle(PKSoftButtonStyle())
+            }
+            if point == nil {
+                // Same reasoning as the home screen's floor-stepper hint: a dimmed button
+                // with no explanation reads as a bug.
+                Text("위치 없이 저장된 기록이라 길찾기를 쓸 수 없어요.")
+                    .font(PKTypography.caption)
+                    .foregroundStyle(PKColor.textSecondary)
+            }
+        }
+    }
+
+    private var photoActionTitle: String {
+        if case .loaded = photoPhase {
+            return "사진 보기"
+        }
+        return "사진 추가"
+    }
+
+    @ViewBuilder
+    private func primaryActions(_ session: ParkingSession) -> some View {
         if session.isActive {
             PKPrimaryActionButton(
                 title: "주차 종료",
@@ -173,6 +282,58 @@ struct ParkingDetailView: View {
             .font(PKTypography.row)
             .tint(PKColor.danger)
             .frame(maxWidth: .infinity, minHeight: PKSize.minimumTouchTarget)
+    }
+
+    // ── Photo ───────────────────────────────────────────────────────────────
+
+    private func openOrAddPhoto() {
+        if case .loaded = photoPhase {
+            isViewingPhoto = true
+        } else {
+            beginAddingPhoto()
+        }
+    }
+
+    /// Skips the chooser when there is nothing to choose — a device with no camera, or
+    /// one where camera access is off, leaves only the library.
+    private func beginAddingPhoto() {
+        let sources = ParkingPhotoSource.available
+        if sources.count == 1, let only = sources.first {
+            present(only)
+        } else {
+            isChoosingPhotoSource = true
+        }
+    }
+
+    private func present(_ source: ParkingPhotoSource) {
+        switch source {
+        case .camera: isCapturingPhoto = true
+        case .library: isPickingFromLibrary = true
+        }
+    }
+
+    private func attachPickedLibraryItem(_ item: PhotosPickerItem) async {
+        defer { libraryItem = nil }
+        // `Data` rather than `Image`: the original bytes go straight to ImageIO, which
+        // downsamples without ever decoding the full-resolution image (docs/11 §12).
+        guard let data = try? await item.loadTransferable(type: Data.self) else {
+            photoPhase = .empty
+            return
+        }
+        await model.attachPhoto(data, to: sessionID)
+    }
+
+    private func loadPhoto() async {
+        guard let session, session.photoRelativePath != nil else {
+            photoPhase = .empty
+            return
+        }
+        photoPhase = .loading
+        guard let photo = await model.photo(for: session), let image = UIImage(data: photo.data) else {
+            photoPhase = .missing
+            return
+        }
+        photoPhase = .loaded(image: Image(uiImage: image), savedAt: photo.savedAt)
     }
 }
 

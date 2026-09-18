@@ -29,10 +29,10 @@ struct HomeView: View {
             PKBrandHeader { path.append(.settings) }
 
             if let storageWarning {
-                HomeNoticeCard(text: storageWarning, tone: .warning)
+                PKNoticeCard(text: storageWarning)
             }
             if let failure = model.failure {
-                HomeNoticeCard(text: failure, tone: .warning)
+                PKNoticeCard(text: failure)
             }
 
             if let active = model.activeSession {
@@ -84,30 +84,6 @@ struct HomeView: View {
             for await _ in ClockTicker.minutes() {
                 displayNow = model.now
             }
-        }
-    }
-}
-
-/// A full-width advisory — a storage fallback, or a store error.
-private struct HomeNoticeCard: View {
-    enum Tone {
-        case warning
-    }
-
-    let text: String
-    let tone: Tone
-
-    var body: some View {
-        PKCard(radius: PKRadius.row) {
-            HStack(alignment: .top, spacing: PKSpacing.m) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(PKColor.danger)
-                    .accessibilityHidden(true)
-                Text(text)
-                    .font(PKTypography.supporting)
-                    .foregroundStyle(PKColor.textPrimary)
-            }
-            .padding(PKSpacing.l)
         }
     }
 }
