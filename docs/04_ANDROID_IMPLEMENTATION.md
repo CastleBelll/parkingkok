@@ -179,6 +179,13 @@ Decision rule:
 - if product requires only pin + directions, prefer external map at v1.
 - if in-app map materially improves UX, use Maps SDK but update privacy/data safety disclosures.
 
+**결정 (2026-09-18): v1은 A, external maps intent.**
+`docs/19` §3이 상세 화면의 1차 CTA를 `길찾기`로 규정했고 그건 핀 하나와 길찾기다.
+Maps SDK를 쓰면 API 키 관리와 Data Safety 공시가 늘어나는데 얻는 것이 그 비용을 넘지
+않는다. 홈 카드의 지도 미리보기(`01-home-main.png`)는 **정적 표현**으로 대체한다 —
+좌표를 지도 타일 요청으로 내보내지 않는 편이 `docs/00` Privacy에도 맞는다.
+iOS는 MapKit이 OS 기본 제공이라 키도 공시도 늘지 않으므로 그대로 쓴다.
+
 ## 13. Car Connection Optional Signal
 `androidx.car.app.connection.CarConnection` can report:
 - NOT_CONNECTED
