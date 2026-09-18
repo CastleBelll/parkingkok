@@ -82,6 +82,12 @@ dependencies {
     ksp(libs.androidx.room.compiler)
 
     implementation(libs.androidx.datastore.preferences)
+
+    // docs/04_ANDROID_IMPLEMENTATION.md §10 fixes Glance as the widget toolkit. `material3`
+    // is what lets the widget read the same docs/10 §2 tokens the app does instead of
+    // re-declaring a palette for the home screen.
+    implementation(libs.androidx.glance.appwidget)
+    implementation(libs.androidx.glance.material3)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.play.services.location)

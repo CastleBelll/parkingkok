@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  4x2 (docs/06_LOCAL_DATA_AND_WIDGET_SYNC.md §7a): adds `zone · spot` and, when entitled,
+  the stepper. Same provider behaviour as the 2x2 entry; only the default footprint
+  differs, so the picker offers both sizes rather than making the user resize.
+
+  `previewLayout` is picker art and is never inflated on a home screen. There is no
+  `previewImage` beside it: that attribute could only name the launcher icon, and a logo
+  is exactly the decoration the floor must not compete with. Below API 31, where
+  `previewLayout` does not exist, the platform falls back to the app icon by itself.
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/widget_description_wide"
+    android:initialLayout="@layout/glance_default_loading_layout"
+    android:minWidth="250dp"
+    android:minHeight="110dp"
+    android:minResizeWidth="110dp"
+    android:minResizeHeight="110dp"
+    android:previewLayout="@layout/parking_widget_wide_preview"
+    android:resizeMode="horizontal|vertical"
+    android:targetCellWidth="4"
+    android:targetCellHeight="2"
+    android:updatePeriodMillis="1800000"
+    android:widgetCategory="home_screen" />

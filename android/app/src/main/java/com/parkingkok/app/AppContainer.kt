@@ -40,6 +40,8 @@ import com.parkingkok.app.domain.parking.ParkingRepository
 import com.parkingkok.app.domain.parking.usecase.CleanUpOrphanPhotosUseCase
 import com.parkingkok.app.domain.photo.ParkingPhotoStore
 import com.parkingkok.app.domain.trace.TraceDeviceInfo
+import com.parkingkok.app.domain.widget.ParkingWidgetSync
+import com.parkingkok.app.entitlement.isWidgetStepperEntitled
 import com.parkingkok.app.identity.AnonymousIdentity
 import com.parkingkok.app.identity.FirebaseAnonymousSignIn
 import com.parkingkok.app.identity.LazyAnonymousIdentity
@@ -49,9 +51,13 @@ import com.parkingkok.app.trace.FileTraceStore
 import com.parkingkok.app.trace.NotificationLabelPromptDelivery
 import com.parkingkok.app.trace.TraceLabelPrompter
 import com.parkingkok.app.trace.TraceRecorder
+import com.parkingkok.app.widget.GlanceWidgetProjectionStore
+import com.parkingkok.app.widget.anyParkingWidgetPlaced
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Manual composition root. A DI framework is not justified at this size
@@ -186,6 +192,54 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
      */
     val cleanUpOrphanPhotos: CleanUpOrphanPhotosUseCase by lazy {
         CleanUpOrphanPhotosUseCase(parkingRepository, parkingPhotoStore)
+    }
+
+    /**
+     * docs/06_LOCAL_DATA_AND_WIDGET_SYNC.md §7a "Entitlement", read here and nowhere else.
+     *
+     * The one function that decides is `isWidgetStepperEntitled`; this property is its
+     * only caller, and the answer reaches the widget as a field of the projection so no
+     * Glance code has to ask.
+     */
+    val isWidgetStepperEntitled: Boolean get() = isWidgetStepperEntitled(isDebuggable)
+
+    /**
+     * Keeps the home-screen widgets equal to Room (docs/06 §4, §7).
+     *
+     * Lazy like the database it reads: a process a detection broadcast started never
+     * touches this unless [syncParkingWidgets] finds a widget actually on screen.
+     */
+    val parkingWidgetSync: ParkingWidgetSync by lazy {
+        ParkingWidgetSync(
+            repository = parkingRepository,
+            store = GlanceWidgetProjectionStore(appContext),
+            stepperEntitled = isWidgetStepperEntitled,
+        )
+    }
+
+    private val parkingWidgetSyncStarted = AtomicBoolean(false)
+
+    /**
+     * Brings every placed widget up to date and, the first time, keeps it that way.
+     *
+     * Called from [ParkingkokApplication] on process start and from the widget receivers
+     * when the host asks for an update — a newly placed widget has an empty state file,
+     * and a reboot delivers `onUpdate` before anything else runs.
+     *
+     * The guard is what protects the lazy database: with no widget on screen this returns
+     * before anything opens Room, which is the same bargain the photo store and the
+     * analytics recorder make. The one-shot refresh is docs/06 §8's startup repair — a
+     * projection left behind by a session that has since been completed is replaced by
+     * what Room actually holds.
+     */
+    fun syncParkingWidgets() {
+        if (!anyParkingWidgetPlaced(appContext)) return
+        applicationScope.launch { parkingWidgetSync.refresh() }
+        // The collector is what saves every mutating use case from having to remember the
+        // widget exists. One per process, hence the flag.
+        if (parkingWidgetSyncStarted.compareAndSet(false, true)) {
+            applicationScope.launch { parkingWidgetSync.keepInSync() }
+        }
     }
 
     /**
