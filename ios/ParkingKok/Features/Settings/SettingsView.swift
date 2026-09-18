@@ -71,8 +71,15 @@ struct SettingsView: View {
         .listRowBackground(PKColor.surface)
     }
 
+    /// The analytics opt-in sits here rather than under 개인정보 because it is the setting
+    /// that improves detection, and docs/10 §8's rule is that a switch is explained by what
+    /// it is for.
+    ///
+    /// **The footer is docs/09 §13's sentence, verbatim.** §13 forbids an absolute
+    /// "no data leaves the device" claim — Firebase and ad SDK metadata does leave — so
+    /// this says the specific true thing instead of the sweeping false one.
     private var detectionSection: some View {
-        Section("자동 감지") {
+        Section {
             Toggle(isOn: Binding(
                 get: { model.isSmartDetectionEnabled },
                 set: { enabled in Task { await model.setSmartDetection(enabled) } }
@@ -84,6 +91,19 @@ struct SettingsView: View {
                 title: "주차 종료 자동 감지",
                 subtitle: "출차하면 주차를 자동으로 종료해요"
             )
+            Toggle(isOn: Binding(
+                get: { model.isAnalyticsConsentGranted },
+                set: { granted in Task { await model.setAnalyticsConsent(granted) } }
+            )) {
+                SettingsLabel(
+                    title: "사용 통계 공유",
+                    subtitle: "감지 정확도를 개선하는 익명 통계를 보내요"
+                )
+            }
+        } header: {
+            Text("자동 감지")
+        } footer: {
+            Text("주차 위치 좌표와 주차 사진은 주차콕 서버에 저장하지 않습니다.")
         }
         .listRowBackground(PKColor.surface)
     }

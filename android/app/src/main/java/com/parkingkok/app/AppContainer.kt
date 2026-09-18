@@ -1,8 +1,14 @@
 package com.parkingkok.app
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.os.Build
 import androidx.core.app.NotificationManagerCompat
+import com.parkingkok.app.analytics.AnalyticsConsentStore
+import com.parkingkok.app.analytics.AnalyticsRecorder
+import com.parkingkok.app.analytics.AnalyticsRecording
+import com.parkingkok.app.analytics.LogAnalyticsSink
+import com.parkingkok.app.analytics.NoOpAnalyticsSink
 import com.parkingkok.app.core.Clock
 import com.parkingkok.app.core.SystemClock
 import com.parkingkok.app.data.DetectionStateStore
@@ -43,6 +49,35 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
     val applicationScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     val detectionStateStore: DetectionStateStore = DetectionStateStore(detectionDataStore(appContext))
+
+    /**
+     * docs/07 "동의". Off until the user turns it on; [analyticsRecorder] re-reads it on
+     * every event, so the settings toggle stops transmission without any further wiring.
+     */
+    val analyticsConsentStore: AnalyticsConsentStore =
+        AnalyticsConsentStore(detectionDataStore(appContext))
+
+    /**
+     * **What changes when a Firebase project exists:** add a `FirebaseAnalyticsSink` that
+     * maps [com.parkingkok.app.analytics.AnalyticsPayload] onto
+     * `FirebaseAnalytics.logEvent(name, bundle)`, and pass it as `sink` here. That is the
+     * entire change — the event hierarchy, the consent gate and every call site stay as
+     * they are. Until then nothing is transmitted, because there is no
+     * `google-services.json` to transmit through (docs/07 §2).
+     */
+    val analyticsRecorder: AnalyticsRecording = AnalyticsRecorder(
+        consentStore = analyticsConsentStore,
+        sink = if (isDebuggable) LogAnalyticsSink else NoOpAnalyticsSink,
+        clock = clock,
+    )
+
+    /**
+     * Read from the merged manifest rather than `BuildConfig.DEBUG`, which does not exist —
+     * `buildConfig` is off for this module and turning it on to read one flag would slow
+     * every build. Mirrors iOS's `#if PK_DEV` guard on `OSLogAnalyticsSink`.
+     */
+    private val isDebuggable: Boolean
+        get() = (appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
 
     /**
      * Local parking storage. Opened lazily so a process started by a detection broadcast

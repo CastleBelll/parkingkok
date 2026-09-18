@@ -184,6 +184,7 @@ private fun SettingsRoute(
     SettingsScreen(
         state = state,
         onDetectionEnabledChange = viewModel::onDetectionEnabledChange,
+        onAnalyticsConsentChange = viewModel::onAnalyticsConsentChange,
         onOpenSystemSettings = {
             // Background location in particular cannot be granted from an in-app prompt on
             // modern Android (docs/10_DESIGN_UX_SPEC.md §8), so every permission row leads

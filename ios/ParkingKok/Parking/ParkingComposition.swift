@@ -23,14 +23,20 @@ struct ParkingComposition {
         if let container = try? SwiftDataParkingStore.makeContainer() {
             let store = SwiftDataParkingStore(container: container)
             seedSampleDataIfRequested(into: store)
-            return ParkingComposition(model: ParkingModel(store: store), storageWarning: nil)
+            return ParkingComposition(
+                model: ParkingModel(store: store, analytics: AnalyticsComposition.recorder),
+                storageWarning: nil
+            )
         }
         AppLog.lifecycle.error("parking container unavailable; falling back to in-memory store")
         guard let fallback = try? SwiftDataParkingStore.makeInMemoryContainer() else {
             return nil
         }
         return ParkingComposition(
-            model: ParkingModel(store: SwiftDataParkingStore(container: fallback)),
+            model: ParkingModel(
+                store: SwiftDataParkingStore(container: fallback),
+                analytics: AnalyticsComposition.recorder
+            ),
             storageWarning: volatileStorageWarning
         )
     }

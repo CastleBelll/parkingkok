@@ -54,6 +54,7 @@ import com.parkingkok.app.ui.components.StatusBadge
 fun SettingsScreen(
     state: SettingsUiState,
     onDetectionEnabledChange: (Boolean) -> Unit,
+    onAnalyticsConsentChange: (Boolean) -> Unit,
     onOpenSystemSettings: () -> Unit,
     onDeleteHistory: () -> Unit,
     onOpenDiagnostics: () -> Unit,
@@ -96,36 +97,27 @@ fun SettingsScreen(
         item("detection-title") { SectionTitle(stringResource(R.string.settings_section_detection)) }
         item("detection") {
             ParkingkokCard(contentPadding = 0.dp) {
-                ParkingkokRow(
+                SwitchRow(
                     title = stringResource(R.string.settings_detection_toggle),
                     supporting = stringResource(R.string.settings_detection_toggle_caption),
                     iconRes = R.drawable.ic_car,
-                    onClick = { onDetectionEnabledChange(!state.detectionEnabled) },
-                    trailing = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            // The word beside the switch is what makes the state readable
-                            // without colour (docs/01_PRODUCT_REQUIREMENTS.md §8).
-                            Text(
-                                text = stringResource(
-                                    if (state.detectionEnabled) {
-                                        R.string.settings_detection_on
-                                    } else {
-                                        R.string.settings_detection_off
-                                    },
-                                ),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            Spacer(Modifier.width(MaterialTheme.spacing.small))
-                            Switch(
-                                checked = state.detectionEnabled,
-                                onCheckedChange = onDetectionEnabledChange,
-                            )
-                        }
-                    },
+                    checked = state.detectionEnabled,
+                    onCheckedChange = onDetectionEnabledChange,
+                )
+                SettingsDivider()
+                // docs/07 "동의": off until the user turns it on, and turning it off stops
+                // transmission on the next event. The consent change itself is never
+                // reported — that would be a transmission decided either side of consent.
+                SwitchRow(
+                    title = stringResource(R.string.settings_analytics_toggle),
+                    supporting = stringResource(R.string.settings_analytics_toggle_caption),
+                    iconRes = R.drawable.ic_tune,
+                    checked = state.analyticsConsentGranted,
+                    onCheckedChange = onAnalyticsConsentChange,
                 )
             }
         }
+        item("detection-footnote") { SectionFootnote(stringResource(R.string.settings_analytics_footnote)) }
 
         // 2. 알림
         item("notification-title") {
@@ -308,6 +300,56 @@ fun SettingsScreen(
 }
 
 /**
+ * A row whose whole purpose is one switch.
+ *
+ * The word beside the switch is what makes the state readable without colour
+ * (docs/01_PRODUCT_REQUIREMENTS.md §8), and tapping the row is the same intent as moving
+ * the switch — a caption two lines tall is a bigger target than the thumb.
+ */
+@Composable
+private fun SwitchRow(
+    title: String,
+    supporting: String,
+    iconRes: Int,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    ParkingkokRow(
+        title = title,
+        supporting = supporting,
+        iconRes = iconRes,
+        onClick = { onCheckedChange(!checked) },
+        trailing = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = stringResource(
+                        if (checked) R.string.settings_detection_on else R.string.settings_detection_off,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.width(MaterialTheme.spacing.small))
+                Switch(checked = checked, onCheckedChange = onCheckedChange)
+            }
+        },
+    )
+}
+
+/**
+ * Small print under a card. Used for docs/09 §13's sentence, which has to sit with the
+ * switch it qualifies rather than in the 개인정보 section further down.
+ */
+@Composable
+private fun SectionFootnote(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = MaterialTheme.spacing.large),
+    )
+}
+
+/**
  * A permission row. The badge says `허용됨` or `거부됨` in words, so the grant state does not
  * depend on the badge's colour (docs/01_PRODUCT_REQUIREMENTS.md §8).
  */
@@ -381,8 +423,10 @@ private fun SettingsPreview() {
                 foregroundLocationGranted = true,
                 backgroundLocationGranted = false,
                 notificationsEnabled = true,
+                analyticsConsentGranted = false,
             ),
             onDetectionEnabledChange = {},
+            onAnalyticsConsentChange = {},
             onOpenSystemSettings = {},
             onDeleteHistory = {},
             onOpenDiagnostics = {},

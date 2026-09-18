@@ -212,6 +212,14 @@
     <string name="settings_detection_toggle_caption">주차 시 자동으로 위치를 기록합니다</string>
     <string name="settings_detection_on">켜짐</string>
     <string name="settings_detection_off">꺼짐</string>
+    <string name="settings_analytics_toggle">사용 통계 공유</string>
+    <string name="settings_analytics_toggle_caption">감지 정확도를 개선하는 익명 통계를 보내요</string>
+    <!--
+      docs/09_SECURITY_PRIVACY_COMPLIANCE.md §13, verbatim. §13 forbids an absolute
+      "no data leaves the device" claim — Firebase and ad SDK metadata does leave — so this
+      says the specific true thing instead of the sweeping false one. Do not reword.
+    -->
+    <string name="settings_analytics_footnote">주차 위치 좌표와 주차 사진은 주차콕 서버에 저장하지 않습니다.</string>
     <string name="settings_section_notification">알림</string>
     <string name="settings_notification_status">주차 감지 알림</string>
     <string name="settings_notification_pending_caption">감지된 주차를 알려주는 기능은 준비 중이에요</string>
