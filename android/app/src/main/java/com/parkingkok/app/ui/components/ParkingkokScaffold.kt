@@ -1,6 +1,5 @@
 package com.parkingkok.app.ui.components
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,10 +26,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -71,7 +67,6 @@ fun ParkingkokScreen(
         color = MaterialTheme.colorScheme.background,
     ) {
         Box(Modifier.fillMaxSize()) {
-            PageWash()
             CompositionLocalProvider(LocalScreenEntry provides entry) {
                 Column(
                     Modifier
@@ -131,58 +126,14 @@ class ParkingkokListScope internal constructor(private val scope: LazyListScope)
     }
 }
 
-/**
- * The pale blue shapes the mockups lay behind the page.
- *
- * They are why `01-home-main.png` reads as a surface with things resting on it rather than
- * as a flat sheet: the cards have something to be in front of. No new colour — it is the
- * brand primary at a few per cent, which is also why it survives the dark theme without a
- * second set of values.
- *
- * Each one fades to nothing at its own edge. A flat disc at the same opacity draws a
- * visible rim across the page, which is a shape the user can see and wonder about; a blob
- * is only supposed to be felt.
- */
-@Composable
-private fun PageWash() {
-    val tint = MaterialTheme.colorScheme.primary
-    Canvas(
-        modifier = Modifier
-            .fillMaxSize()
-            .clearAndSetSemantics { },
-    ) {
-        val width = size.width
-        val height = size.height
-        drawBlob(tint, WASH_ALPHA, Offset(width * 1.02f, height * 0.06f), width * 0.62f)
-        drawBlob(tint, WASH_ALPHA, Offset(-width * 0.16f, height * 0.46f), width * 0.54f)
-        drawBlob(tint, WASH_ALPHA, Offset(width * 1.10f, height * 0.84f), width * 0.50f)
-    }
-}
-
-private fun DrawScope.drawBlob(tint: Color, alpha: Float, center: Offset, radius: Float) {
-    drawCircle(
-        brush = Brush.radialGradient(
-            // Held flat for the first half so the blob has a body and not just a rim.
-            colorStops = arrayOf(
-                0f to tint.copy(alpha = alpha),
-                0.5f to tint.copy(alpha = alpha),
-                1f to Color.Transparent,
-            ),
-            center = center,
-            radius = radius,
-        ),
-        radius = radius,
-        center = center,
-    )
-}
 
 /**
- * The 주차콕 wordmark row at the top of every root screen.
+ * The 주차핀 wordmark row at the top of every root screen.
  *
  * The pin, the bell and the gear are all in `01-home-main.png`, and so is the two-line
  * tagline at the right — it is a good part of what the product sounds like, and it used to
  * be demoted to a grey line at the bottom of the page. The bell leads to the system's
- * notification settings for 주차콕: the app has no notification centre of its own, but it
+ * notification settings for 주차핀: the app has no notification centre of its own, but it
  * does post detection notifications, and where those are turned on and off is a real place
  * to go.
  */
@@ -250,7 +201,7 @@ fun SettingsAction(onClick: () -> Unit) {
     )
 }
 
-/** The bell, which leads to where 주차콕's notifications are actually turned on and off. */
+/** The bell, which leads to where 주차핀's notifications are actually turned on and off. */
 @Composable
 fun NotificationsAction(onClick: () -> Unit) {
     HeaderAction(
@@ -349,7 +300,6 @@ fun BrandFooter(modifier: Modifier = Modifier) {
 }
 
 /** Opacity of the decorative page shapes. Present at a glance, invisible on a card. */
-private const val WASH_ALPHA = 0.08f
 
 /** Above this the tagline stops fitting beside the wordmark and is dropped. */
 private const val TAGLINE_MAX_FONT_SCALE = 1.3f

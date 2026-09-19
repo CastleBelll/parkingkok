@@ -1,4 +1,4 @@
-# CLAUDE.md — 주차콕 iOS + Android 개발 지침
+# CLAUDE.md — 주차핀 iOS + Android 개발 지침
 
 ## Document Priority
 1. `docs/00_CORE_RULES.md`
@@ -13,7 +13,7 @@
 10. ADR
 
 ## Product Goal
-주차콕은 사용자가 차량을 주차한 상황을 스마트하게 감지하고, 마지막으로 신뢰 가능한 위치와 주차 시각을 로컬에 기록하며, 사용자는 층/구역 정보만 최소 입력하는 iOS/Android 생활 유틸리티다.
+주차핀은 사용자가 차량을 주차한 상황을 스마트하게 감지하고, 마지막으로 신뢰 가능한 위치와 주차 시각을 로컬에 기록하며, 사용자는 층/구역 정보만 최소 입력하는 iOS/Android 생활 유틸리티다.
 
 ## Platform Strategy
 - iOS: SwiftUI + Swift 6, iOS 18+
@@ -91,7 +91,87 @@ Before changing signing, versions, CI, Firebase deployment, App Store Connect, o
 Never commit store credentials, signing private keys, `.p8`, `.jks`, or service-account JSON.
 `main` deploys to internal testing only. Production store submission is triggered by a validated semantic-version tag (`vX.Y.Z`).
 
+## Product Name
+The user-facing brand is **주차핀**. Every string a user can read says 주차핀 — app name,
+widget labels, notifications, settings, paywall, store copy ("주차핀 Plus", "주차핀 가족 공유",
+"주차핀에 주차 위치가 저장됐어요").
+
+Internal identifiers are **not** renamed and must not be: package names, Bundle IDs, the
+Firebase project, class names, directory names, module names all stay `parkingkok`. A PR
+that renames an identifier to match the brand is wrong.
+
 ## Visual Reference Rule
-When building or revising UI, consult the packaged design screenshots in `design-references/` and the mapping in `docs/19_VISUAL_REFERENCES_AND_UI_MAPPING.md`.
-These images are binding visual references for tone, hierarchy, density, and feature grouping.
-Do not radically redesign the app into a different visual language without updating the design spec.
+When building or revising UI, consult the packaged design screenshots in `design-references/`
+and the mapping in `docs/19_VISUAL_REFERENCES_AND_UI_MAPPING.md`.
+
+Those mocks are binding for **information hierarchy, content, density and feature grouping**.
+They are **not** binding for surface treatment: they were drawn with drop shadows, gradient
+blooms and a card around every row, and the Design Harness below overrides all three. Where a
+mock and the harness disagree about how a surface is *finished*, the harness wins; where they
+disagree about what is *on screen and how it is ranked*, the mock wins.
+
+Do not radically redesign the app into a different visual language without updating the design
+spec.
+
+## Design Harness
+
+The single goal: 주차핀 must read as **"a small team built this carefully"**, never as
+**"an AI generated this"**. `docs/10_DESIGN_UX_SPEC.md` holds the full direction. These are the
+rules that are cheap to check and expensive to get wrong, so they live here.
+
+### Forbidden — these are the AI tells
+- Purple or violet **in any form**, including in gradients, tints, illustrations and icons
+- Purple→blue gradients; neon; any large gradient CTA
+- Heavy or multi-pass drop shadows on cards
+- Decorative background blobs, glows or washes
+- Glassmorphism beyond an OS-native material
+- A card wrapped around every row (the "AI dashboard")
+- Pill-shaping every element
+- Decorative icons or illustrations that carry no meaning
+- Paywalls with crowns, sparkles, "BEST VALUE" badges or fake discounts
+- Mixing many pastels; giving each button or card its own colour
+
+### Required
+- **Separate layers with background, border and spacing — not shadow.** If a shadow is truly
+  needed it must be barely perceptible.
+- **One emphasised primary CTA per screen.** Everything else is secondary, text or icon.
+- **One accent per screen.** Primary Blue carries actions; Mint appears rarely, for state.
+  Colour marks state and action — it is not decoration.
+- **System fonts and system icons.** SF Pro / SF Symbols on iOS, Roboto / Material Symbols on
+  Android. Hierarchy comes from size and weight, and from few weights: Bold hero, Semibold
+  title, Regular body and supporting.
+- **Radius:** 18–22 major cards, 12–16 buttons, 10–14 small controls.
+- **Real density.** Generous spacing, but not so few elements per screen that the app stops
+  being useful.
+- **Platform-native interaction.** Navigation, switches, dialogs and sheets follow each OS.
+  Brand, colour, hierarchy, spacing and feature structure are shared; iOS must not be made to
+  look like Android, or the reverse.
+
+### The palette, and nothing beside it
+| role | light |
+|---|---|
+| background | `#F7F8FA` |
+| surface | `#FFFFFF` |
+| text primary | `#111827` |
+| text secondary | `#6B7280` |
+| primary | `#2563EB` |
+| accent (sparing) | `#14B8A6` |
+| divider | `#E5E7EB` |
+| danger | `#EF4444` |
+
+Tokens only. A literal colour at a call site is a defect. Adding a colour to the palette is a
+spec change, not an implementation detail.
+
+### Screen rules that are easy to violate
+- **Home:** the floor (`B3`) is the largest thing on screen. Logo, illustration, recent
+  history and ads must never outrank the current parking location.
+- **Auto-detection:** the copy is **"주차한 것 같아요"**. Never state detection as settled
+  fact. **"주차 아님"** must be easy to find, not buried.
+- **Detail:** the map and the text must not compete for attention.
+- **History:** a plain list. No charts, no graphs. Detected records carry a small `자동` badge.
+- **Settings:** ordinary OS-style sections. Not one big card per setting.
+- **Ads:** never push or cover the current location, save, end-parking, map, or the detection
+  confirmation.
+
+### Priority when these conflict
+readability → hierarchy → speed of use → consistency → restrained brand → prettiness.

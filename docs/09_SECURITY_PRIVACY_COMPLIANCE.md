@@ -89,7 +89,7 @@ Accurate App Store privacy labels / Google Play Data Safety.
 Do not make absolute “no data leaves device” claim because ad/Firebase SDK metadata may leave device.
 
 Safe claim:
-> 주차 위치 좌표와 주차 사진은 주차콕 서버에 저장하지 않습니다.
+> 주차 위치 좌표와 주차 사진은 주차핀 서버에 저장하지 않습니다.
 
 ## 14. Background Location Disclosure
 Both stores require necessity/clarity.

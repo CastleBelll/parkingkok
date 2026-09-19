@@ -27,11 +27,16 @@ enum PKTypography {
 /// and then allowed to shrink within one line rather than wrap `B3` onto two.
 struct PKHeroFloorText: View {
     /// §4's band, taken at its top: this value is the whole point of the screen.
-    @ScaledMetric(relativeTo: .largeTitle) private var size: CGFloat = 64
+    static let screenSize: CGFloat = 64
 
+    @ScaledMetric private var size: CGFloat
     private let text: String
 
-    init(_ text: String) {
+    /// `size` exists for the widget, whose canvas is a fifth of the screen's: the hero has
+    /// to stay the largest thing on a `systemSmall` tile without pushing the elapsed line
+    /// off it. One hero definition, rendered smaller — not a second type ramp.
+    init(_ text: String, size: CGFloat = PKHeroFloorText.screenSize) {
+        _size = ScaledMetric(wrappedValue: size, relativeTo: .largeTitle)
         self.text = text
     }
 

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- docs/06 §6. The only entitlement either target needs, and the reason the widget
+	     can read the active parking at all: it is a separate process with its own
+	     container. No team id, no profile, nothing secret — see docs/18. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>$(PK_APP_GROUP)</string>
+	</array>
+</dict>
+</plist>

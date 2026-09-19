@@ -43,7 +43,7 @@ protocol ParkingPhotoStoring: Sendable {
 /// **Backup policy (docs/09 §17, reviewed rather than assumed).** The file is left
 /// *included* in iOS backup. §17 asks for one of two things — exclude the file, or keep
 /// the disclosure honest — and the safe claim at docs/09 §13 says only that the photo
-/// is not stored on 주차콕's servers, which stays true of an iCloud backup held under the
+/// is not stored on 주차핀's servers, which stays true of an iCloud backup held under the
 /// user's own account. Excluding it would also desynchronise restore: the SwiftData
 /// record *is* backed up, so an excluded photo comes back as a record pointing at
 /// nothing. docs/04 §10 asks for backup exclusion of generated *cache thumbnails*, which

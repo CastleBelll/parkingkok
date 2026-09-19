@@ -1,7 +1,7 @@
 # 03. System Architecture — Dual Native
 
 ## 1. Architectural Decision
-주차콕 v1은 **dual-native**다.
+주차핀 v1은 **dual-native**다.
 
 ```text
                     Shared Product Contracts

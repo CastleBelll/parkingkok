@@ -120,7 +120,7 @@ struct SettingsView: View {
         } header: {
             Text("자동 감지")
         } footer: {
-            Text("주차 위치 좌표와 주차 사진은 주차콕 서버에 저장하지 않습니다.")
+            Text("주차 위치 좌표와 주차 사진은 주차핀 서버에 저장하지 않습니다.")
         }
         .listRowBackground(PKColor.surface)
     }
@@ -171,7 +171,7 @@ struct SettingsView: View {
     /// FR-012. No StoreKit product exists, and docs/10 §9 forbids a fake badge — so this
     /// says what it is instead of showing a price nobody can pay.
     private var plusSection: some View {
-        Section("주차콕 Plus") {
+        Section("주차핀 Plus") {
             SettingsPlaceholderRow(title: "Plus 구독", subtitle: "기록 무제한과 위젯 +/- 를 준비 중이에요")
         }
         .listRowBackground(PKColor.surface)
@@ -197,7 +197,7 @@ struct SettingsView: View {
                 Image(systemName: "lock.fill")
                     .foregroundStyle(PKColor.accent)
                     .accessibilityHidden(true)
-                Text("주차콕은 위치 정보를 서버로 전송하지 않습니다.")
+                Text("주차핀은 위치 정보를 서버로 전송하지 않습니다.")
                     .font(PKTypography.supporting)
                     .foregroundStyle(PKColor.textPrimary)
             }

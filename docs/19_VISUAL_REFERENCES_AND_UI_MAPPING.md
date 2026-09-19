@@ -1,6 +1,6 @@
 # 19. Visual References & UI Mapping
 
-이 문서는 주차콕 초기 UI 방향을 고정하기 위해 생성된 실제 시안 스크린샷을 제품 디자인 reference로 사용하는 기준서다.
+이 문서는 주차핀 초기 UI 방향을 고정하기 위해 생성된 실제 시안 스크린샷을 제품 디자인 reference로 사용하는 기준서다.
 
 ## 포함된 reference 이미지
 

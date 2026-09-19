@@ -13,7 +13,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.res.painterResource
@@ -21,7 +20,6 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.parkingkok.app.R
-import com.parkingkok.app.theme.elevation
 
 /**
  * A map pin: a disc with a point under it.
@@ -43,7 +41,7 @@ val PinShape: Shape = GenericShape { size, _ ->
 }
 
 /**
- * The 주차콕 mark: the app's own icon inside a pin, as in every mockup's header.
+ * The 주차핀 mark: the app's own icon inside a pin, as in every mockup's header.
  *
  * A pin rather than the circle this used to be, because the circle said nothing — the pin
  * is the one shape the whole product is about, and it is what tells the header apart from
@@ -52,7 +50,6 @@ val PinShape: Shape = GenericShape { size, _ ->
 @Composable
 fun BrandPin(modifier: Modifier = Modifier, width: Dp = 40.dp) {
     val height = width * PIN_ASPECT
-    val shadowTint = MaterialTheme.elevation.tint
     Box(
         modifier = modifier
             .width(width)
@@ -62,14 +59,7 @@ fun BrandPin(modifier: Modifier = Modifier, width: Dp = 40.dp) {
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(height)
-                .shadow(
-                    elevation = MaterialTheme.elevation.card,
-                    shape = PinShape,
-                    clip = false,
-                    ambientColor = shadowTint,
-                    spotColor = shadowTint,
-                ),
+                .height(height),
             shape = PinShape,
             color = MaterialTheme.colorScheme.primary,
             content = {},

@@ -43,7 +43,7 @@ val LocalScreenEntry = staticCompositionLocalOf<State<Float>> { SettledEntry }
  * Reads `Settings.Global.ANIMATOR_DURATION_SCALE` and keeps watching it.
  *
  * Watching matters because the setting is changed from outside the app — developer
- * options, or Accessibility ▸ "Remove animations" — while 주차콕 sits in the background.
+ * options, or Accessibility ▸ "Remove animations" — while 주차핀 sits in the background.
  * Reading once at startup would leave a user who just turned animations off watching them
  * until the process restarts.
  */

@@ -120,7 +120,7 @@ private struct EmptyParkingCard: View {
                 Text("현재 저장된 주차 위치가 없어요.")
                     .font(PKTypography.sectionTitle)
                     .foregroundStyle(PKColor.textPrimary)
-                Text("주차하면 주차콕이 알려드릴게요.\n지금 바로 직접 저장할 수도 있어요.")
+                Text("주차하면 주차핀이 알려드릴게요.\n지금 바로 직접 저장할 수도 있어요.")
                     .font(PKTypography.supporting)
                     .foregroundStyle(PKColor.textSecondary)
                 Button("직접 저장", action: onSaveManually)
@@ -199,12 +199,21 @@ private struct RecentParkingSection: View {
                     .foregroundStyle(PKColor.textSecondary)
                     .padding(.vertical, PKSpacing.s)
             } else {
-                VStack(spacing: PKSpacing.s) {
-                    ForEach(sessions) { session in
-                        Button { onSelect(session) } label: {
-                            ParkingHistoryRow(session: session, style: .compact)
+                // One surface for the whole preview, divided. Three rows each on their
+                // own card is the panel stack the design harness rules out.
+                PKCard(radius: PKRadius.row) {
+                    VStack(spacing: 0) {
+                        ForEach(Array(sessions.enumerated()), id: \.element.id) { index, session in
+                            if index > 0 {
+                                Divider()
+                                    .overlay(PKColor.divider)
+                                    .padding(.leading, PKSpacing.l)
+                            }
+                            Button { onSelect(session) } label: {
+                                ParkingHistoryRow(session: session, style: .compact)
+                            }
+                            .buttonStyle(PKGroupedRowButtonStyle())
                         }
-                        .buttonStyle(PKSurfaceButtonStyle(radius: PKRadius.row))
                     }
                 }
             }

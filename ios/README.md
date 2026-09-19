@@ -1,4 +1,4 @@
-# iOS — 주차콕
+# iOS — 주차핀
 
 `ParkingKok.xcodeproj` is **generated**, not committed. `ios/project.yml` is the
 source of truth; the `.pbxproj` is a build artifact (see ADR note in the PR for T-1.3).

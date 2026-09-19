@@ -2,7 +2,7 @@
 
 // Local development build. Installs side by side with STAGING and PROD.
 PK_BUNDLE_ID = $(PK_BUNDLE_ID_BASE).dev
-PK_DISPLAY_NAME = ParkingKok DEV
+PK_DISPLAY_NAME = 주차핀 DEV
 PK_APP_ENV = dev
 
 SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) DEBUG PK_DEV

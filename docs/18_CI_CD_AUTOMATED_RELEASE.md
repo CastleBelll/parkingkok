@@ -2,7 +2,7 @@
 
 ## 1. 목표
 
-주차콕은 iOS와 Android를 동시에 운영하므로, 릴리스는 사람의 로컬 Mac/PC 상태에 의존하지 않는다.
+주차핀은 iOS와 Android를 동시에 운영하므로, 릴리스는 사람의 로컬 Mac/PC 상태에 의존하지 않는다.
 
 목표 파이프라인:
 
@@ -187,7 +187,7 @@ Apple API Key는 CI 전용 key를 생성하고 최소 권한 원칙을 적용한
 A. fastlane match + private encrypted signing repository
 B. CI에서 App Store Connect/Developer signing asset을 명시적으로 관리
 
-주차콕 초기 팀에는 A를 권장한다.
+주차핀 초기 팀에는 A를 권장한다.
 
 단:
 
@@ -578,7 +578,7 @@ release tag
  -> automatic phased/staged release
 ```
 
-주차콕의 목표 최종 상태는 Phase C이다.
+주차핀의 목표 최종 상태는 Phase C이다.
 
 ---
 

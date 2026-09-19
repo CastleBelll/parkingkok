@@ -35,6 +35,9 @@ class ParkingkokApplication : Application() {
             created.locationSessionController.reconcile()
             created.diagnosticsExporter.export()
         }
+        // docs/06 §8 startup repair, and the reason a placed widget is right again after
+        // process death. A no-op — not even a database open — when no widget is on screen.
+        created.syncParkingWidgets()
     }
 
     companion object {

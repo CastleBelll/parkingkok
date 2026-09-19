@@ -1,6 +1,7 @@
 package com.parkingkok.app.ui.components
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -20,7 +21,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -29,48 +29,38 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.parkingkok.app.R
-import com.parkingkok.app.theme.elevation
+import com.parkingkok.app.theme.surfaces
 import com.parkingkok.app.theme.spacing
 
 /**
- * The primary card of `01-home-main.png` — a white panel lifted off the page tint.
+ * The primary card of `01-home-main.png` — a white panel told apart from the page by a
+ * hairline.
  *
- * ## Why there is a shadow
+ * ## Why there is no shadow
  *
- * docs/10_DESIGN_UX_SPEC.md §5 says "avoid excessive shadows; prefer border/surface
- * separation", and this card used to read that as "no shadow at all". On a `#F7F9FC` page
- * a `#FFFFFF` card with no shadow and no border is a rectangle you have to look for, and
- * a screen of them reads as a wireframe rather than a product. The mockups §5 points at
- * do lift their cards, with one wide and very soft shadow. That is what
- * [com.parkingkok.app.theme.ParkingkokElevation] provides: a single low elevation, tinted
- * navy rather than black, and nothing stacked inside it.
+ * This card used to cast one, on the argument that a white card on a pale page without a
+ * shadow is "a rectangle you have to look for". The premise was right and the conclusion
+ * was wrong: what makes the rectangle hard to find is having neither shadow nor border,
+ * and the border is the cheaper answer. The design harness in CLAUDE.md forbids card
+ * shadows outright — they are one of the patterns that make an app read as
+ * machine-generated — and docs/10_DESIGN_UX_SPEC.md §5 asks for background, border and
+ * spacing.
  *
- * [elevation] exists so the active-parking hero can sit one step nearer than the rows
- * under it, and so a card nested inside another can go flat — a shadow inside a shadow is
- * the excess §5 is about.
+ * There is no per-card weight any more. A hero that needs to lead does it with size and
+ * position, which is how the mock ranks it too, not by floating nearer the eye.
  */
 @Composable
 fun ParkingkokCard(
     modifier: Modifier = Modifier,
     contentPadding: Dp = MaterialTheme.spacing.card,
-    elevation: Dp = MaterialTheme.elevation.card,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val shape = MaterialTheme.shapes.extraLarge
-    val shadowTint = MaterialTheme.elevation.tint
+    val surfaces = MaterialTheme.surfaces
     Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .shadow(
-                elevation = elevation,
-                shape = shape,
-                // The card clips itself; clipping here as well would cost a second layer.
-                clip = false,
-                ambientColor = shadowTint,
-                spotColor = shadowTint,
-            ),
-        shape = shape,
+        modifier = modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.extraLarge,
         color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(surfaces.borderWidth, surfaces.border),
     ) {
         Column(Modifier.padding(contentPadding), content = content)
     }

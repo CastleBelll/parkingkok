@@ -3,12 +3,13 @@ import SwiftUI
 /// Surface container used by every card in the mocks.
 ///
 /// docs/10_DESIGN_UX_SPEC.md §5: "avoid excessive shadows; prefer border/surface
-/// separation". Both are here and each does a different job — the hairline separates,
-/// the shadow gives the card somewhere to be. `PKElevation` carries the reasoning.
+/// separation". The hairline does all of it. A soft shadow lived here too for a while, on
+/// the reading that §5 banned excess rather than depth; the design harness in CLAUDE.md
+/// settles it the other way, because a lifted card is one of the things that makes an app
+/// look machine-generated.
 ///
-/// The shadow hangs off the background *shape*, never off the card's contents: applying
-/// it to the composed view would put a drop shadow behind every glyph and every line of
-/// text inside.
+/// The border hangs off the background *shape*, never off the card's contents: applied to
+/// the composed view it would outline every glyph inside.
 struct PKCard<Content: View>: View {
     private let radius: CGFloat
     private let content: Content
@@ -27,15 +28,14 @@ struct PKCard<Content: View>: View {
 
 /// The filled, bordered, lifted rounded rectangle under every card and card-shaped row.
 ///
-/// One type so a card and a tappable row cannot end up a point of radius or a percent of
-/// shadow apart.
+/// One type so a card and a tappable row cannot end up a point of radius or a shade of
+/// border apart.
 struct PKSurfaceShape: View {
     let radius: CGFloat
 
     var body: some View {
         RoundedRectangle(cornerRadius: radius)
             .fill(PKColor.surface)
-            .pkElevation(.resting)
             .overlay {
                 RoundedRectangle(cornerRadius: radius)
                     .strokeBorder(PKColor.divider, lineWidth: PKSize.hairline)
@@ -144,7 +144,6 @@ struct PKPrimaryButtonStyle: ButtonStyle {
             .background {
                 RoundedRectangle(cornerRadius: PKRadius.button)
                     .fill(PKColor.primary)
-                    .pkElevation(.raised)
             }
             .pkPressFeedback(configuration.isPressed)
     }
@@ -225,6 +224,21 @@ struct PKSurfaceButtonStyle: ButtonStyle {
     }
 }
 
+/// A row that is already inside a card — the grouped list on home.
+///
+/// [PKSurfaceButtonStyle] gives a row its own surface, which is right when the row *is* the
+/// card. It is wrong for a list of rows: a screen of separately floating rows is the stack
+/// of panels the design harness calls the AI dashboard. Grouped rows share one surface and
+/// are told apart by a divider, so this style contributes the press and nothing else.
+struct PKGroupedRowButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(.rect)
+            .pkPressFeedback(configuration.isPressed)
+    }
+}
+
 /// A filter chip (`04-history-list.png`'s 전체 / 자동 감지 / 직접 저장).
 ///
 /// Selection is a fill swap in the mock. It lives in the design system rather than in the
@@ -241,7 +255,6 @@ struct PKChipButtonStyle: ButtonStyle {
             .background {
                 RoundedRectangle(cornerRadius: PKRadius.button)
                     .fill(isSelected ? PKColor.primary : PKColor.surface)
-                    .pkElevation(.resting)
                     .overlay {
                         RoundedRectangle(cornerRadius: PKRadius.button)
                             .strokeBorder(PKColor.divider, lineWidth: isSelected ? 0 : PKSize.hairline)

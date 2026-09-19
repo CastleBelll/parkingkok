@@ -65,6 +65,11 @@ Every widget/app mutation is read-modify-write with revision increment.
 App Group JSON may be used because widget extension is separate process.
 Use atomic file replacement and shared mutation helper.
 
+The file lives at `Library/Application Support/Widget/active-parking.json` inside the
+group container, not at its root: that is where the rest of the app keeps local state, and
+it is the only part of a shared container `devicectl device copy from` will read — which is
+what lets a field test pull the projection off a real device and check the revision.
+
 ## 7. Android Widget Mutation
 Glance callback must delegate to repository/application layer.
 Do not store product business state only inside widget state.
@@ -72,6 +77,57 @@ After mutation:
 1. update canonical active session
 2. increment revision
 3. request widget refresh
+
+## 7a. Widget Contract (v1)
+
+Sections 5-7 fix how the widget *syncs*. These fix what it *is*, so the two platforms
+cannot each invent an answer.
+
+### Sizes
+- iOS: `systemSmall` and `systemMedium`. No Lock Screen or StandBy family in v1.
+- Android: 2x2 and 4x2 cells.
+
+Small/2x2 shows the floor and the elapsed duration. Medium/4x2 adds the `zone · spot`
+line and, when entitled, the stepper.
+
+### What it shows
+There is no widget mock. The binding reference is the hero card of
+`design-references/01-home-main.png`: the floor as the one large element, `zone · spot`
+beneath it, then the elapsed duration. The widget is that card with the map thumbnail
+and the primary action removed.
+
+With no active parking the widget shows a single line inviting the user to open the
+app. It never renders a coordinate, an address, or a photo (docs/09).
+
+### Rapid taps resolve by delta, not by value
+A stepper callback carries a **delta** (`+1` / `-1`), never a resulting floor. Each
+mutation, under the platform's shared-write lock:
+
+1. re-reads the current snapshot,
+2. checks `sessionId` still matches the one the widget rendered,
+3. applies the delta through the shared floor domain (`stepped(by:)` and its Kotlin
+   twin — signed level, no zero, bounded by `maximumNumber`),
+4. increments `revision`,
+5. writes atomically and requests a reload.
+
+Two taps landing together therefore move two floors. Had the callback carried a value,
+the second write would have silently discarded the first.
+
+If step 2 fails — the session ended between render and tap — the mutation is dropped.
+It is never applied to whatever session came next.
+
+A delta the domain rejects (out of bounds) is a no-op that still reloads the widget, so
+the display snaps back to the true value rather than appearing to have moved.
+
+### Entitlement
+Interactive stepping is a Plus feature (docs/02 §14, docs/04_ANDROID §10). Plus does not
+exist until M6, so v1 reads a single hardcoded source — one function, one file per
+platform — that returns true for DEV/STAGING and false for PROD. The interactive path is
+therefore fully built and tested now, while a shipped build stays read-only. M6 replaces
+the hardcode and nothing else.
+
+Tests must cover both branches; entitlement must not be read anywhere but that one
+function.
 
 ## 8. Completion Commit
 Logical sequence on both platforms:

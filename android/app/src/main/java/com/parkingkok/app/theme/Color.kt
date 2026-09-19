@@ -3,7 +3,7 @@ package com.parkingkok.app.theme
 import androidx.compose.ui.graphics.Color
 
 /**
- * The 주차콕 palette from docs/10_DESIGN_UX_SPEC.md §2.
+ * The 주차핀 palette from docs/10_DESIGN_UX_SPEC.md §2.
  *
  * This file is the only place in the app where a colour literal is allowed to appear.
  * §2 is explicit — "implement as semantic assets/theme tokens, never scatter hex values
@@ -15,9 +15,9 @@ import androidx.compose.ui.graphics.Color
 internal object BrandPalette {
 
     // --- Light (docs/10 §2) ---
-    val LightBackground = Color(0xFFF7F9FC)
+    val LightBackground = Color(0xFFF7F8FA)
     val LightSurface = Color(0xFFFFFFFF)
-    val LightTextPrimary = Color(0xFF0F2747)
+    val LightTextPrimary = Color(0xFF111827)
     val LightTextSecondary = Color(0xFF6B7280)
     val LightPrimary = Color(0xFF2563EB)
     val LightAccent = Color(0xFF14B8A6)
