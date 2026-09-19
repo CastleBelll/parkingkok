@@ -84,7 +84,7 @@ struct PKBrandMark: View {
     @ScaledMetric(relativeTo: .largeTitle) private var height: CGFloat = 40
 
     /// The artwork's own proportions, so it is never stretched.
-    private static let aspect: CGFloat = 0.847
+    private static let aspect: CGFloat = 0.827
 
     var body: some View {
         Image(.brandMark)

@@ -35,4 +35,4 @@ fun BrandPin(modifier: Modifier = Modifier, height: Dp = 40.dp) {
 }
 
 /** The artwork's own proportions, so the mark is never stretched. */
-private const val MARK_ASPECT = 0.847f
+private const val MARK_ASPECT = 0.827f

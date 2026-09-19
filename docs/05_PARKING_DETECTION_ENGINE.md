@@ -283,6 +283,64 @@ After expiry:
 - do not silently create parking
 - clear/supersede on new trip according to product flow
 
+## 10a. Candidate Notification and Confirmation (v1 contract)
+
+Sections 9, 10 and 12 fix when a candidate exists and how long it lives. These fix what
+the user sees, because that is the part two platforms would otherwise each invent.
+
+### Identity and deduplication
+A candidate carries a `candidateId`. The notification is posted with that id as its own
+identifier, so re-posting the same candidate **replaces** the notification rather than
+stacking a second one. Section 12 already allows one candidate per travel session; this
+is what makes that visible — a session can never show two notifications.
+
+If a new travel session produces a candidate while an older one is still pending, the
+older candidate expires immediately and its notification is withdrawn. A stale prompt
+about a previous trip is worse than no prompt.
+
+### Posting
+Posted on entry to `CANDIDATE_PENDING`, never earlier: `PARKING_TRANSITION` is the state
+that is still deciding, and a notification there would fire on every red light.
+
+`low` confidence posts nothing (§9). The candidate is still recorded so the app can show
+it when opened, and so the trace keeps the evidence.
+
+Notification permission is not required for correctness. Denied, the candidate is saved
+and surfaces in the app on next launch; nothing is lost and nothing is retried.
+
+### What the notification says
+Copy is fixed in `docs/02_PRODUCT_SCOPE_AND_FLOWS.md` §5 and must not be reworded:
+
+```text
+주차한 것 같아요
+마지막으로 확인된 위치와 시간을 저장해뒀어요.
+```
+
+It never states a floor, an address or a coordinate — the engine does not know the floor,
+and §9 of docs/09 keeps location out of notifications.
+
+### What a tap does
+Opens the confirmation screen for that `candidateId`. If the candidate has since expired
+or been handled, the screen opens on the record it became, or on home when there is
+nothing left to show. A tap never silently creates parking (§10).
+
+### Confirmation screen
+Shape and copy are fixed in `docs/10_DESIGN_UX_SPEC.md` §7a.
+
+Confirming writes a parking record with `source = detected`, the candidate's
+`lastReliableLocation`, and the chosen floor. Rejecting discards the candidate and is
+recorded as evidence for tuning — it is the strongest signal the detector has.
+
+### Expiry
+At 45 minutes the candidate expires, its notification is withdrawn, and no record is
+created. A user who opens an expired notification lands on home; the app does not
+apologise for it in a dialog.
+
+### Analytics
+`parking_candidate_created`, `parking_candidate_confirmed`, `parking_candidate_rejected`
+(docs/17 §2), each carrying `confidenceBucket` and the §4 reason codes and nothing else.
+Rejection is the event that pays for the whole feature, so it is never dropped.
+
 ## 11. Departure
 While PARKED:
 - new sustained vehicle evidence
