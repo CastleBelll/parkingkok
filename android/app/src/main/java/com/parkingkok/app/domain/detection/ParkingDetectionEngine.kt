@@ -561,6 +561,24 @@ class ParkingDetectionEngine(
                 listOf(DetectionEffect.RetireCandidate(candidate.id)),
             ).withCheckpoint()
 
+            // §3a "Leaving a pending candidate behind". Without this the engine sat here
+            // for up to forty-five minutes with detection dead, which is the whole cost of
+            // ignoring one prompt.
+            //
+            // The candidate is deliberately kept. `vehicle_enter` is a noisy signal — a bus
+            // passing, a passenger seat, the OS guessing — and retiring on it would delete
+            // the answer to a question the user is still holding. §10a supersedes it when
+            // this new session produces a candidate of its own; the reconnect row above is
+            // different because getting back in the *same* car means the parking did not
+            // happen.
+            event is DetectionEvent.VehicleEnter -> EngineStep(
+                state.copy(
+                    state = DetectionState.DRIVING_CANDIDATE,
+                    stateEnteredAtMillis = event.atMillis,
+                    session = state.session?.copy(candidateProduced = false),
+                ),
+            ).withCheckpoint()
+
             event is DetectionEvent.TimerTick && event.atMillis >= candidate.expiresAtMillis ->
                 state.expireCandidate(event.atMillis, candidate)
 

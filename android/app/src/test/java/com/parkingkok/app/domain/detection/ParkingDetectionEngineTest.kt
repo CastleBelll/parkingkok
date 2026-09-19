@@ -473,4 +473,38 @@ class ParkingDetectionEngineTest {
         const val ORIGIN_LONGITUDE = 127.0
         const val METERS_PER_DEGREE_LATITUDE = 111_320.0
     }
+    /**
+     * §3a "Leaving a pending candidate behind". Without this row the engine sat in
+     * CANDIDATE_PENDING for up to forty-five minutes with detection dead, which is the
+     * whole cost of ignoring one prompt.
+     */
+    @Test
+    fun `driving again while a prompt is unanswered starts a new session`() {
+        val pending = driving()
+            .handle(DetectionEvent.VehicleExit(T0 + 1_000))
+            .handle(DetectionEvent.WalkingEnter(T0 + 30_000))
+        assertEquals(DetectionState.CANDIDATE_PENDING, pending.state)
+
+        val state = pending.handle(DetectionEvent.VehicleEnter(T0 + 900_000))
+
+        assertEquals(DetectionState.DRIVING_CANDIDATE, state.state)
+    }
+
+    /**
+     * The candidate is not retired at vehicle_enter: that signal is noisy, and §10a
+     * supersedes only when the new session produces a candidate of its own.
+     */
+    @Test
+    fun `the unanswered candidate survives the new session`() {
+        val pending = driving()
+            .handle(DetectionEvent.VehicleExit(T0 + 1_000))
+            .handle(DetectionEvent.WalkingEnter(T0 + 30_000))
+        val candidateBefore = pending.candidate
+        assertNotNull(candidateBefore)
+
+        val state = pending.handle(DetectionEvent.VehicleEnter(T0 + 900_000))
+
+        assertEquals(candidateBefore, state.candidate)
+    }
+
 }
