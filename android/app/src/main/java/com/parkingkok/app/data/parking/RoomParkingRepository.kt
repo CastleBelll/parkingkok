@@ -43,6 +43,8 @@ class RoomParkingRepository(private val dao: ParkingRecordDao) : ParkingReposito
 
     override suspend fun photoPaths(): Set<String> = dao.photoPaths().toSet()
 
+    override suspend fun recentFloorRaws(limit: Int): List<String> = dao.recentFloorRaws(limit)
+
     override suspend fun deleteCompleted() = dao.deleteCompleted()
 }
 

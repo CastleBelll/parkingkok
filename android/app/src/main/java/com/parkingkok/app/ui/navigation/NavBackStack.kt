@@ -55,6 +55,17 @@ value class NavBackStack private constructor(val entries: List<ParkingkokRoute>)
         fun rootedAtHome(): NavBackStack = NavBackStack(listOf(ParkingkokRoute.Home))
 
         /**
+         * Home with the confirmation screen on top of it — where a tapped candidate
+         * notification lands (docs/05_PARKING_DETECTION_ENGINE.md §10a).
+         *
+         * Home is underneath rather than replaced, so back from a notification behaves
+         * like back from anywhere else: it leaves the guess unanswered and shows the app,
+         * rather than closing it.
+         */
+        fun openingCandidate(candidateId: String): NavBackStack =
+            NavBackStack(listOf(ParkingkokRoute.Home, ParkingkokRoute.Confirm(candidateId)))
+
+        /**
          * Restores a stack saved by [encode], skipping tokens this build no longer knows.
          * A stack that decodes to nothing falls back to the root.
          */

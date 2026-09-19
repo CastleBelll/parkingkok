@@ -1,5 +1,7 @@
 package com.parkingkok.app.analytics
 
+import kotlinx.serialization.Serializable
+
 /**
  * The logical version of the detection engine's scoring and rules (docs/17 §4).
  *
@@ -27,6 +29,7 @@ object DetectorVersion {
  * spells out: a band bound to a tunable threshold would retroactively change what an
  * already-reported event meant, and a reporting format has to stay comparable over time.
  */
+@Serializable
 enum class DriveDurationBucket(val wireValue: String) {
     UNDER_5_MIN("under_5_min"),
     MIN_5_15("min_5_15"),
@@ -59,6 +62,7 @@ enum class DriveDurationBucket(val wireValue: String) {
  *
  * Fixed edges, same reasoning as [DriveDurationBucket].
  */
+@Serializable
 enum class DistanceBucket(val wireValue: String) {
     UNDER_1_KM("under_1_km"),
     KM_1_5("km_1_5"),

@@ -308,4 +308,18 @@
     <string name="action_cancel">취소</string>
     <string name="action_delete">삭제</string>
     <string name="action_confirm">확인</string>
+
+    <!-- ══ Candidate notification and confirmation (docs/05 §10a, docs/10 §7a) ══════════
+         주차한 것 같아요 and 주차 아님 are deliberately NOT here. Both also appear on the
+         notification, where docs/02 §5 fixes them verbatim, and a JVM test cannot read a
+         resource (`unitTests.isReturnDefaultValues`). They live in
+         `domain/detection/ParkingCandidate.kt` so one constant serves both surfaces and one
+         test guards the wording. Nothing below takes a location argument. -->
+    <string name="candidate_channel_name">주차 감지</string>
+    <string name="candidate_channel_description">주차한 것 같을 때 알려드려요. 층은 직접 확인해 주세요.</string>
+    <string name="candidate_confirm_body">마지막 위치를 저장했어요.</string>
+    <string name="candidate_confirm_manual">직접 입력</string>
+    <string name="candidate_confirm_already_active">이미 주차 중인 기록이 있어요. 먼저 주차를 종료해 주세요.</string>
+    <!-- %1$s is a time of day, never a place. -->
+    <string name="home_candidate_supporting">%1$s · 확인해 주세요</string>
 </resources>

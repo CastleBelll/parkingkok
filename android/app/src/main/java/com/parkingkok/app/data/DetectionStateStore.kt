@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.parkingkok.app.domain.detection.DetectionCheckpoint
+import com.parkingkok.app.domain.detection.ParkingCandidate
 import com.parkingkok.app.domain.detection.MotionDomainEvent
 import com.parkingkok.app.domain.location.LocationSessionState
 import kotlinx.coroutines.flow.Flow
@@ -47,6 +48,17 @@ class DetectionStateStore(
 
     val recentEvents: Flow<List<MotionDomainEvent>> = dataStore.data.map { it.readEvents() }
 
+    /**
+     * The pending candidate, or null when there is none
+     * (docs/05_PARKING_DETECTION_ENGINE.md §10a).
+     *
+     * Expiry is **not** applied here: this emits what is stored, and
+     * [com.parkingkok.app.detection.ParkingCandidateCoordinator] is the one place that
+     * knows what the clock says about it. A store that quietly filtered on `now` would
+     * emit a different value on every collection for no observable reason.
+     */
+    val candidate: Flow<ParkingCandidate?> = dataStore.data.map { it.readCandidate() }
+
     val locationSessionState: Flow<LocationSessionState> = dataStore.data.map { it.readSessionState() }
 
     suspend fun readCheckpointOnce(): DetectionCheckpoint? = dataStore.data.first().readCheckpoint()
@@ -72,6 +84,62 @@ class DetectionStateStore(
         dataStore.edit {
             it.remove(KEY_REGISTERED_SPEC_VERSION)
             it.remove(KEY_REGISTERED_AT)
+        }
+    }
+
+    suspend fun readCandidateOnce(): ParkingCandidate? = dataStore.data.first().readCandidate()
+
+    /**
+     * The record the most recently confirmed candidate became, if [candidateId] is that
+     * candidate.
+     *
+     * docs/05_PARKING_DETECTION_ENGINE.md §10a: a tap on a candidate that has been handled
+     * "opens on the record it became". Confirming withdraws the notification, so this is a
+     * narrow race — one notification, already answered, tapped before the shade caught up
+     * — and one entry is exactly as much history as that needs. Anything older lands on
+     * home, which is what §10a asks for when there is nothing left to show.
+     */
+    suspend fun readConfirmedRecordIdOnce(candidateId: String): String? {
+        val prefs = dataStore.data.first()
+        if (prefs[KEY_CONFIRMED_CANDIDATE] != candidateId) return null
+        return prefs[KEY_CONFIRMED_RECORD]
+    }
+
+    /**
+     * Reads, transforms and writes the candidate inside one edit.
+     *
+     * Every candidate mutation is a read-modify-write — supersede the previous one, drop
+     * an expired one, clear the one just confirmed — and two of them can arrive together:
+     * a notification action and a new travel session are delivered to the same process
+     * from different broadcasts. A read-then-write pair would let the later writer
+     * resurrect a candidate the earlier one retired.
+     *
+     * Returns what is now stored.
+     */
+    suspend fun updateCandidate(
+        transform: (ParkingCandidate?) -> ParkingCandidate?,
+    ): ParkingCandidate? {
+        var updated: ParkingCandidate? = null
+        dataStore.edit { prefs ->
+            updated = transform(prefs.readCandidate())
+            val next = updated
+            if (next == null) prefs.remove(KEY_CANDIDATE) else prefs[KEY_CANDIDATE] = json.encodeToString(next)
+        }
+        return updated
+    }
+
+    /**
+     * Drops the candidate and remembers what it became, in one edit.
+     *
+     * Two keys written together because a resolution pointing at a candidate still stored
+     * as pending would be a candidate the app offers to confirm twice.
+     */
+    suspend fun resolveCandidate(candidateId: String, recordId: String) {
+        dataStore.edit { prefs ->
+            val current = prefs.readCandidate()
+            if (current != null && current.id == candidateId) prefs.remove(KEY_CANDIDATE)
+            prefs[KEY_CONFIRMED_CANDIDATE] = candidateId
+            prefs[KEY_CONFIRMED_RECORD] = recordId
         }
     }
 
@@ -200,6 +268,9 @@ class DetectionStateStore(
         return updated
     }
 
+    private fun Preferences.readCandidate(): ParkingCandidate? =
+        decode(this[KEY_CANDIDATE]) { json.decodeFromString<ParkingCandidate>(it) }
+
     private fun Preferences.readCheckpoint(): DetectionCheckpoint? =
         decode(this[KEY_CHECKPOINT]) { json.decodeFromString<DetectionCheckpoint>(it) }
 
@@ -235,6 +306,9 @@ class DetectionStateStore(
         const val DEFAULT_MAX_LOGGED_EVENTS = 50
 
         val KEY_CHECKPOINT = stringPreferencesKey("checkpoint")
+        val KEY_CANDIDATE = stringPreferencesKey("parking_candidate")
+        val KEY_CONFIRMED_CANDIDATE = stringPreferencesKey("parking_candidate_confirmed_id")
+        val KEY_CONFIRMED_RECORD = stringPreferencesKey("parking_candidate_confirmed_record")
         val KEY_EVENT_LOG = stringPreferencesKey("event_log")
         val KEY_DESIRED_ENABLED = booleanPreferencesKey("registration_desired_enabled")
         val KEY_REGISTERED_SPEC_VERSION = intPreferencesKey("registration_spec_version")

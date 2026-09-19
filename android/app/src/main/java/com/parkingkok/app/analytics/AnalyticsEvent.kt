@@ -2,6 +2,7 @@ package com.parkingkok.app.analytics
 
 import com.parkingkok.app.domain.parking.ConfidenceBucket
 import com.parkingkok.app.domain.trace.LocationQualityBucket
+import kotlinx.serialization.Serializable
 
 /**
  * Everything docs/17 §3 permits an event to say about a detection, and nothing else.
@@ -13,7 +14,14 @@ import com.parkingkok.app.domain.trace.LocationQualityBucket
  *
  * Null buckets are omitted from the payload rather than defaulted: an absent property is
  * honest, a defaulted bucket invents a trip that was never measured.
+ *
+ * `@Serializable` because a [com.parkingkok.app.domain.detection.ParkingCandidate] carries
+ * one across a process death: the candidate is created on one drive and answered minutes
+ * later, possibly after a restart, and `_confirmed` has to describe the drive rather than
+ * the moment of the answer. Persisting this type rather than loose fields keeps the
+ * privacy boundary intact on the way to disk as well as on the way to Firebase.
  */
+@Serializable
 data class DetectionProperties(
     /** The engine's external confidence contract (docs/05 §5). */
     val confidenceBucket: ConfidenceBucket,

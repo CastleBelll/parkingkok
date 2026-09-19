@@ -18,6 +18,26 @@ class RecordingAnalyticsSink : AnalyticsSink {
 }
 
 /**
+ * Records the events a feature asked for, above the consent gate.
+ *
+ * [RecordingAnalyticsSink] observes what a transport would receive and therefore also
+ * observes consent; this observes the call site's own decision, which is what a feature
+ * test is about. The gate itself has its own tests.
+ */
+class RecordingAnalytics : AnalyticsRecording {
+
+    private val received = mutableListOf<AnalyticsEvent>()
+
+    val events: List<AnalyticsEvent> get() = received.toList()
+
+    val names: List<String> get() = received.map { it.name }
+
+    override suspend fun record(event: AnalyticsEvent) {
+        received += event
+    }
+}
+
+/**
  * One sample of every event, so a contract test can walk the whole hierarchy. Sample values
  * are deliberately all-different, which is what lets the "no forbidden key" assertions see
  * every branch of the payload mapper.
