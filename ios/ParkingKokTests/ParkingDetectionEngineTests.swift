@@ -334,6 +334,48 @@ struct ParkingDetectionEngineTests {
         #expect(candidates(effects).count == 1)
         #expect(await engine.state == .candidatePending)
     }
+
+    /// §3a "Leaving a pending candidate behind". Without this row the engine sat in
+    /// `CANDIDATE_PENDING` for up to forty-five minutes with detection dead, which is the
+    /// whole cost of ignoring one prompt.
+    @Test("Driving again while a prompt is unanswered starts a new session")
+    func drivingAgainWhilePendingOpensANewSession() async {
+        // Arrange — a candidate is pending and the user never answered it.
+        let engine = await drivingEngine()
+        _ = await engine.handle(.vehicleExit(at: at(300)))
+        _ = await engine.handle(.walkingEnter(at: at(330)))
+        #expect(await engine.state == .candidatePending)
+
+        // Act
+        _ = await engine.handle(.vehicleEnter(at: at(900)))
+
+        // Assert
+        #expect(await engine.state == .drivingCandidate)
+    }
+
+    /// The candidate is not retired at `vehicle_enter`: that signal is noisy, and §10a
+    /// supersedes only when the new session produces a candidate of its own.
+    @Test("The unanswered candidate survives the new session until it is superseded")
+    func pendingCandidateSurvivesUntilSuperseded() async {
+        // Arrange
+        let engine = await drivingEngine()
+        _ = await engine.handle(.vehicleExit(at: at(300)))
+        _ = await engine.handle(.walkingEnter(at: at(330)))
+
+        // Act — a new journey begins, then earns its own candidate.
+        let onEnter = await engine.handle(.vehicleEnter(at: at(900)))
+        _ = await engine.handle(.timerTick(at: at(1000)))
+        _ = await engine.handle(.vehicleExit(at: at(1200)))
+        let onSecond = candidates(await engine.handle(.walkingEnter(at: at(1230))))
+
+        // Assert — nothing was withdrawn when the drive began, and the second trip
+        // produced a candidate of its own.
+        let withdrew = onEnter.contains { effect in
+            if case .withdrawCandidate = effect { true } else { false }
+        }
+        #expect(!withdrew)
+        #expect(onSecond.count == 1)
+    }
 }
 
 /// The edge of the §3a table that only the iOS adapter can get wrong: Core Motion has no

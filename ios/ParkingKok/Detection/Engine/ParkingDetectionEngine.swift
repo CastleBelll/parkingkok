@@ -363,7 +363,18 @@ actor ParkingDetectionEngine {
             // stop-start traffic never reach a parking transition at all.
             transition = nil
             return resumeDrivingFromTransition(vehicleEvidenceAt: date, now: now)
-        case .drivingCandidate, .driving, .candidatePending, .parked, .departureCandidate:
+        case .candidatePending:
+            // §3a "Leaving a pending candidate behind": a new journey starts while a
+            // prompt is still unanswered. Without this the engine sat here for up to
+            // forty-five minutes with detection dead.
+            //
+            // The candidate is deliberately *not* retired. `vehicle_enter` is a noisy
+            // signal — a bus passing, a passenger seat, the OS guessing — and retiring on
+            // it would delete the answer to a question the user is still holding. It is
+            // superseded where §10a puts it: when this new session actually produces a
+            // candidate of its own.
+            return openDrivingCandidate(vehicleEvidenceAt: date, now: now)
+        case .drivingCandidate, .driving, .parked, .departureCandidate:
             // No row moves here, but the freshest vehicle observation is still worth
             // remembering: it is the anchor a relaunch replays motion history from.
             return isNewerEvidence ? [persistedCheckpoint()] : []
