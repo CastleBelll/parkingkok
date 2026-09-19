@@ -96,7 +96,6 @@ targets:
       - path: ParkingKok/DesignSystem/PKColor.swift
       - path: ParkingKok/DesignSystem/PKMetrics.swift
       - path: ParkingKok/DesignSystem/PKTypography.swift
-      - path: ParkingKok/DesignSystem/PKElevation.swift
       - path: ParkingKok/DesignSystem/PKComponents.swift
       # `pkPressFeedback`, which every button style in PKComponents applies.
       - path: ParkingKok/DesignSystem/PKMotion.swift

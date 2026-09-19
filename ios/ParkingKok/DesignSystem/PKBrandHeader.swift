@@ -30,7 +30,7 @@ struct PKBrandHeader: View {
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 0) {
-                Text("주차콕")
+                Text("주차핀")
                     .font(PKTypography.screenTitle)
                     .foregroundStyle(PKColor.textPrimary)
                 Text("자동 주차 기록")
@@ -101,7 +101,6 @@ struct PKBrandMark: View {
                     .frame(width: width, height: width)
                     .frame(maxHeight: .infinity, alignment: .top)
             }
-            .pkElevation(.raised)
             Image(systemName: "car.fill")
                 .font(.system(size: width * 0.44, weight: .bold))
                 .foregroundStyle(Color.white)
@@ -180,8 +179,9 @@ struct PKBrandFooter: View {
 /// Screen scaffold: the token background under a scrolling column with the standard
 /// gutter. Every screen uses it so the gutter and the background cannot drift apart.
 ///
-/// The background is no longer a flat fill. `PKBackdrop` lays the mock's pale blue blooms
-/// behind the content, pinned to the screen rather than to the scroll offset.
+/// The background is a flat token fill. It briefly carried the mock's pale blue blooms;
+/// the design harness in CLAUDE.md forbids decorative background washes, and the screen
+/// reads calmer without something for the eye to notice behind the content.
 struct PKScreen<Content: View>: View {
     private let content: Content
 
@@ -197,13 +197,7 @@ struct PKScreen<Content: View>: View {
             .padding(.horizontal, PKSpacing.l)
             .padding(.vertical, PKSpacing.l)
         }
-        .background {
-            ZStack {
-                PKColor.background
-                PKBackdrop()
-            }
-            .ignoresSafeArea()
-        }
+        .background(PKColor.background.ignoresSafeArea())
         .scrollDismissesKeyboard(.interactively)
     }
 }
