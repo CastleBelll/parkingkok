@@ -93,6 +93,56 @@ field data exists. Neither platform may pick its own value for one.
 | `movementIdleWindow` | 180s | §7 `maximumBaseline`. **unvalidated** |
 | `transitionWindow` | 300s | §7 vehicle window, reused so a walk that starts late still counts. **unvalidated** |
 
+### The car link
+
+A phone attached to a car — by Android Auto / CarPlay projection, or by Bluetooth to the
+car's audio system — is the strongest signal this product can get, and the only one that
+knows the *moment* the driver leaves. Motion heuristics infer parking minutes later, from
+absence. A disconnect is an event.
+
+| from | to | condition |
+|---|---|---|
+| `IDLE` | `DRIVING_CANDIDATE` | `projection_connected` or `bluetooth_car_connected` |
+| `DRIVING` | `CANDIDATE_PENDING` | `projection_disconnected` or `bluetooth_car_disconnected` |
+| `CANDIDATE_PENDING` | `DRIVING` | a car link reconnects |
+
+Connecting does **not** promote straight to `DRIVING`: people sit in parked cars. The
+90-second sustain in §3a still applies, so getting in and changing your mind produces
+nothing.
+
+Disconnecting **does** go straight to `CANDIDATE_PENDING`, skipping `PARKING_TRANSITION`.
+Waiting for a walk would lose exactly the case §3a was corrected for — an underground car
+park where no walk is ever detected — and the link has already told us the engine stopped
+and the phone left the car.
+
+The reconnect row is what makes a fuel stop safe (§17 fixture #3): disconnect, pump, get
+back in, and the candidate is retired and its notification withdrawn before it is worth
+anything. It is also why `CANDIDATE_PENDING → DRIVING` exists at all.
+
+Reason codes: `car_projection_disconnected` already covers both, since §4 is closed and the
+product distinction — the phone was attached to a car and stopped being attached — is the
+same. The *kind* of link belongs in §8 weighting, not in a new code.
+
+#### Platform reality
+
+These are not equally available, and the contract says so rather than pretending:
+
+- **Android** can observe both. `ACTION_ACL_CONNECTED` / `ACTION_ACL_DISCONNECTED` with a
+  `BluetoothClass` of `AUDIO_VIDEO_CAR_AUDIO` or `AUDIO_VIDEO_HANDSFREE` identifies a car
+  device, and it works from a broadcast receiver in the background.
+- **iOS does not expose classic Bluetooth connect/disconnect to third-party apps.**
+  CoreBluetooth is BLE-only and ExternalAccessory needs an MFi accessory. What is reachable
+  is the audio route (`AVAudioSession`, port type `.carAudio` / Bluetooth A2DP), and that
+  requires an audio session the app has no other reason to hold.
+
+So Bluetooth is an **optional vehicle signal** — the property `optionalVehicleSignal` in
+docs/17 §3 already anticipated one. Where it exists the engine becomes far more accurate;
+where it does not, nothing regresses, because every §3a transition still stands on motion
+and location alone. No fixture may depend on a link event being present.
+
+Before building the iOS side, confirm the limitation against current SDKs rather than
+taking this paragraph's word for it, and report what you find.
+
 ### Movement evidence does not gate promotion
 
 An earlier draft of this table required movement evidence as well as sustained vehicle

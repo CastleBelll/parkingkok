@@ -90,6 +90,42 @@ Accept examples:
 
 Normalize only when unambiguous; preserve raw text.
 
+## 6a. Reading the Pillar
+
+Car parks write the answer on the wall. A photo of the pillar already carries the floor,
+the zone and often the bay number, so the user should not retype what the camera can read.
+
+### Where it runs
+On the photo the user takes anyway — 사진 추가 on home and detail, and the camera path from
+the confirmation screen. Recognition is **on-device**: Vision on iOS, ML Kit's on-device
+Korean text model on Android. The photo never leaves the phone (docs/06 §1, docs/09), and
+neither does the text read from it.
+
+### What it produces
+A *suggestion*, never a saved value. Recognised text is parsed with the existing rules —
+floor by docs/02 §6, which already accepts `B3`, `지하 3층`, `3F` — and the result is
+pre-filled into the fields the user was going to fill anyway, focused and editable.
+
+The user always sees what was read before anything is stored. Nothing is auto-saved from a
+photo: a misread `B3` as `83` that silently became the record would be worse than typing.
+
+### When it fails
+Most pillars are not photographed straight, in good light, from two metres. Recognition
+failing is the normal case, not an error:
+
+- no text found, or nothing parses → the form opens exactly as it does today, empty. No
+  message, no spinner left behind, no "인식 실패" dialog
+- partial read → fill what parsed, leave the rest blank
+- the model is unavailable or takes too long → same as no text found
+
+A feature that apologises every time it cannot read a wall is worse than one that quietly
+helps when it can.
+
+### Not analytics
+Recognised strings are floor, zone and bay — docs/17 §3 puts those on the forbidden list
+and docs/09 keeps them local. What may be counted is whether a suggestion was offered and
+whether the user kept it, as booleans, because that is how the feature earns its place.
+
 ## 7. Active Home Hierarchy
 1. floor
 2. zone/spot
