@@ -321,6 +321,15 @@ actor BackgroundCoordinator {
         let now = dateProvider.now
         await apply(engine.handle(.timerTick(at: now)), now: now)
         await applySilenceBound(now: now)
+        // The history in hand may already answer a transition either of the two just
+        // opened; §3a's window is lazy, not a reason to be late.
+        let samples = snapshot.motionSamples
+        await applyConfirmationSignals(
+            samples: samples,
+            vehicle: MotionEvidenceReader.latestVehicleEvidence(in: samples),
+            now: now
+        )
+        await releaseCaptureIfIdle()
     }
 
     func handleCaptureAuthorizationLost() async {
@@ -438,7 +447,12 @@ actor BackgroundCoordinator {
             let now = dateProvider.now
             let start = now.addingTimeInterval(-15 * 60)
             // From `IDLE`, so the injected trip is a trip of its own rather than a
-            // continuation of whatever the device happened to be doing.
+            // continuation of whatever the device happened to be doing. Both routes back
+            // are real §3a rows — a rejection and a session end — so re-running the hook
+            // never reaches a state the engine could not have reached on its own.
+            if await engine.state == .candidatePending {
+                await apply(engine.handle(.userRejectedParking(at: start)), now: start)
+            }
             await apply(engine.endDrivingSession(reason: .fieldTestStopped, now: start), now: start)
             consumedVehicleEvidenceAt = now
             consumedVehicleExitAt = now
@@ -501,8 +515,12 @@ actor BackgroundCoordinator {
         await apply(engine.handle(.timerTick(at: now)), now: now)
 
         await deriveVehicleExit(samples: samples, vehicle: vehicle, now: now)
-        await applyConfirmationSignals(samples: samples, vehicle: vehicle, now: now)
+        // Before the confirming signals, not after: a session the silence bound just
+        // closed has entered `PARKING_TRANSITION`, and the walk or the stillness that
+        // answers it is already in this same history. Waiting for the next wake would
+        // cost minutes of a 300 s window for no reason.
         await applySilenceBound(now: now)
+        await applyConfirmationSignals(samples: samples, vehicle: vehicle, now: now)
         await releaseCaptureIfIdle()
     }
 

@@ -335,3 +335,60 @@ struct ParkingDetectionEngineTests {
         #expect(await engine.state == .candidatePending)
     }
 }
+
+/// The edge of the §3a table that only the iOS adapter can get wrong: Core Motion has no
+/// IN_VEHICLE EXIT, so the drive ends by evidence going quiet, and the signal that answers
+/// the transition is usually already in the same replayed history.
+@Suite("Deriving the exit iOS is not given")
+struct DerivedVehicleExitTests {
+    private let reference = TestTime.offset(0)
+
+    private func automotive(at offset: TimeInterval) -> MotionSample {
+        MotionSample(
+            timestamp: reference.addingTimeInterval(offset),
+            automotive: true,
+            stationary: true,
+            confidence: .high
+        )
+    }
+
+    /// docs/05 §13's underground pattern end to end: the car goes into a basement, the
+    /// phone stays in a bag, Core Motion never reports a walk, and the only two facts are
+    /// that automotive evidence stopped and the device went still.
+    @Test("Silence ends the drive and the stillness in the same history confirms it, on one wake")
+    func silenceThenStillnessProducesACandidateOnOneWake() async throws {
+        // Arrange — a drive that confirmed, then nothing for longer than the silence bound.
+        let checkpoints = StubCheckpointStore(loadResult: .absent)
+        let candidates = StubParkingCandidateStore()
+        let clock = MutableDateProvider(reference)
+        let motion = StubMotionHistoryProvider(result: .success([automotive(at: -30)]))
+        let coordinator = BackgroundCoordinator(
+            checkpointStore: checkpoints,
+            motionHistory: motion,
+            locationCapture: StubBoundedLocationCapture(),
+            dateProvider: clock,
+            candidateStore: candidates,
+            candidateNotifier: StubCandidateNotifier()
+        )
+        await coordinator.rehydrate(launchReason: .significantLocationChange)
+
+        // Act — one wake, well past the silence bound, whose history carries the stillness.
+        let silence = DrivingSessionTimeoutPolicy.vehicleEvidenceTimeout
+        motion.setResult(.success([
+            automotive(at: -30),
+            MotionSample(timestamp: reference.addingTimeInterval(silence - 60), stationary: true, confidence: .high)
+        ]))
+        clock.advance(by: silence)
+        await coordinator.handleSignificantChange(
+            LocationQualitySample(timestamp: clock.now, horizontalAccuracy: 20)
+        )
+        let snapshot = await coordinator.currentSnapshot()
+
+        // Assert — the candidate exists now, not one wake later.
+        let stored = try #require(candidates.load())
+        #expect(stored.reasonCodes.contains(.stationaryAfterVehicle))
+        #expect(snapshot.lastDrivingSessionEndReason == .vehicleEvidenceExpired)
+        #expect(snapshot.currentCheckpoint?.state == .candidatePending)
+        #expect(!snapshot.isCapturingDrivingLocation)
+    }
+}
