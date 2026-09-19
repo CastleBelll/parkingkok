@@ -462,6 +462,18 @@ At 45 minutes the candidate expires, its notification is withdrawn, and no recor
 created. A user who opens an expired notification lands on home; the app does not
 apologise for it in a dialog.
 
+### History
+
+Resolving a candidate — confirmed, rejected or expired — appends it to a local history of
+the last 30, which is what the bell opens (docs/10 §7b). The live candidate slot still
+holds at most one; history is a separate append-only list, because the two answer
+different questions and giving the slot a second job is how it would end up holding two
+live candidates by accident.
+
+An entry keeps the raised-at time, the outcome, and for a confirmed one the record id.
+Not the location: §10a keeps coordinates out of this surface and history is the same
+surface a day later.
+
 ### Analytics
 `parking_candidate_created`, `parking_candidate_confirmed`, `parking_candidate_rejected`
 (docs/17 §2), each carrying `confidenceBucket` and the §4 reason codes and nothing else.

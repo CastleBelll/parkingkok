@@ -180,6 +180,56 @@ A screen, pushed, with a normal back. A dialog that cannot be dismissed is how a
 people, and this one is a guess the user may simply not want to answer right now. Backing
 out leaves the candidate pending until it expires (docs/05 §10a).
 
+## 7b. Notification History
+
+The bell in the header opens the notifications the app has raised. It used to open the
+notification *settings*, which answered a question nobody had — the question people
+actually have is "something buzzed while I was driving, what was it?"
+
+```text
+알림
+
+주차한 것 같아요            오후 8:14
+B3 · A구역 142 로 저장됨
+
+주차한 것 같아요            어제 오후 6:24
+주차 아님
+
+주차한 것 같아요            9월 17일
+응답 없음
+```
+
+### What is in it
+Every candidate the app raised, newest first, with what became of it. Three outcomes and
+no others: **저장됨** with the floor it became, **주차 아님**, and **응답 없음** for one
+that expired unanswered (docs/05 §10a).
+
+Nothing else is a notification. Trace label prompts are a diagnostics tool and do not
+appear here.
+
+### Tapping a row
+A candidate still pending opens the confirmation screen. One that became a record opens
+that record. One that was rejected or expired does nothing — it is history, and there is
+nothing left to act on. A row that does nothing must not look tappable.
+
+### The dot
+The bell carries a small dot while a candidate is unanswered, and only then. This is the
+whole reason the screen exists: a notification swiped away in the car is currently lost
+until it expires, and the dot is how the user finds it again.
+
+It is a dot, not a count. There is at most one pending candidate (§12).
+
+### Retention
+The last 30 entries, local only, alongside the rest of the detection state. Older ones
+fall off — a user looking further back wants the parking history, which is a different
+screen and already keeps everything.
+
+No coordinate, address or map appears here, the same rule the notification itself follows.
+
+### Where settings went
+Notification settings stay reachable in 설정 → 알림, which is where the rest of the
+switches live. The bell no longer needs to be a second door to them.
+
 ## 8. Permission Education
 One permission purpose per step.
 Explain value before OS prompt.
