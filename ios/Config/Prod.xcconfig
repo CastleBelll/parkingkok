@@ -2,7 +2,7 @@
 
 // App Store build. This is the shipping bundle identifier.
 PK_BUNDLE_ID = $(PK_BUNDLE_ID_BASE)
-PK_DISPLAY_NAME = ParkingKok
+PK_DISPLAY_NAME = 주차핀
 PK_APP_ENV = prod
 
 SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) PK_PROD

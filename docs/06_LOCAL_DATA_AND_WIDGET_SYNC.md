@@ -65,6 +65,11 @@ Every widget/app mutation is read-modify-write with revision increment.
 App Group JSON may be used because widget extension is separate process.
 Use atomic file replacement and shared mutation helper.
 
+The file lives at `Library/Application Support/Widget/active-parking.json` inside the
+group container, not at its root: that is where the rest of the app keeps local state, and
+it is the only part of a shared container `devicectl device copy from` will read — which is
+what lets a field test pull the projection off a real device and check the revision.
+
 ## 7. Android Widget Mutation
 Glance callback must delegate to repository/application layer.
 Do not store product business state only inside widget state.
