@@ -115,12 +115,15 @@ struct ParkingMapThumbnail: View {
     /// corner still gets filled — an empty hole would be the dead space this component
     /// exists to remove — and it says why there is no map instead of showing a grey box.
     private var placeholder: some View {
+        // Neutral, not primarySoft. A tinted panel in the hero's corner read as something
+        // to press, and it spent the screen's one accent on a surface that only says a
+        // thing is missing.
         ZStack {
-            PKColor.primarySoft
+            PKColor.textSecondary.opacity(0.08)
             VStack(spacing: PKSpacing.xs) {
                 Image(systemName: "mappin.slash")
                     .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(PKColor.primary)
+                    .foregroundStyle(PKColor.textSecondary)
                 Text("위치 없음")
                     .font(PKTypography.caption)
                     .foregroundStyle(PKColor.textSecondary)

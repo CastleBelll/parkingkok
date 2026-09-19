@@ -124,6 +124,7 @@
     <!-- Home -->
     <string name="home_active_title">현재 주차 위치</string>
     <string name="home_no_floor">위치 기록됨</string>
+    <string name="home_spot_only">%1$s번</string>
     <string name="home_floor_hint">층을 변경할 수 있어요</string>
     <string name="home_floor_hint_fixed">직접 입력한 층이라 - / + 로 바꿀 수 없어요</string>
     <string name="home_floor_decrease">한 층 아래로</string>

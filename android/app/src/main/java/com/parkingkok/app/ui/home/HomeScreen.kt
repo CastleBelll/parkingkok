@@ -279,11 +279,21 @@ private fun ActiveParkingCard(
                     spokenPrefix = stringResource(R.string.home_active_title),
                 )
 
-                val supporting = listOfNotNull(record.zone, record.spot)
-                if (supporting.isNotEmpty()) {
+                // `A구역 · 142`, or `142번` when there is no zone. A spot on its own used
+                // to render as the bare number, so a record holding only `03` showed `03`
+                // under the floor at hero weight — a large unexplained numeral.
+                val zone = record.zone
+                val spot = record.spot
+                val supporting = when {
+                    zone != null && spot != null -> "$zone · $spot"
+                    zone != null -> zone
+                    spot != null -> stringResource(R.string.home_spot_only, spot)
+                    else -> null
+                }
+                if (supporting != null) {
                     Spacer(Modifier.height(MaterialTheme.spacing.tiny))
                     Text(
-                        text = supporting.joinToString(" · "),
+                        text = supporting,
                         style = MaterialTheme.typography.headlineSmall,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
