@@ -23,6 +23,16 @@
          launch, and denial is not an app failure. -->
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
 
+    <!-- The car link (docs/05 §3a "The car link"). From Android 12 this grant is what
+         makes the system deliver ACL_CONNECTED/ACL_DISCONNECTED at all; without it the
+         app simply never hears about a car, which costs accuracy and nothing else. It is
+         requested only alongside Smart Detection and denial is not an app failure.
+         BLUETOOTH is its pre-12 predecessor and is capped accordingly.
+         No scanning permission is declared: the app never discovers devices, it only
+         hears that one already paired has attached or detached. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+
     <!-- The label prompt asks what a just-closed session was (docs/05 §9 labelling).
          Runtime permission on Android 13+, requested from the diagnostics screen only and
          never at first launch. Denial suppresses the prompt and is counted; it breaks
@@ -113,6 +123,25 @@
         <receiver
             android:name=".detection.ParkingCandidateReceiver"
             android:exported="false" />
+
+        <!-- The car link (docs/05 §3a). Declared in the manifest rather than registered
+             at runtime because the signal is worth nothing unless it arrives while the app
+             is not running — the disconnect happens as the driver walks away. ACL_CONNECTED
+             and ACL_DISCONNECTED are on the platform's implicit-broadcast exception list,
+             so a manifest receiver still receives them on Android 8+.
+
+             Exported: these are system broadcasts, and an unexported receiver would not
+             get them. Nothing is trusted from the intent beyond the Bluetooth device class,
+             and a spoofed connect can at worst open a detection window that produces a
+             candidate the user declines. -->
+        <receiver
+            android:name=".detection.CarLinkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.bluetooth.device.action.ACL_CONNECTED" />
+                <action android:name="android.bluetooth.device.action.ACL_DISCONNECTED" />
+            </intent-filter>
+        </receiver>
 
         <!-- Target of the label-prompt notification actions. Not exported: only the
              notification holds the PendingIntent, and a PendingIntent target does not need

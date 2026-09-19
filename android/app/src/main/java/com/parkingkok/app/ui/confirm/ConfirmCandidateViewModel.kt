@@ -6,7 +6,11 @@ import androidx.lifecycle.viewModelScope
 import com.parkingkok.app.AppContainer
 import com.parkingkok.app.detection.ConfirmCandidateResult
 import com.parkingkok.app.detection.ConfirmedCandidateDetails
+import com.parkingkok.app.core.Clock
+import com.parkingkok.app.core.SystemClock
 import com.parkingkok.app.detection.ParkingCandidateCoordinator
+import com.parkingkok.app.detection.ParkingDetectionRuntime
+import com.parkingkok.app.domain.detection.DetectionEvent
 import com.parkingkok.app.domain.parking.Floor
 import com.parkingkok.app.domain.parking.usecase.RecentFloorPicksUseCase
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -59,6 +63,15 @@ class ConfirmCandidateViewModel(
     private val candidateId: String,
     private val coordinator: ParkingCandidateCoordinator,
     private val recentFloorPicks: RecentFloorPicksUseCase,
+    /**
+     * Where the answer goes back to the §3a state machine.
+     *
+     * Nullable so a test can drive the screen without a DataStore. The answer has to reach
+     * the engine or it never leaves `CANDIDATE_PENDING`: the record would exist and the
+     * detector would still be waiting to hear about the trip that produced it.
+     */
+    private val detectionRuntime: ParkingDetectionRuntime? = null,
+    private val clock: Clock = SystemClock,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ConfirmCandidateUiState())
@@ -93,6 +106,9 @@ class ConfirmCandidateViewModel(
         _uiState.update { it.copy(working = true) }
         viewModelScope.launch {
             coordinator.reject(candidateId)
+            detectionRuntime?.handleUserAnswer(
+                DetectionEvent.UserRejectedParking(clock.nowEpochMillis()),
+            )
             // True whether or not a stored candidate was found: the user has answered, and
             // the screen's job is done either way.
             _uiState.update { it.copy(working = false, rejected = true) }
@@ -106,6 +122,13 @@ class ConfirmCandidateViewModel(
         _uiState.update { it.copy(working = true, alreadyActive = false) }
         viewModelScope.launch {
             val result = coordinator.confirm(candidateId, details)
+            // Only a write that happened moves the machine: `Gone` and `AlreadyActive`
+            // left the candidate exactly where it was.
+            if (result is ConfirmCandidateResult.Confirmed) {
+                detectionRuntime?.handleUserAnswer(
+                    DetectionEvent.UserConfirmedParking(clock.nowEpochMillis()),
+                )
+            }
             _uiState.update {
                 when (result) {
                     is ConfirmCandidateResult.Confirmed ->
@@ -128,6 +151,8 @@ class ConfirmCandidateViewModel(
                         candidateId = candidateId,
                         coordinator = container.parkingCandidateCoordinator,
                         recentFloorPicks = RecentFloorPicksUseCase(container.parkingRepository),
+                        detectionRuntime = container.parkingDetectionRuntime,
+                        clock = container.clock,
                     ) as T
             }
     }

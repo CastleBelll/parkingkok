@@ -12,9 +12,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.parkingkok.app.analytics.AnalyticsEvent
-import com.parkingkok.app.analytics.DetectionProperties
 import com.parkingkok.app.detection.ParkingCandidateChannel
-import com.parkingkok.app.domain.parking.ConfidenceBucket
+import com.parkingkok.app.domain.detection.DetectionEvent
+import com.parkingkok.app.domain.detection.MotionDomainEvent
+import com.parkingkok.app.domain.detection.MotionEventKind
 import com.parkingkok.app.theme.ParkingkokTheme
 import com.parkingkok.app.ui.navigation.ParkingkokApp
 import kotlinx.coroutines.launch
@@ -60,7 +61,7 @@ class MainActivity : ComponentActivity() {
             }
         }
         runFirebaseSelfCheckIfRequested(container)
-        injectCandidateIfRequested(container)
+        replayDriveIfRequested(container)
     }
 
     /**
@@ -104,43 +105,65 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Debuggable-build hook for verifying the candidate notification on a real device:
+     * Debuggable-build hook for verifying detection on a real device:
      *
      * ```sh
      * adb shell am start -n com.parkingkok.app/.MainActivity \
-     *     --ez pk_inject_candidate true --es pk_candidate_bucket HIGH
+     *     --ez pk_replay_drive true          # motion only: enter, exit, walk
+     * adb shell am start -n com.parkingkok.app/.MainActivity \
+     *     --ez pk_replay_drive true --es pk_replay_scenario car_link
      * ```
      *
-     * There is no engine transition into `CANDIDATE_PENDING` yet, so this is how the
-     * notification, the tap and the confirmation screen get exercised on hardware without
-     * driving a car for forty minutes per attempt.
+     * A real drive takes forty minutes per attempt and an underground car park takes a car,
+     * so this feeds the §2 event vocabulary straight into
+     * [com.parkingkok.app.detection.ParkingDetectionRuntime] at compressed timestamps.
      *
-     * **It bypasses nothing.** It calls the same
-     * [com.parkingkok.app.detection.ParkingCandidateCoordinator.create] the engine will,
-     * so the `low`-confidence suppression, the supersede-and-withdraw rule, the permission
-     * check and the analytics event all still apply — a hook that skipped them would
-     * verify something the product does not do. Unreachable in a release build, the same
-     * guard [runFirebaseSelfCheckIfRequested] uses.
+     * **It bypasses nothing that decides.** The events go through the same reducer,
+     * the same §3a table, the same §8 scoring and the same
+     * [com.parkingkok.app.detection.ParkingCandidateCoordinator] a Play services transition
+     * would reach — so the 90-second promotion bar, the `low`-confidence suppression, the
+     * supersede-and-withdraw rule, the notification permission check and the analytics event
+     * all still apply. What it replaces is the OS delivering the transitions, which is the
+     * one part a phone on a desk cannot produce.
      *
-     * The injected candidate carries no location: this hook exists to exercise the prompt,
-     * and inventing a coordinate would put a fake position into a real parking record.
+     * It replaces the earlier `pk_inject_candidate` hook, which called `create` directly and
+     * therefore proved nothing about the state machine that now owns that decision.
+     *
+     * The replay carries no location: there is no coordinate this hook could honestly
+     * supply, and inventing one would put a fake position into a real parking record. The
+     * candidate is therefore the underground shape — reliable fix absent, §9 bucket earned
+     * from motion evidence alone.
      */
-    private fun injectCandidateIfRequested(container: AppContainer) {
-        if (!isDebuggable || !intent.getBooleanExtra(EXTRA_INJECT_CANDIDATE, false)) return
-        val bucket = intent.getStringExtra(EXTRA_CANDIDATE_BUCKET)
-            ?.let { name -> ConfidenceBucket.entries.firstOrNull { it.name == name } }
-            ?: ConfidenceBucket.HIGH
+    private fun replayDriveIfRequested(container: AppContainer) {
+        if (!isDebuggable || !intent.getBooleanExtra(EXTRA_REPLAY_DRIVE, false)) return
+        val withCarLink = intent.getStringExtra(EXTRA_REPLAY_SCENARIO) == SCENARIO_CAR_LINK
+        val start = container.clock.nowEpochMillis() - REPLAY_DRIVE_SPAN_MILLIS
+        val runtime = container.parkingDetectionRuntime
+
         container.applicationScope.launch {
-            val candidate = container.parkingCandidateCoordinator.create(
-                evidence = DetectionProperties(
-                    confidenceBucket = bucket,
-                    walkingEvidence = true,
-                    gpsDegradation = false,
-                    optionalVehicleSignal = false,
-                ),
-                lastReliableLocation = null,
+            // Vehicle evidence, then a gap past `minimumVehicleDuration`, then the end of
+            // the drive. Exactly the §3a path, at a scale a person can watch.
+            runtime.handleCarLink(
+                if (withCarLink) {
+                    DetectionEvent.CarLinkConnected(start)
+                } else {
+                    DetectionEvent.VehicleEnter(start)
+                },
             )
-            Log.i(TAG, "injected candidate ${candidate.id} bucket=$bucket")
+            val ending = start + REPLAY_DRIVE_SPAN_MILLIS
+            if (withCarLink) {
+                // The link's own row: straight to CANDIDATE_PENDING, no walk required —
+                // which is the underground case motion alone cannot reach.
+                runtime.handleCarLink(DetectionEvent.CarLinkDisconnected(ending))
+            } else {
+                runtime.handleMotion(
+                    MotionDomainEvent(MotionEventKind.EXITED_VEHICLE, ending, ending),
+                )
+                runtime.handleMotion(
+                    MotionDomainEvent(MotionEventKind.STARTED_WALKING, ending, ending),
+                )
+            }
+            Log.i(TAG, "replay drive finished in ${runtime.restore().state}")
         }
     }
 
@@ -149,8 +172,18 @@ class MainActivity : ComponentActivity() {
 
     private companion object {
         const val EXTRA_SELF_CHECK = "pk_firebase_selfcheck"
-        const val EXTRA_INJECT_CANDIDATE = "pk_inject_candidate"
-        const val EXTRA_CANDIDATE_BUCKET = "pk_candidate_bucket"
+        const val EXTRA_REPLAY_DRIVE = "pk_replay_drive"
+        const val EXTRA_REPLAY_SCENARIO = "pk_replay_scenario"
+        const val SCENARIO_CAR_LINK = "car_link"
+
+        /**
+         * How long the replayed drive claims to have lasted.
+         *
+         * Comfortably past both §3a's 90 s promotion bar and §7's 120 s duration clause, so
+         * the run exercises a promotion that was earned rather than one waived for the
+         * hook.
+         */
+        const val REPLAY_DRIVE_SPAN_MILLIS = 300_000L
         const val TAG = "PkIdentity"
     }
 }
