@@ -43,6 +43,10 @@ final class DetectionRuntime {
     /// so a candidate created on a background wake is the one the screen shows.
     /// `nil` when the directory is unavailable, which disables candidates and nothing else.
     private(set) var candidateStore: (any ParkingCandidateStoring)?
+    /// The bell's list (docs/10 §7b). Exposed for the same reason `candidateStore` is:
+    /// the screen's model and this coordinator must write to the one file, or a
+    /// confirmation answered on the lock screen would be missing from the list.
+    private(set) var candidateHistoryStore: (any CandidateHistoryStoring)?
 
     init(
         monitor: SignificantLocationMonitor = SignificantLocationMonitor(),
@@ -54,6 +58,7 @@ final class DetectionRuntime {
         traceStore: (any TraceStoring)? = nil,
         labelPromptDelivery: (any LabelPromptDelivering)? = nil,
         candidateStore: (any ParkingCandidateStoring)? = nil,
+        candidateHistory: (any CandidateHistoryStoring)? = nil,
         candidateNotifier: (any CandidateNotifying)? = nil,
         analytics: any AnalyticsRecording = AnalyticsComposition.recorder,
         carLink: any CarLinkObserving = AudioRouteCarLinkObserver()
@@ -112,6 +117,11 @@ final class DetectionRuntime {
         let candidates = candidateStore
             ?? (try? FileParkingCandidateStore(fileURL: FileParkingCandidateStore.defaultFileURL()))
         self.candidateStore = candidates
+        // docs/10 §7b. Same directory, same reason: a candidate superseded on a background
+        // wake is one the bell still has to be able to account for.
+        let history = candidateHistory
+            ?? (try? FileCandidateHistoryStore(fileURL: FileCandidateHistoryStore.defaultFileURL()))
+        candidateHistoryStore = history
 
         coordinator = BackgroundCoordinator(
             checkpointStore: store,
@@ -119,6 +129,7 @@ final class DetectionRuntime {
             locationCapture: locationCapture,
             traceRecorder: traces.map { TraceRecorder(store: $0, prompter: prompter) },
             candidateStore: candidates,
+            candidateHistory: history,
             candidateNotifier: candidateNotifier ?? UserNotificationCandidateDelivery(),
             analytics: analytics
         )

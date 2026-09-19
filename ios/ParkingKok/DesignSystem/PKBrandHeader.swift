@@ -7,19 +7,27 @@ import SwiftUI
 /// car is, and a plain disc says nothing. The pin is drawn rather than bundled so it
 /// tracks the brand colour token and Dynamic Type instead of being a fixed-size asset.
 ///
-/// The bell is back, and it goes somewhere: `AppRoute.settings(focus: .notifications)`.
-/// It was previously left out on the grounds that a button that does nothing is worse
-/// than a missing one, which is still true — the fix is a destination, not an omission.
+/// The bell opens `AppRoute.notificationHistory` (docs/10 §7b). It used to open the
+/// notification *settings*, "which answered a question nobody had — the question people
+/// actually have is 'something buzzed while I was driving, what was it?'".
+///
+/// It carries a dot while a candidate is unanswered, and only then. §7b: "This is the
+/// whole reason the screen exists: a notification swiped away in the car is currently
+/// lost until it expires, and the dot is how the user finds it again." A dot and never a
+/// count — §12 allows at most one candidate, so there is no number to show.
 struct PKBrandHeader: View {
+    private let hasUnreadNotification: Bool
     private let onOpenSettings: () -> Void
-    private let onOpenNotificationSettings: () -> Void
+    private let onOpenNotifications: () -> Void
 
     init(
+        hasUnreadNotification: Bool = false,
         onOpenSettings: @escaping () -> Void,
-        onOpenNotificationSettings: @escaping () -> Void
+        onOpenNotifications: @escaping () -> Void
     ) {
+        self.hasUnreadNotification = hasUnreadNotification
         self.onOpenSettings = onOpenSettings
-        self.onOpenNotificationSettings = onOpenNotificationSettings
+        self.onOpenNotifications = onOpenNotifications
     }
 
     var body: some View {
@@ -48,8 +56,11 @@ struct PKBrandHeader: View {
             HStack(spacing: 0) {
                 headerButton(
                     systemName: "bell",
-                    label: "알림 설정",
-                    action: onOpenNotificationSettings
+                    // The state is spoken, not left to the dot: docs/01 §8 and docs/10
+                    // §12 forbid a state that exists only as a colour.
+                    label: hasUnreadNotification ? "알림, 확인하지 않은 알림 있음" : "알림",
+                    showsUnreadDot: hasUnreadNotification,
+                    action: onOpenNotifications
                 )
                 headerButton(
                     systemName: "gearshape",
@@ -60,16 +71,42 @@ struct PKBrandHeader: View {
         }
     }
 
-    private func headerButton(systemName: String, label: String, action: @escaping () -> Void) -> some View {
+    /// Mint, not blue and not red. The design harness gives Primary Blue to actions and
+    /// keeps the accent "for state" — an unanswered candidate is state. Red belongs to
+    /// `danger`, and a guess the user has not looked at yet is not a failure.
+    private var unreadDot: some View {
+        Circle()
+            .fill(PKColor.accent)
+            .frame(width: Self.unreadDotSize, height: Self.unreadDotSize)
+            // Sits on the bell's shoulder without moving it, so the two header controls
+            // stay the same size whether or not there is anything to answer.
+            .offset(x: Self.unreadDotSize, y: -Self.unreadDotSize)
+            .accessibilityHidden(true)
+    }
+
+    private func headerButton(
+        systemName: String,
+        label: String,
+        showsUnreadDot: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 20, weight: .semibold))
+                .overlay(alignment: .topTrailing) {
+                    if showsUnreadDot {
+                        unreadDot
+                    }
+                }
                 .frame(width: PKSize.minimumTouchTarget, height: PKSize.minimumTouchTarget)
                 .contentShape(.rect)
         }
         .buttonStyle(PKIconButtonStyle())
         .accessibilityLabel(label)
     }
+
+    /// Small enough to read as a mark rather than a badge. §7b calls it "a small dot".
+    private static let unreadDotSize: CGFloat = 8
 }
 
 /// The brand mark, drawn once as artwork and shown everywhere.

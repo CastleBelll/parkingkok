@@ -10,23 +10,15 @@ enum AppRoute: Hashable {
     /// The active parking, or a finished one opened from history.
     case parkingDetail(id: UUID)
     case history
+    /// docs/10 §7b. What the header's bell opens: the notifications the app has raised
+    /// and what became of each. It used to open the notification *settings*, "which
+    /// answered a question nobody had".
+    case notificationHistory
     /// docs/10 §7a: "A screen, pushed, with a normal back." Never a sheet and never an
     /// alert — backing out has to leave the candidate pending rather than answer it.
     case candidateConfirmation(id: UUID)
-    case settings(focus: SettingsFocus?)
+    case settings
     /// P0 instrumentation. Reachable from settings → 개발자, and still the only way to
     /// read the field-test counters.
     case diagnostics
-}
-
-/// Which part of settings the caller wants in front of the user on arrival.
-///
-/// Exists so the home header's bell can be a real control rather than decoration. The
-/// mock puts a bell next to the gear; the app has no notification centre for it to open,
-/// and `docs/19`'s "거짓말하지 마라" spirit rules out a button that does nothing. Sending
-/// it to the 알림 section of settings is the one destination that is actually about
-/// notifications — and it is a different place from where the gear lands, so the two
-/// buttons are not the same button drawn twice.
-enum SettingsFocus: Hashable {
-    case notifications
 }

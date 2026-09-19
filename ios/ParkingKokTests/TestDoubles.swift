@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 @testable import ParkingKok
 
 /// Frozen clock. docs/16_CODING_STANDARDS.md §8: inject the clock, never sleep.
@@ -540,4 +541,68 @@ enum TestCandidate {
         horizontalAccuracy: 12,
         capturedAt: TestTime.reference
     )
+}
+
+/// In-memory notification history (docs/10 §7b), with the file store's two rules:
+/// newest first, and an append for an id that is already here is a duplicate.
+final class StubCandidateHistoryStore: CandidateHistoryStoring, @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [CandidateHistoryEntry] = []
+    private let capacity: Int
+
+    init(entries: [CandidateHistoryEntry] = [], capacity: Int = FileCandidateHistoryStore.maximumEntries) {
+        stored = entries
+        self.capacity = capacity
+    }
+
+    func entries() -> [CandidateHistoryEntry] {
+        lock.withLock { stored }
+    }
+
+    func append(_ entry: CandidateHistoryEntry) {
+        lock.withLock {
+            guard !stored.contains(where: { $0.id == entry.id }) else { return }
+            stored.insert(entry, at: 0)
+            stored = Array(stored.prefix(capacity))
+        }
+    }
+}
+
+/// A pillar reader that answers with whatever the test wants, including nothing.
+struct StubPillarTextReader: PillarTextReading {
+    let reading: PillarReading
+
+    init(floorText: String? = nil) {
+        reading = PillarReading(floorText: floorText)
+    }
+
+    func read(_: Data) async -> PillarReading {
+        reading
+    }
+}
+
+/// A drawn stand-in for a photograph of a car park pillar.
+///
+/// Generated rather than bundled for the reason the DEV fixture gives: a real photograph
+/// in the repository would be somebody's car park. Clean synthetic text is also the only
+/// input on which a recognition assertion can be stable.
+enum TestPillarImage {
+    static func jpeg(text: String, size: CGSize = CGSize(width: 1200, height: 900)) -> Data? {
+        let renderer = UIGraphicsImageRenderer(size: size)
+        let image = renderer.image { context in
+            UIColor(white: 0.30, alpha: 1).setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.alignment = .center
+            NSAttributedString(
+                string: text,
+                attributes: [
+                    .font: UIFont.systemFont(ofSize: 180, weight: .heavy),
+                    .foregroundColor: UIColor.white,
+                    .paragraphStyle: paragraph
+                ]
+            ).draw(in: CGRect(x: 0, y: size.height / 3, width: size.width, height: size.height / 2))
+        }
+        return image.jpegData(compressionQuality: 0.9)
+    }
 }

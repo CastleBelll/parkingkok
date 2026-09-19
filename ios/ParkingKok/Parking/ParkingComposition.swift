@@ -103,6 +103,7 @@ struct ParkingComposition {
     private static func candidateModel(parking: ParkingModel) -> CandidateModel {
         CandidateModel(
             store: DetectionRuntime.shared.candidateStore ?? UnavailableParkingCandidateStore(),
+            history: DetectionRuntime.shared.candidateHistoryStore ?? UnavailableCandidateHistoryStore(),
             analytics: AnalyticsComposition.recorder,
             parking: parking,
             resolver: DetectionRuntime.shared
@@ -131,7 +132,15 @@ struct ParkingComposition {
         #if PK_DEV
             guard ParkingSampleSeed.isRequested else { return }
             do {
-                try await ParkingSampleSeed.apply(to: store, photoStore: photoStore, now: Date())
+                try await ParkingSampleSeed.apply(
+                    to: store,
+                    photoStore: photoStore,
+                    // The same two stores the app runs on, so the seeded bell is read
+                    // back through the production path rather than a parallel one.
+                    candidateStore: DetectionRuntime.shared.candidateStore,
+                    historyStore: DetectionRuntime.shared.candidateHistoryStore,
+                    now: Date()
+                )
             } catch {
                 AppLog.lifecycle.error("sample seed failed: \(String(describing: error), privacy: .public)")
             }

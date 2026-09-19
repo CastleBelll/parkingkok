@@ -11,37 +11,26 @@ import SwiftUI
 struct SettingsView: View {
     private let appInfo: AppInfo
     private let parkingModel: ParkingModel?
-    /// Set when the caller wants a particular section in front of the user — the home
-    /// header's bell asks for `.notifications`.
-    private let focus: SettingsFocus?
     @Binding private var path: [AppRoute]
 
     @State private var model = SettingsModel()
     @State private var isConfirmingDataDeletion = false
 
-    init(appInfo: AppInfo, model: ParkingModel?, path: Binding<[AppRoute]>, focus: SettingsFocus? = nil) {
+    init(appInfo: AppInfo, model: ParkingModel?, path: Binding<[AppRoute]>) {
         self.appInfo = appInfo
         parkingModel = model
         _path = path
-        self.focus = focus
     }
 
+    /// docs/10 §7b "Where settings went": the 알림 section stays exactly here, which is
+    /// "where the rest of the switches live". The bell no longer scrolls anyone to it —
+    /// it opens the notification history instead — so there is no focus to honour and no
+    /// `ScrollViewReader` wrapped around the list for one caller that no longer exists.
     var body: some View {
-        ScrollViewReader { proxy in
-            list
-                .onAppear {
-                    guard let focus else { return }
-                    proxy.scrollTo(focus, anchor: .top)
-                }
-        }
-    }
-
-    private var list: some View {
         List {
             accountSection
             detectionSection
             notificationSection
-                .id(SettingsFocus.notifications)
             permissionSection
             plusSection
             dataSection
