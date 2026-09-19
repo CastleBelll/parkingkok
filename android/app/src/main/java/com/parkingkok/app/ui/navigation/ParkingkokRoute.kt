@@ -39,6 +39,17 @@ sealed interface ParkingkokRoute {
     /** `04-history-list.png`. */
     data object History : ParkingkokRoute
 
+    /**
+     * What the bell opens: the candidates the app has raised and what became of them
+     * (docs/10_DESIGN_UX_SPEC.md §7b).
+     *
+     * A destination of its own rather than a section of Settings. §7b moved the bell off
+     * the notification *switches* precisely because "the question people actually have is
+     * 'something buzzed while I was driving, what was it?'", and the switches stay where
+     * the rest of them live.
+     */
+    data object Notifications : ParkingkokRoute
+
     /** `05-settings.png`. */
     data object Settings : ParkingkokRoute
 
@@ -64,6 +75,7 @@ internal object ParkingkokRouteCodec {
     fun encode(route: ParkingkokRoute): String = when (route) {
         ParkingkokRoute.Home -> "home"
         ParkingkokRoute.History -> "history"
+        ParkingkokRoute.Notifications -> "notifications"
         ParkingkokRoute.Settings -> "settings"
         ParkingkokRoute.Diagnostics -> "diagnostics"
         is ParkingkokRoute.ManualEntry ->
@@ -76,6 +88,7 @@ internal object ParkingkokRouteCodec {
         value == "home" -> ParkingkokRoute.Home
         value == "manual" -> ParkingkokRoute.ManualEntry()
         value == "history" -> ParkingkokRoute.History
+        value == "notifications" -> ParkingkokRoute.Notifications
         value == "settings" -> ParkingkokRoute.Settings
         value == "diagnostics" -> ParkingkokRoute.Diagnostics
         value.startsWith(DETAIL_PREFIX) ->

@@ -148,7 +148,9 @@
     <string name="home_empty_body">주차한 곳의 층과 구역을 적어두면 돌아올 때 바로 찾을 수 있어요.</string>
     <string name="home_save_parking">주차 위치 저장</string>
     <string name="home_settings">설정</string>
-    <string name="home_notification_settings">알림 설정</string>
+    <string name="home_notifications">알림</string>
+    <!-- The bell's dot is state, so the label says it too (docs/01 §8). -->
+    <string name="home_notifications_unanswered">알림, 확인하지 않은 알림이 있어요</string>
 
     <!-- Elapsed time (docs/10_DESIGN_UX_SPEC.md §6 item 3) -->
     <string name="elapsed_just_now">방금 주차했어요</string>
@@ -322,4 +324,17 @@
     <string name="candidate_confirm_already_active">이미 주차 중인 기록이 있어요. 먼저 주차를 종료해 주세요.</string>
     <!-- %1$s is a time of day, never a place. -->
     <string name="home_candidate_supporting">%1$s · 확인해 주세요</string>
+
+    <!-- ══ Notification history (docs/10 §7b) ═══════════════════════════════════════════
+         Three outcomes and no others. 주차 아님 is missing on purpose: it is the same word
+         the notification action uses and comes from `ParkingCandidateNotice`. No string
+         here takes a coordinate or an address — §7b keeps both off this surface. -->
+    <string name="notifications_title">알림</string>
+    <string name="notifications_empty_title">아직 받은 알림이 없어요</string>
+    <string name="notifications_empty_body">주차한 것 같을 때 알려드리고, 어떻게 됐는지가 여기에 남아요.</string>
+    <!-- %1$s is the floor and zone the record became — never a coordinate. -->
+    <string name="notifications_outcome_saved_at">%1$s 로 저장됨</string>
+    <string name="notifications_outcome_saved">저장됨</string>
+    <string name="notifications_outcome_expired">응답 없음</string>
+    <string name="notifications_pending">확인해 주세요</string>
 </resources>

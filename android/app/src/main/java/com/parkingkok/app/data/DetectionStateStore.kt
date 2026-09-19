@@ -2,11 +2,14 @@ package com.parkingkok.app.data
 
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import com.parkingkok.app.domain.detection.CandidateHistoryEntry
+import com.parkingkok.app.domain.detection.CandidateOutcome
 import com.parkingkok.app.domain.detection.DetectionCheckpoint
 import com.parkingkok.app.domain.detection.DetectionEngineState
 import com.parkingkok.app.domain.detection.ParkingCandidate
@@ -60,6 +63,17 @@ class DetectionStateStore(
      */
     val candidate: Flow<ParkingCandidate?> = dataStore.data.map { it.readCandidate() }
 
+    /**
+     * The last [CandidateHistoryEntry.MAX_ENTRIES] resolved candidates, oldest first
+     * (docs/10_DESIGN_UX_SPEC.md §7b, docs/05 §10a "History").
+     *
+     * Oldest first because that is the order it is appended in; the screen reverses it.
+     * Storing it the other way round would make every append rewrite the head of the
+     * list for a presentation decision.
+     */
+    val candidateHistory: Flow<List<CandidateHistoryEntry>> =
+        dataStore.data.map { it.readCandidateHistory() }
+
     val locationSessionState: Flow<LocationSessionState> = dataStore.data.map { it.readSessionState() }
 
     /**
@@ -102,6 +116,9 @@ class DetectionStateStore(
 
     suspend fun readCandidateOnce(): ParkingCandidate? = dataStore.data.first().readCandidate()
 
+    suspend fun readCandidateHistoryOnce(): List<CandidateHistoryEntry> =
+        dataStore.data.first().readCandidateHistory()
+
     /**
      * The record the most recently confirmed candidate became, if [candidateId] is that
      * candidate.
@@ -130,13 +147,41 @@ class DetectionStateStore(
      * Returns what is now stored.
      */
     suspend fun updateCandidate(
+        /**
+         * What to record in the notification history when [transform] drops or replaces
+         * the stored candidate (docs/10 §7b).
+         *
+         * It is a parameter of this call rather than a second call the caller makes
+         * afterwards because "the slot no longer holds this candidate" and "the history
+         * says what became of it" have to land in the same edit. Two edits would let a
+         * process death between them lose the line, and the candidate is exactly the
+         * thing the user is trying to find again.
+         *
+         * Null for a transform that is not a resolution — [com.parkingkok.app.detection
+         * .ParkingCandidateCoordinator.confirm] uses [resolveCandidate] instead, because
+         * it also has a record id to write.
+         */
+        resolvedAs: CandidateOutcome? = null,
         transform: (ParkingCandidate?) -> ParkingCandidate?,
     ): ParkingCandidate? {
         var updated: ParkingCandidate? = null
         dataStore.edit { prefs ->
-            updated = transform(prefs.readCandidate())
+            val previous = prefs.readCandidate()
+            updated = transform(previous)
             val next = updated
             if (next == null) prefs.remove(KEY_CANDIDATE) else prefs[KEY_CANDIDATE] = json.encodeToString(next)
+            // Left the slot: removed outright, or replaced by a different candidate.
+            // Re-storing the same id is the engine rewriting its own candidate, not a
+            // resolution, and must not produce a line.
+            if (resolvedAs != null && previous != null && previous.id != next?.id) {
+                prefs.appendCandidateHistory(
+                    CandidateHistoryEntry(
+                        candidateId = previous.id,
+                        raisedAtMillis = previous.detectedAtMillis,
+                        outcome = resolvedAs,
+                    ),
+                )
+            }
         }
         return updated
     }
@@ -147,12 +192,20 @@ class DetectionStateStore(
      * Two keys written together because a resolution pointing at a candidate still stored
      * as pending would be a candidate the app offers to confirm twice.
      */
-    suspend fun resolveCandidate(candidateId: String, recordId: String) {
+    suspend fun resolveCandidate(candidateId: String, recordId: String, raisedAtMillis: Long) {
         dataStore.edit { prefs ->
             val current = prefs.readCandidate()
             if (current != null && current.id == candidateId) prefs.remove(KEY_CANDIDATE)
             prefs[KEY_CONFIRMED_CANDIDATE] = candidateId
             prefs[KEY_CONFIRMED_RECORD] = recordId
+            prefs.appendCandidateHistory(
+                CandidateHistoryEntry(
+                    candidateId = candidateId,
+                    raisedAtMillis = raisedAtMillis,
+                    outcome = CandidateOutcome.CONFIRMED,
+                    recordId = recordId,
+                ),
+            )
         }
     }
 
@@ -308,6 +361,23 @@ class DetectionStateStore(
     private fun Preferences.readCandidate(): ParkingCandidate? =
         decode(this[KEY_CANDIDATE]) { json.decodeFromString<ParkingCandidate>(it) }
 
+    private fun Preferences.readCandidateHistory(): List<CandidateHistoryEntry> =
+        decode(this[KEY_CANDIDATE_HISTORY]) { json.decodeFromString<List<CandidateHistoryEntry>>(it) }
+            ?: emptyList()
+
+    /**
+     * Appends [entry] and drops anything past §7b's thirty.
+     *
+     * A [androidx.datastore.preferences.core.MutablePreferences] receiver rather than a
+     * suspending function of its own, so it can only be called from inside an `edit` —
+     * an append that read and wrote on its own would lose a line whenever a notification
+     * action and an expiry arrived together.
+     */
+    private fun MutablePreferences.appendCandidateHistory(entry: CandidateHistoryEntry) {
+        val updated = (readCandidateHistory() + entry).takeLast(CandidateHistoryEntry.MAX_ENTRIES)
+        this[KEY_CANDIDATE_HISTORY] = json.encodeToString(updated)
+    }
+
     private fun Preferences.readCheckpoint(): DetectionCheckpoint? =
         decode(this[KEY_CHECKPOINT]) { json.decodeFromString<DetectionCheckpoint>(it) }
 
@@ -345,6 +415,7 @@ class DetectionStateStore(
         val KEY_CHECKPOINT = stringPreferencesKey("checkpoint")
         val KEY_ENGINE_STATE = stringPreferencesKey("detection_engine_state")
         val KEY_CANDIDATE = stringPreferencesKey("parking_candidate")
+        val KEY_CANDIDATE_HISTORY = stringPreferencesKey("parking_candidate_history")
         val KEY_CONFIRMED_CANDIDATE = stringPreferencesKey("parking_candidate_confirmed_id")
         val KEY_CONFIRMED_RECORD = stringPreferencesKey("parking_candidate_confirmed_record")
         val KEY_EVENT_LOG = stringPreferencesKey("event_log")

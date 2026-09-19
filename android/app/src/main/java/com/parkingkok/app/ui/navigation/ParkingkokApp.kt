@@ -47,6 +47,8 @@ import com.parkingkok.app.ui.home.HomeScreen
 import com.parkingkok.app.ui.home.HomeViewModel
 import com.parkingkok.app.ui.manual.ManualParkingScreen
 import com.parkingkok.app.ui.manual.ManualParkingViewModel
+import com.parkingkok.app.ui.notifications.NotificationHistoryScreen
+import com.parkingkok.app.ui.notifications.NotificationHistoryViewModel
 import com.parkingkok.app.ui.settings.SettingsScreen
 import com.parkingkok.app.ui.settings.SettingsViewModel
 import kotlinx.coroutines.launch
@@ -149,6 +151,13 @@ fun ParkingkokApp(
                 onBack = { backStack = backStack.pop() },
             )
 
+            ParkingkokRoute.Notifications -> NotificationsRoute(
+                container = container,
+                onOpenCandidate = { backStack = backStack.push(ParkingkokRoute.Confirm(it)) },
+                onOpenRecord = { backStack = backStack.push(ParkingkokRoute.Detail(it)) },
+                onBack = { backStack = backStack.pop() },
+            )
+
             ParkingkokRoute.Settings -> SettingsRoute(
                 container = container,
                 onOpenDiagnostics = { backStack = backStack.push(ParkingkokRoute.Diagnostics) },
@@ -212,7 +221,6 @@ private fun HomeRoute(container: AppContainer, onNavigate: (ParkingkokRoute) -> 
     val viewModel: HomeViewModel = viewModel(factory = HomeViewModel.factory(container))
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val mapOpener = rememberMapOpener()
-    val context = LocalContext.current
 
     HomeScreen(
         state = state,
@@ -227,23 +235,11 @@ private fun HomeRoute(container: AppContainer, onNavigate: (ParkingkokRoute) -> 
         onOpenDetail = { onNavigate(ParkingkokRoute.Detail(it)) },
         onOpenHistory = { onNavigate(ParkingkokRoute.History) },
         onOpenSettings = { onNavigate(ParkingkokRoute.Settings) },
-        // The bell in the mockup's header. 주차핀 has no notification centre of its own, so
-        // it leads to the place its detection notifications are actually switched on and
-        // off — a real destination rather than a decorative icon.
-        onOpenNotificationSettings = { context.startActivity(notificationSettingsIntent(context)) },
+        // docs/10 §7b: the bell opens what the app raised, not the switches that turn it
+        // on and off. Those stay in 설정 → 알림.
+        onOpenNotifications = { onNavigate(ParkingkokRoute.Notifications) },
     )
 }
-
-/**
- * Where this app's notification channels are configured.
- *
- * `ACTION_APP_NOTIFICATION_SETTINGS` is guaranteed from API 26 and this app is minSdk 29,
- * so there is no fallback to write: the screen is always there.
- */
-private fun notificationSettingsIntent(context: Context): Intent =
-    Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-        .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
 @Composable
 private fun ManualEntryRoute(
@@ -356,6 +352,26 @@ private fun rememberMapOpener(): ExternalMapOpener {
             pinLabel = pinLabel,
         )
     }
+}
+
+/** docs/10_DESIGN_UX_SPEC.md §7b. */
+@Composable
+private fun NotificationsRoute(
+    container: AppContainer,
+    onOpenCandidate: (String) -> Unit,
+    onOpenRecord: (String) -> Unit,
+    onBack: () -> Unit,
+) {
+    val viewModel: NotificationHistoryViewModel =
+        viewModel(factory = NotificationHistoryViewModel.factory(container))
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+    NotificationHistoryScreen(
+        state = state,
+        onOpenCandidate = onOpenCandidate,
+        onOpenRecord = onOpenRecord,
+        onBack = onBack,
+    )
 }
 
 @Composable

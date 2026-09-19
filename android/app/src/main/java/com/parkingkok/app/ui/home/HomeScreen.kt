@@ -98,7 +98,7 @@ fun HomeScreen(
     onOpenDetail: (String) -> Unit,
     onOpenHistory: () -> Unit,
     onOpenSettings: () -> Unit,
-    onOpenNotificationSettings: () -> Unit,
+    onOpenNotifications: () -> Unit,
     onOpenCandidate: (String) -> Unit,
     onDirections: () -> Unit,
     onPhotoSelected: (PhotoSource) -> Unit,
@@ -113,7 +113,13 @@ fun HomeScreen(
         header = {
             BrandHeader(
                 actions = {
-                    NotificationsAction(onOpenNotificationSettings)
+                    // §7b's dot: a candidate nobody has answered yet, and the one reason
+                    // the bell's screen exists. It is the same value the row below the
+                    // hero is drawn from, so the two can never disagree.
+                    NotificationsAction(
+                        unanswered = state.pendingCandidateId != null,
+                        onClick = onOpenNotifications,
+                    )
                     SettingsAction(onOpenSettings)
                 },
             )
@@ -788,7 +794,7 @@ private fun HomeParkedPreview() {
             onOpenDetail = {},
             onOpenHistory = {},
             onOpenSettings = {},
-            onOpenNotificationSettings = {},
+            onOpenNotifications = {},
             onOpenCandidate = {},
             onDirections = {},
             onPhotoSelected = {},
@@ -810,7 +816,7 @@ private fun HomeEmptyPreview() {
             onOpenDetail = {},
             onOpenHistory = {},
             onOpenSettings = {},
-            onOpenNotificationSettings = {},
+            onOpenNotifications = {},
             onOpenCandidate = {},
             onDirections = {},
             onPhotoSelected = {},
@@ -860,7 +866,7 @@ private fun HomeCandidatePreview() {
             onOpenDetail = {},
             onOpenHistory = {},
             onOpenSettings = {},
-            onOpenNotificationSettings = {},
+            onOpenNotifications = {},
             onOpenCandidate = {},
             onDirections = {},
             onPhotoSelected = {},
