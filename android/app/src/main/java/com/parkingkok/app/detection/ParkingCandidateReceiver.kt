@@ -6,6 +6,7 @@ import android.content.Intent
 import android.util.Log
 import androidx.core.app.NotificationManagerCompat
 import com.parkingkok.app.ParkingkokApplication
+import com.parkingkok.app.domain.detection.DetectionEvent
 import kotlinx.coroutines.launch
 
 /**
@@ -47,6 +48,11 @@ class ParkingCandidateReceiver : BroadcastReceiver() {
         container.applicationScope.launch {
             try {
                 container.parkingCandidateCoordinator.reject(candidateId)
+                // §3a `CANDIDATE_PENDING -> IDLE` on rejection. Without it the machine
+                // stays pending and §12's one-candidate rule keeps the next trip silent.
+                container.parkingDetectionRuntime.handleUserAnswer(
+                    DetectionEvent.UserRejectedParking(container.clock.nowEpochMillis()),
+                )
             } finally {
                 pending.finish()
             }

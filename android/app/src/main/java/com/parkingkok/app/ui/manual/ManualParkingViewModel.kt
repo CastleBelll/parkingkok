@@ -4,9 +4,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.parkingkok.app.AppContainer
+import com.parkingkok.app.core.Clock
+import com.parkingkok.app.core.SystemClock
 import com.parkingkok.app.detection.ConfirmCandidateResult
 import com.parkingkok.app.detection.ConfirmedCandidateDetails
 import com.parkingkok.app.detection.ParkingCandidateCoordinator
+import com.parkingkok.app.detection.ParkingDetectionRuntime
+import com.parkingkok.app.domain.detection.DetectionEvent
 import com.parkingkok.app.domain.parking.FloorParser
 import com.parkingkok.app.domain.parking.usecase.ManualParkingInput
 import com.parkingkok.app.domain.parking.usecase.SaveManualParkingResult
@@ -53,6 +57,17 @@ class ManualParkingViewModel(
     private val saveManualParking: SaveManualParkingUseCase,
     private val candidateId: String? = null,
     private val coordinator: ParkingCandidateCoordinator? = null,
+    /**
+     * Where a `직접 입력` confirmation reaches the §3a state machine.
+     *
+     * The same answer as the one-tap floor chip on the confirmation screen, so it has to
+     * move the machine the same way: without it the record exists and the engine sits in
+     * `CANDIDATE_PENDING` until the 45 minutes run out, and §12's one-candidate rule keeps
+     * the next trip silent for that whole time. Null on the FR-001 manual path, which is
+     * not a candidate and has no state machine to move.
+     */
+    private val detectionRuntime: ParkingDetectionRuntime? = null,
+    private val clock: Clock = SystemClock,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ManualParkingUiState())
@@ -102,6 +117,11 @@ class ManualParkingViewModel(
                 memo = input.memo?.normalize(MAX_MEMO),
             ),
         )
+        // Only a write that happened moves the machine: `Gone` and `AlreadyActive` left
+        // the candidate exactly where it was.
+        if (result is ConfirmCandidateResult.Confirmed) {
+            detectionRuntime?.handleUserAnswer(DetectionEvent.UserConfirmedParking(clock.nowEpochMillis()))
+        }
         _uiState.update {
             when (result) {
                 is ConfirmCandidateResult.Confirmed ->
@@ -159,6 +179,8 @@ class ManualParkingViewModel(
                         ),
                         candidateId = candidateId,
                         coordinator = container.parkingCandidateCoordinator,
+                        detectionRuntime = container.parkingDetectionRuntime,
+                        clock = container.clock,
                     ) as T
             }
     }

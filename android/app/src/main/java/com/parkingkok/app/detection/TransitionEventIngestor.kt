@@ -12,18 +12,26 @@ import com.parkingkok.app.trace.NoOpTraceRecording
 import com.parkingkok.app.trace.TraceRecording
 
 /**
- * Application-layer handler for received transitions: normalize, persist, update
- * checkpoint, then let the location session react. The BroadcastReceiver does nothing but
- * call this (docs/16_CODING_STANDARDS.md §2: no business logic in receivers).
+ * Application-layer handler for received transitions: normalize, persist, let the location
+ * session react, then move the state machine. The BroadcastReceiver does nothing but call
+ * this (docs/16_CODING_STANDARDS.md §2: no business logic in receivers).
  *
- * Deliberately not the detection engine. Once the engine lands in M3 it consumes the
- * events this writes; here ingestion stops at durable, ordered evidence plus the bounded
- * capture decision (docs/04_ANDROID_IMPLEMENTATION.md §2).
+ * The order is the invariant. Evidence is durable before anything acts on it, so a process
+ * death between two steps loses a decision and never an observation; the bounded capture
+ * decision comes next because it is what produces the fixes the engine will want; and the
+ * engine runs last, because it is the only step that can post a notification and a
+ * notification about a trip whose evidence was lost would be unexplainable.
  */
 class TransitionEventIngestor(
     private val store: DetectionStateStore,
     private val clock: Clock,
     private val locationSessionController: FusedLocationSessionController,
+    /**
+     * Nullable so the M0B-1 compositions that predate the engine — and the tests that pin
+     * ingestion alone — still build one. A null runtime means evidence is recorded and
+     * nothing transitions, which is exactly what this class did before §3a landed.
+     */
+    private val detectionRuntime: ParkingDetectionRuntime? = null,
     private val traceRecorder: TraceRecording = NoOpTraceRecording,
 ) {
 
@@ -50,6 +58,9 @@ class TransitionEventIngestor(
                 // After persisting, never before: if the process dies here the evidence
                 // survives and the next reconcile re-derives the session from it.
                 locationSessionController.onMotionEvent(event)
+                // docs/05 §3a. The capture decision above shapes the request; this decides
+                // what the trip *is*, and is the only step that can reach the user.
+                detectionRuntime?.handleMotion(event)
                 // Last, and best-effort: the trace is field evidence, and a recorder that
                 // could delay or fail detection would be the wrong trade
                 // (docs/05_CROSS_PLATFORM_DOMAIN_CONTRACT.md §9).

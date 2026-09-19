@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.parkingkok.app.domain.detection.DetectionCheckpoint
+import com.parkingkok.app.domain.detection.DetectionEngineState
 import com.parkingkok.app.domain.detection.ParkingCandidate
 import com.parkingkok.app.domain.detection.MotionDomainEvent
 import com.parkingkok.app.domain.location.LocationSessionState
@@ -60,6 +61,18 @@ class DetectionStateStore(
     val candidate: Flow<ParkingCandidate?> = dataStore.data.map { it.readCandidate() }
 
     val locationSessionState: Flow<LocationSessionState> = dataStore.data.map { it.readSessionState() }
+
+    /**
+     * The detection state machine's own state
+     * (docs/05_PARKING_DETECTION_ENGINE.md §3a, §16).
+     *
+     * Kept beside the checkpoint rather than inside it because the two answer different
+     * questions. The checkpoint is the cross-platform §14 structure both engines write
+     * field for field; this is everything the Kotlin reducer needs to resume mid-trip —
+     * accumulated reason codes, the §7 evidence object, whether §12's one candidate has
+     * been spent — and iOS has no business reading it.
+     */
+    val engineState: Flow<DetectionEngineState?> = dataStore.data.map { it.readEngineState() }
 
     suspend fun readCheckpointOnce(): DetectionCheckpoint? = dataStore.data.first().readCheckpoint()
 
@@ -140,6 +153,27 @@ class DetectionStateStore(
             if (current != null && current.id == candidateId) prefs.remove(KEY_CANDIDATE)
             prefs[KEY_CONFIRMED_CANDIDATE] = candidateId
             prefs[KEY_CONFIRMED_RECORD] = recordId
+        }
+    }
+
+    suspend fun readEngineStateOnce(): DetectionEngineState? = dataStore.data.first().readEngineState()
+
+    /**
+     * Writes the engine state and the checkpoint it implies in one edit.
+     *
+     * They must land together: a checkpoint naming a candidate the engine state has not
+     * recorded — or an engine state in `CANDIDATE_PENDING` under a checkpoint that still
+     * says `IDLE` — is a process restart that resumes into a trip that never happened.
+     *
+     * [DetectionCheckpoint.revision] is rewritten here rather than taken from the caller.
+     * The engine is a pure function and cannot read a counter; this is the only place that
+     * serializes writers, so it is the only place that can advance one.
+     */
+    suspend fun writeEngineStateAndCheckpoint(state: DetectionEngineState, checkpoint: DetectionCheckpoint) {
+        dataStore.edit { prefs ->
+            prefs[KEY_ENGINE_STATE] = json.encodeToString(state)
+            val previous = prefs.readCheckpoint()?.revision ?: 0L
+            prefs[KEY_CHECKPOINT] = json.encodeToString(checkpoint.copy(revision = previous + 1))
         }
     }
 
@@ -268,6 +302,9 @@ class DetectionStateStore(
         return updated
     }
 
+    private fun Preferences.readEngineState(): DetectionEngineState? =
+        decode(this[KEY_ENGINE_STATE]) { json.decodeFromString<DetectionEngineState>(it) }
+
     private fun Preferences.readCandidate(): ParkingCandidate? =
         decode(this[KEY_CANDIDATE]) { json.decodeFromString<ParkingCandidate>(it) }
 
@@ -306,6 +343,7 @@ class DetectionStateStore(
         const val DEFAULT_MAX_LOGGED_EVENTS = 50
 
         val KEY_CHECKPOINT = stringPreferencesKey("checkpoint")
+        val KEY_ENGINE_STATE = stringPreferencesKey("detection_engine_state")
         val KEY_CANDIDATE = stringPreferencesKey("parking_candidate")
         val KEY_CONFIRMED_CANDIDATE = stringPreferencesKey("parking_candidate_confirmed_id")
         val KEY_CONFIRMED_RECORD = stringPreferencesKey("parking_candidate_confirmed_record")

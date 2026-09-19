@@ -34,6 +34,7 @@ import com.parkingkok.app.detection.FusedLocationSessionController
 import com.parkingkok.app.detection.FusedLocationSessionRegistrar
 import com.parkingkok.app.detection.NotificationCandidateDelivery
 import com.parkingkok.app.detection.ParkingCandidateCoordinator
+import com.parkingkok.app.detection.ParkingDetectionRuntime
 import com.parkingkok.app.detection.TransitionEventIngestor
 import com.parkingkok.app.diagnostics.DiagnosticsExporter
 import com.parkingkok.app.diagnostics.FileDiagnosticsReportStore
@@ -310,8 +311,30 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
         traceRecorder = traceRecorder,
     )
 
-    val transitionEventIngestor: TransitionEventIngestor =
-        TransitionEventIngestor(detectionStateStore, clock, locationSessionController, traceRecorder)
+    /**
+     * The §3a state machine and everything it acts on
+     * (docs/05_PARKING_DETECTION_ENGINE.md §16).
+     *
+     * Not lazy: every process a detection broadcast starts exists precisely to feed this,
+     * and it costs one object plus a Mutex. The coordinator behind it stays a provider, for
+     * the bargain [parkingCandidateCoordinator] documents — most events move the state
+     * machine without ever reaching the user, and those must not pay for AppMeasurement. It
+     * is the *same* coordinator the notification's `주차 아님` action uses, which is what
+     * makes "the engine created it" and "the user answered it" two views of one candidate
+     * rather than two candidates.
+     */
+    val parkingDetectionRuntime: ParkingDetectionRuntime = ParkingDetectionRuntime(
+        store = detectionStateStore,
+        candidates = { parkingCandidateCoordinator },
+    )
+
+    val transitionEventIngestor: TransitionEventIngestor = TransitionEventIngestor(
+        store = detectionStateStore,
+        clock = clock,
+        locationSessionController = locationSessionController,
+        detectionRuntime = parkingDetectionRuntime,
+        traceRecorder = traceRecorder,
+    )
 
     val diagnosticsExporter: DiagnosticsExporter = DiagnosticsExporter(
         store = detectionStateStore,

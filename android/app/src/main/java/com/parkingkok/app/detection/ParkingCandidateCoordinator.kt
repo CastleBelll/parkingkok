@@ -122,10 +122,20 @@ class ParkingCandidateCoordinator(
     suspend fun create(
         evidence: DetectionProperties,
         lastReliableLocation: ReliableLocation?,
+        /**
+         * The id the engine already minted, when one did.
+         *
+         * [com.parkingkok.app.domain.detection.ParkingDetectionEngine] records the
+         * candidate id in its own state and in the §14 checkpoint at the moment it decides
+         * to create one, so the store has to use *that* id: a second id generated here
+         * would leave the checkpoint naming a candidate the notification is not about, and
+         * §10a's whole deduplication rule rests on the two being the same string.
+         */
+        candidateId: String? = null,
     ): ParkingCandidate {
         val now = clock.nowEpochMillis()
         val candidate = ParkingCandidate.of(
-            id = idGenerator(),
+            id = candidateId ?: idGenerator(),
             detectedAtMillis = now,
             lastReliableLocation = lastReliableLocation,
             evidence = evidence,
@@ -234,6 +244,27 @@ class ParkingCandidateCoordinator(
         }
         expired?.let { notifier.withdraw(it.id) }
         return expired
+    }
+
+    /**
+     * Takes the candidate down without recording an answer.
+     *
+     * Two §3a paths land here and neither is a user answer: the car link reconnecting
+     * ("disconnect, pump, get back in, and the candidate is retired and its notification
+     * withdrawn before it is worth anything"), and the 45-minute expiry reached while the
+     * process is alive.
+     *
+     * **Deliberately silent.** [reject] reports `parking_candidate_rejected` because the
+     * user said the detector was wrong; nobody said anything here, and reporting a
+     * rejection would corrupt the one distribution §10a calls the event that pays for the
+     * whole feature. [expireIfDue] is the same decision arrived at from the app side.
+     *
+     * @return whether a stored candidate was actually removed.
+     */
+    suspend fun retire(candidateId: String): Boolean {
+        val stored = store.readCandidateOnce()?.takeIf { it.id == candidateId }
+        clear(candidateId)
+        return stored != null
     }
 
     private suspend fun clear(candidateId: String) {

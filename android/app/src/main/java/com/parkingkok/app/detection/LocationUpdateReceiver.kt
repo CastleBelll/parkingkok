@@ -45,6 +45,10 @@ class LocationUpdateReceiver : BroadcastReceiver() {
         container.applicationScope.launch {
             try {
                 container.locationSessionController.onLocationBatch(samples)
+                // After the session controller, which is what folds the fixes into the
+                // §7 evidence the diagnostics read, and before the export so the report
+                // describes the state the batch actually left behind (docs/05 §3a).
+                container.parkingDetectionRuntime.handleLocations(samples)
                 container.diagnosticsExporter.export()
             } finally {
                 pendingResult.finish()
