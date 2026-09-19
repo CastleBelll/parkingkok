@@ -24,13 +24,17 @@ struct ParkingComposition {
     /// to show.
     static func live() -> ParkingComposition? {
         let photoStore = livePhotoStore()
+        // docs/06 §6. `nil` when the App Group container is missing: the widget then shows
+        // its empty state and the app is otherwise untouched.
+        let snapshots = FileActiveParkingSnapshotStore.appGroup()
         if let container = try? SwiftDataParkingStore.makeContainer() {
             let store = SwiftDataParkingStore(container: container)
             return ParkingComposition(
                 model: ParkingModel(
                     store: store,
                     photoStore: photoStore,
-                    analytics: AnalyticsComposition.recorder
+                    analytics: AnalyticsComposition.recorder,
+                    snapshots: snapshots
                 ),
                 storageWarning: nil,
                 store: store,
@@ -46,7 +50,8 @@ struct ParkingComposition {
             model: ParkingModel(
                 store: fallbackStore,
                 photoStore: photoStore,
-                analytics: AnalyticsComposition.recorder
+                analytics: AnalyticsComposition.recorder,
+                snapshots: snapshots
             ),
             storageWarning: volatileStorageWarning,
             store: fallbackStore,

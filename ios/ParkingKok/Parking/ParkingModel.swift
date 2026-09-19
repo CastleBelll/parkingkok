@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import WidgetKit
 
 /// What the user typed into the manual save sheet, before it becomes a parking (FR-001).
 struct ManualParkingDraft: Sendable, Equatable {
@@ -46,19 +47,25 @@ final class ParkingModel {
     private let photoStore: any ParkingPhotoStoring
     private let clock: any DateProviding
     private let analytics: any AnalyticsRecording
+    /// docs/06 §6's App Group projection, or `nil` when this build has no container —
+    /// which disables the widget and nothing else (CLAUDE.md: a missing capability is not
+    /// an app-wide failure).
+    private let snapshots: (any ActiveParkingSnapshotStoring)?
 
     init(
         store: any ParkingStoring,
         locationProvider: any ParkingLocationProviding = DetectionParkingLocationProvider(),
         photoStore: any ParkingPhotoStoring = UnavailableParkingPhotoStore(),
         clock: any DateProviding = SystemDateProvider(),
-        analytics: any AnalyticsRecording = DisabledAnalyticsRecorder()
+        analytics: any AnalyticsRecording = DisabledAnalyticsRecorder(),
+        snapshots: (any ActiveParkingSnapshotStoring)? = nil
     ) {
         self.store = store
         self.locationProvider = locationProvider
         self.photoStore = photoStore
         self.clock = clock
         self.analytics = analytics
+        self.snapshots = snapshots
     }
 
     var homePreviewSessions: [ParkingSession] {
@@ -79,6 +86,11 @@ final class ParkingModel {
     }
 
     /// Re-reads everything. Cheap enough to run on every appearance; the store is local.
+    ///
+    /// Also the app's side of the widget contract, and the reason `RootView` calls it on
+    /// every activation: docs/04 §13 "app reconciles App Group revision to in-memory UI
+    /// on activation". The order matters — adopt what the widget did *before* republishing
+    /// over it.
     func refresh() {
         perform {
             activeSession = try store.activeSession()
@@ -87,6 +99,67 @@ final class ParkingModel {
             // like the gate while gating nothing.
             completedSessions = try store.completedSessions(limit: nil)
         }
+        adoptWidgetFloorChange()
+        publishWidgetSnapshot()
+    }
+
+    /// docs/04 §13 / docs/06 §5. While the app was away the widget may have stepped the
+    /// floor; the projection is the only record of it.
+    ///
+    /// `updatedAt` is what decides, not the revision: the revision is monotonic per
+    /// session but says nothing about which *store* is newer, and on a cold launch the app
+    /// has no memory of the revision it last published. A projection older than the
+    /// record — the case where a publish failed after the store had already moved on —
+    /// must not revert an edit the user just made in the app.
+    private func adoptWidgetFloorChange() {
+        guard let snapshot = snapshots?.read(),
+              var session = activeSession,
+              snapshot.sessionId == session.id,
+              snapshot.updatedAt > session.updatedAt,
+              let floor = snapshot.floorValue,
+              floor != session.floor
+        else {
+            return
+        }
+        session.floor = floor
+        session.updatedAt = snapshot.updatedAt
+        perform {
+            try store.update(session)
+            activeSession = try store.activeSession()
+        }
+    }
+
+    /// Rewrites the projection from the canonical store (docs/06 §6).
+    ///
+    /// This is also docs/06 §8's startup repair. The repair asks that a stale active
+    /// projection be cleared when a completed record carries its session id; publishing
+    /// from the store is that, and more besides — SwiftData is what "active" means, so
+    /// whenever it has no active session there is nothing to project, whether the parking
+    /// was completed, deleted, or belongs to a build that no longer exists.
+    private func publishWidgetSnapshot() {
+        guard let snapshots else { return }
+        let didChange = if let session = activeSession {
+            snapshots.publish(
+                sessionId: session.id,
+                startedAt: session.startedAt,
+                floor: session.floor,
+                zone: session.zone,
+                spot: session.spot,
+                at: clock.now
+            )
+        } else {
+            snapshots.clear()
+        }
+        // Both report whether the file actually moved, so a plain refresh does not spend a
+        // widget reload on a redraw nobody would see.
+        if didChange {
+            reloadWidget()
+        }
+    }
+
+    /// docs/06 §7 step 3. The app reloads a widget that lives in another process.
+    private func reloadWidget() {
+        WidgetCenter.shared.reloadTimelines(ofKind: ActiveParkingSnapshot.widgetKind)
     }
 
     /// FR-001. Succeeds with no permission of any kind: the location is whatever
@@ -255,6 +328,9 @@ final class ParkingModel {
     private func refreshAfterWrite() {
         activeSession = try? store.activeSession()
         completedSessions = (try? store.completedSessions(limit: nil)) ?? []
+        // Every mutation ends here, so the projection cannot drift from the store by
+        // someone forgetting to update it at one call site (docs/06 §8 steps 4–5).
+        publishWidgetSnapshot()
     }
 
     /// Runs a store operation, turning a thrown domain error into displayable text.

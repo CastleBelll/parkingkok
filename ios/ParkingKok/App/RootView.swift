@@ -7,6 +7,8 @@ import SwiftUI
 /// settings → 개발자, because it is still the only readout for the field checklists in
 /// `ios/README.md`.
 struct RootView: View {
+    @Environment(\.scenePhase) private var scenePhase
+
     private let appInfo: AppInfo
     @State private var composition: ParkingComposition?
     @State private var path: [AppRoute] = []
@@ -47,6 +49,14 @@ struct RootView: View {
                     path = [route]
                 }
             #endif
+        }
+        // docs/04_IOS_IMPLEMENTATION.md §13: "App reconciles App Group revision to
+        // in-memory UI on activation." A floor stepped on the widget while the app was
+        // backgrounded is only recorded in the App Group projection until `refresh()`
+        // adopts it, so this is what makes the home screen agree with the home screen.
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            composition?.model.refresh()
         }
     }
 

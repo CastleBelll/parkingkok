@@ -53,12 +53,59 @@ targets:
         product: FirebaseAnalytics
       - package: Firebase
         product: FirebaseAuth
+      # docs/04 §13. Embedded, so installing the app installs the widget.
+      - target: ParkingKokWidgetExtension
+        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(PK_BUNDLE_ID)
         INFOPLIST_FILE: ParkingKok/Resources/Info.plist
+        # docs/06 §6: the App Group is the only entitlement either target carries.
+        CODE_SIGN_ENTITLEMENTS: ParkingKok/Resources/ParkingKok.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+
+  # docs/04_IOS_IMPLEMENTATION.md §13 / docs/06 §7a: `systemSmall` + `systemMedium`,
+  # reading the App Group projection and stepping the floor through an AppIntent.
+  #
+  # The shared files below are listed in both targets rather than moved into a framework.
+  # A widget extension that links a dynamic framework pays for it on every render, and
+  # docs/06 §7a's requirement is that the *floor domain* be shared — which compiling the
+  # one `FloorValue.swift` in both targets satisfies exactly. There is no second copy of
+  # the rules anywhere, and a change to the domain cannot reach one process without the
+  # other.
+  ParkingKokWidgetExtension:
+    # `app-extension`, not a widget-specific type: a WidgetKit extension is an ordinary
+    # app extension whose Info.plist declares `com.apple.widgetkit-extension`, and
+    # XcodeGen 2.46 has no separate spelling for it.
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: ParkingKokWidget
+      # The projection, its shared mutation helper, and the entitlement gate.
+      - path: ParkingKok/Widget
+      # The shared floor domain and the elapsed-time formatter.
+      - path: ParkingKok/Parking/Domain/FloorValue.swift
+      - path: ParkingKok/Parking/Domain/ParkingElapsed.swift
+      # Bundle identity (the entitlement gate reads `PKAppEnvironment`) and OSLog.
+      - path: ParkingKok/Core/AppInfo.swift
+      - path: ParkingKok/Core/AppLog.swift
+      # docs/10 §2 design tokens. Not a copy of the palette: the colours themselves are
+      # the asset catalog below, which both bundles carry because `ColorResource` resolves
+      # against the *running* bundle and the widget is its own process.
+      - path: ParkingKok/DesignSystem/PKColor.swift
+      - path: ParkingKok/DesignSystem/PKMetrics.swift
+      - path: ParkingKok/DesignSystem/PKTypography.swift
+      - path: ParkingKok/DesignSystem/PKElevation.swift
+      - path: ParkingKok/DesignSystem/PKComponents.swift
+      # `pkPressFeedback`, which every button style in PKComponents applies.
+      - path: ParkingKok/DesignSystem/PKMotion.swift
+      - path: ParkingKok/Resources/Assets.xcassets
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(PK_BUNDLE_ID).widget
+        INFOPLIST_FILE: ParkingKokWidget/Info.plist
+        CODE_SIGN_ENTITLEMENTS: ParkingKokWidget/ParkingKokWidget.entitlements
 
   ParkingKokTests:
     type: bundle.unit-test
@@ -76,6 +123,7 @@ schemes:
     build:
       targets:
         ParkingKok: all
+        ParkingKokWidgetExtension: all
         ParkingKokTests: [test]
     run:
       config: DEV
