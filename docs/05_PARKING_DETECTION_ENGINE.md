@@ -80,6 +80,7 @@ field data exists. Neither platform may pick its own value for one.
 | `PARKING_TRANSITION` | `IDLE` | `transitionWindow` elapses with no confirming signal |
 | `CANDIDATE_PENDING` | `PARKED` | user confirms (§10a) |
 | `CANDIDATE_PENDING` | `IDLE` | user rejects, or 45-minute expiry (§10) |
+| `CANDIDATE_PENDING` | `DRIVING_CANDIDATE` | `vehicle_enter` — a new journey starts |
 | `PARKED` | `DEPARTURE_CANDIDATE` | vehicle ≥ 90s **and** movement ≥ 500m (§11) |
 | `DEPARTURE_CANDIDATE` | `DRIVING` | departure confirmed (§11) |
 | `DEPARTURE_CANDIDATE` | `PARKED` | evidence lapses |
@@ -130,10 +131,17 @@ These are not equally available, and the contract says so rather than pretending
 - **Android** can observe both. `ACTION_ACL_CONNECTED` / `ACTION_ACL_DISCONNECTED` with a
   `BluetoothClass` of `AUDIO_VIDEO_CAR_AUDIO` or `AUDIO_VIDEO_HANDSFREE` identifies a car
   device, and it works from a broadcast receiver in the background.
-- **iOS does not expose classic Bluetooth connect/disconnect to third-party apps.**
-  CoreBluetooth is BLE-only and ExternalAccessory needs an MFi accessory. What is reachable
-  is the audio route (`AVAudioSession`, port type `.carAudio` / Bluetooth A2DP), and that
-  requires an audio session the app has no other reason to hold.
+- **iOS does not expose classic Bluetooth connect/disconnect as an event.** CoreBluetooth
+  is BLE-only, ExternalAccessory needs an MFi accessory, and AccessorySetupKit matches
+  declared BLE/Wi-Fi accessories. But the earlier claim that the audio route costs an
+  audio session was only half right, and the half that is wrong matters:
+  `AVAudioSession.currentRoute` is **read-only and needs no activation**, and `.carAudio`
+  covers CarPlay and car Bluetooth alike — so *sampling* the link on each wake is free.
+  What needs an audio session is background route-*change* callbacks, which this app does
+  not buy. iOS therefore polls where Android observes.
+  There is also `com.apple.developer.carplay-parking`, a CarPlay entitlement category
+  matched to exactly this product; granted, it would turn the projection row into a real
+  background event rather than a poll.
 
 So Bluetooth is an **optional vehicle signal** — the property `optionalVehicleSignal` in
 docs/17 §3 already anticipated one. Where it exists the engine becomes far more accurate;
@@ -161,6 +169,36 @@ Movement evidence still matters — it is what §8 weighs and what separates a r
 a phone on a desk — but it belongs in the confidence bucket (§9), not in the transition.
 A drive with no fixes can reach `CANDIDATE_PENDING` with lower confidence; it cannot be
 made invisible.
+
+### When a timeout fires
+
+Every elapsed-time row — `drivingCandidateWindow`, `movementIdleWindow`, `transitionWindow`
+and the 45-minute expiry — fires **only on a `timer_tick` event**. Rows whose condition is
+a duration that has been *sustained* (`DRIVING_CANDIDATE → DRIVING`, `PARKED →
+DEPARTURE_CANDIDATE`) are evaluated on every event.
+
+The alternative — evaluating elapsed time whenever any event happens to arrive — makes the
+same trace replay differently depending on whether something unrelated woke the engine.
+`subway_commute_underground` is the proof: it has a 303-second gap after `vehicle_enter`
+and a 1012-second gap during the ride, both longer than the windows they would trip, and
+under arrival-time evaluation it ends in `IDLE` instead of `CANDIDATE_PENDING`.
+
+`timer_tick` is already in the fixture vocabulary and none of the committed fixtures use
+one, which is the same statement from the other direction: a fixture that wants a timeout
+to fire says so.
+
+### Leaving a pending candidate behind
+
+`CANDIDATE_PENDING → DRIVING_CANDIDATE` on `vehicle_enter` exists because a candidate can
+be ignored. Without that row, driving away ten minutes after a prompt left the engine
+parked in `CANDIDATE_PENDING` for up to forty-five minutes with detection dead — and §10a
+already presupposes the row by describing what happens when a *new journey* produces a
+candidate while an old one is pending.
+
+The old candidate is **not** retired at `vehicle_enter`. It stays answerable, and is
+superseded only when the new session actually produces a candidate (§10a). `vehicle_enter`
+is a noisy signal — a bus passing, a passenger seat, the OS guessing — and retiring a
+prompt on it would delete the answer to a question the user was still holding.
 
 ### The red light
 

@@ -5,8 +5,12 @@
 `docs/05_CROSS_PLATFORM_DOMAIN_CONTRACT.md` §8이 정의하고, 이 문서는 그 fixture를
 **어떻게 만들고 라벨링하는지**를 다룬다.
 
-> fixture runner(Swift/Kotlin)는 아직 없다. 엔진 상태머신이 M3에 들어온 뒤에 붙는다.
-> 지금 존재하는 것은 fixture를 **만드는** 변환기와 **검사하는** 검증기다(`tools/`).
+> fixture runner는 양 플랫폼 테스트 스위트에 있다. 이 디렉터리의 `*.json`은 iOS와 Android가
+> 각각 로드해서 **실제 엔진에 재생**하고 `expected`와 대조한다. 여기에 더해 `tools/`가
+> fixture를 **만드는** 변환기와 **검사하는** 검증기를 제공한다.
+>
+> 타임아웃 행은 `timer_tick` 이벤트에서만 발화한다(docs/05 §3a). 경과 시간으로 상태가
+> 바뀌기를 기대하는 fixture는 tick을 명시해야 하고, 그래서 아래 5개 중 어느 것도 tick이 없다.
 
 ## 1. trace와 fixture는 다른 것이다
 
