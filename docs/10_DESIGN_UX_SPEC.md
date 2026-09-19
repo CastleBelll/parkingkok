@@ -138,6 +138,48 @@ Never show `주차 완료` before confirmation unless future trusted signal poli
 Primary: 저장/확인
 Secondary: 주차 아님
 
+## 7a. Confirmation Screen
+
+What §7 fixes in copy, this fixes in shape, because two platforms building from a tone of
+voice would each invent a layout.
+
+```text
+주차한 것 같아요
+
+오후 8:14
+마지막 위치를 저장했어요.
+
+[ B1 ]  [ B2 ]  [ B3 ]  [ 직접 입력 ]
+
+주차 아님
+```
+
+### Hierarchy
+The uncertainty comes first and is the largest thing on the screen. Then when it happened,
+then the floor choice, then the way out. No map, no coordinate, no address: the engine does
+not know the floor and §9 of docs/09 keeps location out of this surface.
+
+### The floor choices
+Three quick picks and 직접 입력. The picks come from **the floors this user has saved
+before**, most recent first — local history, no network, no guessing. A user who always
+parks on B3 sees B3. With fewer than three past floors the row simply shows fewer, and a
+first-ever run shows only 직접 입력.
+
+Choosing a floor confirms in one tap. 직접 입력 opens the existing manual entry, prefilled
+with nothing, and saving there confirms.
+
+### 주차 아님
+A text button, full width, under the choices — reachable without a scroll on the smallest
+supported screen, and never hidden behind a menu or an X in a corner. It is the honest
+answer to a guess, and the detector learns more from it than from any confirmation.
+
+Rejecting returns to where the user was. It never asks why.
+
+### Not a modal
+A screen, pushed, with a normal back. A dialog that cannot be dismissed is how apps trap
+people, and this one is a guess the user may simply not want to answer right now. Backing
+out leaves the candidate pending until it expires (docs/05 §10a).
+
 ## 8. Permission Education
 One permission purpose per step.
 Explain value before OS prompt.
