@@ -45,7 +45,8 @@
         static func initialRoute(activeParkingID: UUID?) -> AppRoute? {
             switch ProcessInfo.processInfo.environment["PK_INITIAL_ROUTE"] {
             case "history": .history
-            case "settings": .settings(focus: nil)
+            case "notifications": .notificationHistory
+            case "settings": .settings
             case "diagnostics": .diagnostics
             case "detail": activeParkingID.map(AppRoute.parkingDetail(id:))
             default: nil
@@ -72,6 +73,8 @@
         static func apply(
             to store: any ParkingStoring,
             photoStore: (any ParkingPhotoStoring)? = nil,
+            candidateStore: (any ParkingCandidateStoring)? = nil,
+            historyStore: (any CandidateHistoryStoring)? = nil,
             now: Date
         ) async throws {
             try store.deleteAll()
@@ -108,6 +111,68 @@
                 }
             }
             try store.startSession(active)
+            applyNotifications(
+                candidateStore: candidateStore,
+                historyStore: historyStore,
+                savedRecordID: active.id,
+                now: now
+            )
+        }
+
+        /// docs/10 §7b's list: one unanswered candidate and the three resolved outcomes.
+        ///
+        /// Unlike the parking store this **adds** rather than replaces — history is
+        /// append-only by contract (docs/05 §10a) and has no delete, so a second seeded
+        /// run stacks on the first. §7b's empty state is photographed from a fresh
+        /// install with no seed flag at all, which is the honest way to reach it.
+        private static func applyNotifications(
+            candidateStore: (any ParkingCandidateStoring)?,
+            historyStore: (any CandidateHistoryStoring)?,
+            savedRecordID: UUID,
+            now: Date
+        ) {
+            // Oldest first: `append` puts each at the head, so the list reads newest first
+            // exactly as §7b's mock does.
+            let resolutions: [(minutesAgo: Double, outcome: CandidateOutcome, record: UUID?)] = [
+                (4 * 24 * 60, .expired, nil),
+                (26 * 60, .rejected, nil),
+                (84, .confirmed, savedRecordID)
+            ]
+            for resolution in resolutions {
+                historyStore?.append(
+                    CandidateHistoryEntry(
+                        id: UUID(),
+                        raisedAt: now.addingTimeInterval(-resolution.minutesAgo * 60),
+                        outcome: resolution.outcome,
+                        recordId: resolution.record
+                    )
+                )
+            }
+
+            // The unanswered one: what puts the dot on the bell and the
+            // `확인이 필요해요` row at the top of the list.
+            //
+            // `PK_INJECT_CANDIDATE` drives the engine to produce a real one, and the two
+            // flags answer the same question in different ways — so when it is set this
+            // fixture leaves the slot alone rather than overwriting what the engine put
+            // there. One live candidate at a time either way (§12).
+            guard ProcessInfo.processInfo.environment["PK_INJECT_CANDIDATE"] == nil else { return }
+            try? candidateStore?.clear()
+            try? candidateStore?.save(
+                ParkingCandidate(
+                    id: UUID(),
+                    detectedAt: now.addingTimeInterval(-6 * 60),
+                    confidenceBucket: .high,
+                    reasonCodes: [.recentVehicleActivity, .vehicleExitDetected, .walkingAfterVehicle],
+                    // No coordinate, like every other row of this fixture.
+                    lastReliableLocation: nil,
+                    expiresAt: now.addingTimeInterval(ParkingCandidatePolicy.expiry - 6 * 60),
+                    score: 82,
+                    driveDuration: 22 * 60,
+                    driveDistanceMeters: 7400,
+                    accuracyBucket: .fair
+                )
+            )
         }
 
         /// A drawn stand-in for a photo of a car park pillar.
@@ -115,7 +180,10 @@
         /// Generated rather than bundled: a real photograph in the repository would be
         /// somebody's car park, and the screenshot only needs the panel to be occupied at
         /// a realistic aspect ratio.
-        private static func placeholderPhotoData() -> Data? {
+        ///
+        /// Also what `PK_PILLAR_FIXTURE` feeds the docs/02 §6a reader, because a device
+        /// with no way to deliver a tap has no way to press a camera shutter either.
+        static func placeholderPhotoData() -> Data? {
             let size = CGSize(width: 1600, height: 1200)
             let renderer = UIGraphicsImageRenderer(size: size)
             let image = renderer.image { context in

@@ -32,10 +32,21 @@ struct ParkingDetailView: View {
     @State private var isCapturingPhoto = false
     @State private var isViewingPhoto = false
     @State private var libraryItem: PhotosPickerItem?
+    /// docs/02 §6a: what the photo just attached offered, if anything. Non-nil only for
+    /// the instant between the read and the edit sheet opening.
+    @State private var pillarSuggestion: PillarReading?
+    /// docs/02 §6a's on-device read. Injected so the screen can be exercised without a
+    /// camera or a Vision model.
+    private let pillarReader: any PillarTextReading
 
-    init(model: ParkingModel, sessionID: UUID) {
+    init(
+        model: ParkingModel,
+        sessionID: UUID,
+        pillarReader: any PillarTextReading = VisionPillarTextReader()
+    ) {
         self.model = model
         self.sessionID = sessionID
+        self.pillarReader = pillarReader
     }
 
     var body: some View {
@@ -87,9 +98,9 @@ struct ParkingDetailView: View {
         // Storage work belongs in a task, never in `body` (docs/16 §5). Keyed on the
         // stored path so attaching or removing a photo reloads exactly once.
         .task(id: session?.photoRelativePath) { await loadPhoto() }
-        .sheet(isPresented: $isEditing) {
+        .sheet(isPresented: $isEditing, onDismiss: { pillarSuggestion = nil }) {
             if let session {
-                ManualParkingSheet(model: model, editing: session)
+                ManualParkingSheet(model: model, editing: session, suggestion: pillarSuggestion)
             }
         }
         .confirmationDialog("이 주차 기록을 삭제할까요?", isPresented: $isConfirmingDelete, titleVisibility: .visible) {
@@ -121,7 +132,7 @@ struct ParkingDetailView: View {
             CameraPhotoPicker(
                 onPicked: { data in
                     isCapturingPhoto = false
-                    Task { await model.attachPhoto(data, to: sessionID) }
+                    Task { await attachPhoto(data) }
                 },
                 onCancel: { isCapturingPhoto = false }
             )
@@ -308,6 +319,11 @@ struct ParkingDetailView: View {
     /// Skips the chooser when there is nothing to choose — a device with no camera, or
     /// one where camera access is off, leaves only the library.
     private func beginAddingPhoto() {
+        // Only where a read will actually be offered: a record that already names a floor
+        // never gets one, so loading the model for it would be work for nothing.
+        if session?.floor == nil {
+            Task { await pillarReader.prepare() }
+        }
         let sources = ParkingPhotoSource.available
         if sources.count == 1, let only = sources.first {
             present(only)
@@ -331,7 +347,34 @@ struct ParkingDetailView: View {
             photoPhase = .empty
             return
         }
+        await attachPhoto(data)
+    }
+
+    /// FR-007's save, and then docs/02 §6a's read of the same bytes.
+    ///
+    /// The photo is stored first and unconditionally: §6a is a convenience on top of a
+    /// feature that already works, and a recognition failure must never cost the user the
+    /// photo they took.
+    private func attachPhoto(_ data: Data) async {
         await model.attachPhoto(data, to: sessionID)
+        await offerPillarReading(from: data)
+    }
+
+    /// §6a on the 사진 추가 path, and the one case where it is worth interrupting.
+    ///
+    /// Only for a record with **no floor yet** — the `층 미입력` row that genuinely exists
+    /// in the history list. On a record that already names a floor the read is dropped
+    /// without a word: the user did not ask to be asked again, and a photo is not better
+    /// evidence than what they already typed.
+    ///
+    /// Silent on every failure path (§6a "no message, no spinner left behind, no 인식 실패
+    /// dialog") — no text, nothing parsed, no model, too slow all end here doing nothing.
+    private func offerPillarReading(from data: Data) async {
+        guard let session, session.floor == nil else { return }
+        let reading = await pillarReader.read(data)
+        guard reading.floorText != nil else { return }
+        pillarSuggestion = reading
+        isEditing = true
     }
 
     private func loadPhoto() async {

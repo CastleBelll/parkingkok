@@ -12,7 +12,11 @@ protocol CandidateResolving: AnyObject {
 }
 
 /// How a pending candidate stopped being pending.
-enum CandidateOutcome: String, Sendable, Equatable {
+///
+/// `Codable` because docs/10 §7b's history outlives the process that wrote it. The raw
+/// values are the stored shape, so renaming a case is a schema change — see
+/// `FileCandidateHistoryStore.schemaVersion`.
+enum CandidateOutcome: String, Sendable, Equatable, Codable {
     case confirmed
     case rejected
     case expired
@@ -40,6 +44,9 @@ final class CandidateModel {
     var pendingNavigation: AppRoute?
 
     private let store: any ParkingCandidateStoring
+    /// docs/10 §7b's bell. Written at every resolution, read by the list — see
+    /// `retire`, which is the one place all three outcomes pass through.
+    private let history: any CandidateHistoryStoring
     private let notifier: any CandidateNotifying
     private let analytics: any AnalyticsRecording
     private let parking: ParkingModel
@@ -56,6 +63,7 @@ final class CandidateModel {
 
     init(
         store: any ParkingCandidateStoring,
+        history: any CandidateHistoryStoring = UnavailableCandidateHistoryStore(),
         notifier: any CandidateNotifying = UserNotificationCandidateDelivery(),
         analytics: any AnalyticsRecording = DisabledAnalyticsRecorder(),
         parking: ParkingModel,
@@ -63,6 +71,7 @@ final class CandidateModel {
         resolver: (any CandidateResolving)? = nil
     ) {
         self.store = store
+        self.history = history
         self.notifier = notifier
         self.analytics = analytics
         self.parking = parking
@@ -72,11 +81,38 @@ final class CandidateModel {
 
     /// §7a's three quick picks, from what this user has saved before.
     var floorPicks: [FloorValue] {
+        CandidateFloorPicks.picks(from: allSessions)
+    }
+
+    /// docs/10 §7b: "The bell carries a small dot while a candidate is unanswered, and
+    /// only then." A dot, not a count — §12 allows at most one candidate, so there is
+    /// never a number to show.
+    var hasUnansweredCandidate: Bool {
+        pending != nil
+    }
+
+    /// docs/10 §7b's list, resolved against the records its rows point at.
+    ///
+    /// A function and not a property: it reads the history file, and docs/16 §5 keeps
+    /// storage work out of `body`. Screens call it from `onAppear` like every other read
+    /// in the app.
+    func notificationHistory() -> [NotificationHistoryItem] {
+        NotificationHistoryItem.list(
+            pending: pending,
+            entries: history.entries(),
+            sessions: allSessions
+        )
+    }
+
+    /// Every record the store holds, the active one included. A confirmed candidate
+    /// becomes the *active* parking, so anything reading "what has this user saved"
+    /// misses the newest answer without it.
+    private var allSessions: [ParkingSession] {
         var sessions = parking.completedSessions
         if let active = parking.activeSession {
             sessions.append(active)
         }
-        return CandidateFloorPicks.picks(from: sessions)
+        return sessions
     }
 
     /// Re-reads the candidate and retires it if its 45 minutes are up.
@@ -115,13 +151,15 @@ final class CandidateModel {
     /// store failure costs the user nothing but a second tap.
     @discardableResult
     func confirm(_ candidate: ParkingCandidate, draft: ManualParkingDraft) -> Bool {
-        guard parking.saveDetectedParking(from: candidate, draft: draft) != nil else {
+        guard let recordId = parking.saveDetectedParking(from: candidate, draft: draft) else {
             return false
         }
         // The event goes out after the write, never before: a confirmation that failed to
         // save would otherwise be counted as precision the detector does not have.
         analytics.record(.parkingCandidateConfirmed(candidate.analyticsProperties))
-        retire(candidate, outcome: .confirmed)
+        // §10a: the record id is what makes the `저장됨` row openable and what lets it
+        // show a floor this entry is forbidden to store itself.
+        retire(candidate, outcome: .confirmed, recordId: recordId)
         return true
     }
 
@@ -157,8 +195,11 @@ final class CandidateModel {
         retire(candidate, outcome: .expired)
     }
 
-    private func retire(_ candidate: ParkingCandidate, outcome: CandidateOutcome) {
+    /// The one place all three of §7b's outcomes pass through, which is why the history
+    /// append lives here rather than at each caller.
+    private func retire(_ candidate: ParkingCandidate, outcome: CandidateOutcome, recordId: UUID? = nil) {
         pending = nil
+        history.append(CandidateHistoryEntry(candidate: candidate, outcome: outcome, recordId: recordId))
         do {
             try store.clear()
         } catch {
