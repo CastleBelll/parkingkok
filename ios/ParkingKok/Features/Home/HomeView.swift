@@ -87,7 +87,6 @@ struct HomeView: View {
             )
             .pkEntrance(4)
 
-            PKBrandFooter()
                 .pkEntrance(5)
         }
         .navigationBarHidden(true)

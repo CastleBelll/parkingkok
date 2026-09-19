@@ -73,7 +73,6 @@ struct ParkingDetailView: View {
                     .font(PKTypography.supporting)
                     .foregroundStyle(PKColor.textSecondary)
             }
-            PKBrandFooter()
         }
         .navigationTitle("주차 위치")
         .navigationBarTitleDisplayMode(.inline)

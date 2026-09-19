@@ -11,8 +11,6 @@ import SwiftUI
 /// It was previously left out on the grounds that a button that does nothing is worse
 /// than a missing one, which is still true — the fix is a destination, not an omission.
 struct PKBrandHeader: View {
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-
     private let onOpenSettings: () -> Void
     private let onOpenNotificationSettings: () -> Void
 
@@ -25,7 +23,11 @@ struct PKBrandHeader: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: PKSpacing.m) {
+        // Centred, and two columns rather than three stacked things. The right side used
+        // to carry the mock's handwritten aside under the controls, which made that column
+        // two lines taller than the brand beside it — top-aligned, that pushed 주차핀 up
+        // into the corner. The aside is gone, so the name and the controls sit level.
+        HStack(alignment: .center, spacing: PKSpacing.m) {
             PKBrandMark()
                 .accessibilityHidden(true)
 
@@ -40,28 +42,20 @@ struct PKBrandHeader: View {
             // One announcement for the pair, so VoiceOver does not read the mark and the
             // name separately (docs/10 §12).
             .accessibilityElement(children: .combine)
-            .padding(.top, PKSpacing.xs)
 
             Spacer(minLength: PKSpacing.s)
 
-            VStack(alignment: .trailing, spacing: 0) {
-                HStack(spacing: 0) {
-                    headerButton(
-                        systemName: "bell",
-                        label: "알림 설정",
-                        action: onOpenNotificationSettings
-                    )
-                    headerButton(
-                        systemName: "gearshape",
-                        label: "설정",
-                        action: onOpenSettings
-                    )
-                }
-                // The mock's handwritten aside. Hidden at accessibility text sizes, where
-                // two decorative lines would push the screen's actual content off the top.
-                if !dynamicTypeSize.isAccessibilitySize {
-                    PKTagline()
-                }
+            HStack(spacing: 0) {
+                headerButton(
+                    systemName: "bell",
+                    label: "알림 설정",
+                    action: onOpenNotificationSettings
+                )
+                headerButton(
+                    systemName: "gearshape",
+                    label: "설정",
+                    action: onOpenSettings
+                )
             }
         }
     }
@@ -139,42 +133,7 @@ private struct PKPinTail: Shape {
 /// bundling one is a licence decision this change is not allowed to make, so the nearest
 /// honest thing is the rounded system face at a quiet weight. It keeps the warmth without
 /// faking a typeface.
-private struct PKTagline: View {
-    var body: some View {
-        HStack(alignment: .center, spacing: PKSpacing.xs) {
-            Text("주차는 쉽고\n일상은 더 가볍게")
-                .font(.system(.caption2, design: .rounded, weight: .regular))
-                .multilineTextAlignment(.trailing)
-                .lineSpacing(1)
-            Image(systemName: "face.smiling")
-                .font(.system(size: 12, weight: .regular))
-        }
-        // The mock's aside sits *behind* the controls above it, not beside them. At the
-        // token's full strength it reads as a second caption competing with the bell and
-        // the gear; damped, it recedes the way handwriting on a card does. This applies
-        // the existing token rather than introducing a tertiary one — same palette.
-        .foregroundStyle(PKColor.textSecondary.opacity(0.7))
-        .padding(.trailing, PKSpacing.xs)
-        // Brand decoration, not information: it says nothing the screen does not, and
-        // VoiceOver reading it before the parking would bury the one thing that matters.
-        .accessibilityHidden(true)
-    }
-}
 
-/// The closing line the mocks put at the bottom of every screen.
-struct PKBrandFooter: View {
-    var body: some View {
-        HStack(spacing: PKSpacing.xs) {
-            Text("좋은 하루, 좋은 주차")
-            Image(systemName: "leaf.fill")
-                .font(.system(size: 10))
-        }
-        .font(.system(.caption2, design: .rounded, weight: .medium))
-        .foregroundStyle(PKColor.textSecondary)
-        .frame(maxWidth: .infinity, alignment: .trailing)
-        .accessibilityHidden(true)
-    }
-}
 
 /// Screen scaffold: the token background under a scrolling column with the standard
 /// gutter. Every screen uses it so the gutter and the background cannot drift apart.

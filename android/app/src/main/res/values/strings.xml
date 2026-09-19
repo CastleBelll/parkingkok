@@ -118,8 +118,6 @@
     <string name="brand_name">주차핀</string>
     <string name="brand_subtitle">자동 주차 기록</string>
     <!-- Two lines, right-aligned beside the header icons, as in the mockup. -->
-    <string name="brand_tagline">주차는 쉽고\n일상은 더 가볍게 ☺</string>
-    <string name="brand_footer">좋은 하루, 좋은 주차</string>
 
     <!-- Home -->
     <string name="home_active_title">현재 주차 위치</string>

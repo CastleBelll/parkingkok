@@ -64,7 +64,6 @@ struct HistoryView: View {
                     .pkEntrance(3)
             }
 
-            PKBrandFooter()
         }
         .navigationTitle("주차 기록")
         .navigationBarTitleDisplayMode(.large)

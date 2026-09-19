@@ -130,9 +130,10 @@ class ParkingkokListScope internal constructor(private val scope: LazyListScope)
 /**
  * The 주차핀 wordmark row at the top of every root screen.
  *
- * The pin, the bell and the gear are all in `01-home-main.png`, and so is the two-line
- * tagline at the right — it is a good part of what the product sounds like, and it used to
- * be demoted to a grey line at the bottom of the page. The bell leads to the system's
+ * The pin, the bell and the gear are all in `01-home-main.png`. The mock's two-line
+ * tagline is not here: it made the right column taller than the wordmark beside it, which
+ * pushed 주차핀 up into the corner, and it was a second caption on a header that already
+ * has one. The bell leads to the system's
  * notification settings for 주차핀: the app has no notification centre of its own, but it
  * does post detection notifications, and where those are turned on and off is a real place
  * to go.
@@ -140,7 +141,6 @@ class ParkingkokListScope internal constructor(private val scope: LazyListScope)
 @Composable
 fun BrandHeader(
     modifier: Modifier = Modifier,
-    tagline: Boolean = true,
     actions: @Composable (() -> Unit)? = null,
 ) {
     Row(
@@ -152,9 +152,13 @@ fun BrandHeader(
                 top = MaterialTheme.spacing.small,
                 bottom = MaterialTheme.spacing.small,
             ),
-        verticalAlignment = Alignment.Top,
+        // Centred, two columns. The right side used to carry the mock's handwritten aside
+        // under the controls, which made that column two lines taller than the wordmark
+        // beside it — top-aligned, that pushed 주차핀 up into the corner. The aside is
+        // gone, so the name and the controls sit level.
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        BrandPin(modifier = Modifier.padding(top = MaterialTheme.spacing.tiny))
+        BrandPin()
         Spacer(Modifier.width(MaterialTheme.spacing.medium))
         Column(Modifier.weight(1f)) {
             Text(
@@ -169,24 +173,8 @@ fun BrandHeader(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Column(horizontalAlignment = Alignment.End) {
-            if (actions != null) {
-                Row(verticalAlignment = Alignment.CenterVertically) { actions() }
-            }
-            // At a large font scale the tagline would push the wordmark off its own line.
-            // Dropping it there is the right trade: it is flavour, the wordmark is not.
-            if (tagline && LocalDensity.current.fontScale <= TAGLINE_MAX_FONT_SCALE) {
-                Text(
-                    text = stringResource(R.string.brand_tagline),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.End,
-                    modifier = Modifier.padding(
-                        end = MaterialTheme.spacing.medium,
-                        bottom = MaterialTheme.spacing.tiny,
-                    ),
-                )
-            }
+        if (actions != null) {
+            Row(verticalAlignment = Alignment.CenterVertically) { actions() }
         }
     }
 }
@@ -282,27 +270,8 @@ fun SectionTitle(text: String, modifier: Modifier = Modifier) {
     )
 }
 
-/** The sign-off the mockups close every screen with, in the corner they put it in. */
-@Composable
-fun BrandFooter(modifier: Modifier = Modifier) {
-    Text(
-        text = stringResource(R.string.brand_footer),
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        textAlign = TextAlign.End,
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(
-                horizontal = MaterialTheme.spacing.gutter,
-                vertical = MaterialTheme.spacing.small,
-            ),
-    )
-}
-
 /** Opacity of the decorative page shapes. Present at a glance, invisible on a card. */
 
-/** Above this the tagline stops fitting beside the wordmark and is dropped. */
-private const val TAGLINE_MAX_FONT_SCALE = 1.3f
 
 /** Header glyphs are a step down from the 24dp default so the pin stays the loudest mark. */
 private val HEADER_ICON = 22.dp

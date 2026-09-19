@@ -61,7 +61,6 @@ import com.parkingkok.app.domain.parking.ParkingSource
 import com.parkingkok.app.domain.photo.PhotoSource
 import com.parkingkok.app.theme.ParkingkokTheme
 import com.parkingkok.app.theme.spacing
-import com.parkingkok.app.ui.components.BrandFooter
 import com.parkingkok.app.ui.components.BrandHeader
 import com.parkingkok.app.ui.components.IconChip
 import com.parkingkok.app.ui.components.ParkingkokCard
@@ -117,7 +116,6 @@ fun HomeScreen(
                 },
             )
         },
-        footer = { BrandFooter() },
     ) {
         if (!state.loaded) return@ParkingkokScreen
 
