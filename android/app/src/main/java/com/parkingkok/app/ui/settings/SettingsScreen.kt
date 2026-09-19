@@ -73,7 +73,9 @@ fun SettingsScreen(
                     Icon(
                         painter = painterResource(R.drawable.ic_person),
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
+                        // Neutral like every other glyph on this screen. Blue here bought
+                        // nothing: the row is a statement of fact, not an action.
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(24.dp),
                     )
                     Spacer(Modifier.width(MaterialTheme.spacing.medium))
@@ -191,7 +193,9 @@ fun SettingsScreen(
                 ParkingkokRow(
                     title = stringResource(R.string.settings_plus_title),
                     supporting = stringResource(R.string.settings_plus_caption),
-                    iconRes = R.drawable.ic_sparkle,
+                    // No sparkle. docs/10 §9 rules sparkles and crowns out of anything
+                    // that talks about Plus, and a row that says 준비 중 needs no glyph.
+                    iconRes = null,
                     enabled = false,
                     trailing = {
                         StatusBadge(
@@ -242,7 +246,7 @@ fun SettingsScreen(
                     Icon(
                         painter = painterResource(R.drawable.ic_shield),
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.tertiary,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(20.dp),
                     )
                     Spacer(Modifier.width(MaterialTheme.spacing.medium))
@@ -365,16 +369,9 @@ private fun PermissionRow(
         title = title,
         supporting = supporting,
         iconRes = iconRes,
-        iconContainerColor = if (granted) {
-            MaterialTheme.colorScheme.tertiaryContainer
-        } else {
-            MaterialTheme.colorScheme.surfaceVariant
-        },
-        iconContentColor = if (granted) {
-            MaterialTheme.colorScheme.onTertiaryContainer
-        } else {
-            MaterialTheme.colorScheme.onSurfaceVariant
-        },
+        // The chip used to go mint when the permission was granted, saying in colour what
+        // the badge beside it already says in a word. The badge carries the state; the
+        // chip takes the neutral default.
         onClick = onClick,
         trailing = {
             Row(verticalAlignment = Alignment.CenterVertically) {

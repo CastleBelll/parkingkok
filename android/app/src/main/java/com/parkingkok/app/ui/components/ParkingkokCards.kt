@@ -113,8 +113,12 @@ fun ParkingkokRow(
     modifier: Modifier = Modifier,
     supporting: String? = null,
     iconRes: Int? = null,
-    iconContainerColor: Color = MaterialTheme.colorScheme.primaryContainer,
-    iconContentColor: Color = MaterialTheme.colorScheme.onPrimaryContainer,
+    // Neutral by default, so a tint is something a row asks for on purpose. When every
+    // row picked its own the screens ended up with four accents competing, which is the
+    // "버튼/카드마다 색상이 다른 UI" the design harness rules out. Danger is the only
+    // caller that overrides this today, and that is a state rather than an accent.
+    iconContainerColor: Color = MaterialTheme.colorScheme.surfaceVariant,
+    iconContentColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
     enabled: Boolean = true,
     onClick: (() -> Unit)? = null,
     trailing: @Composable (() -> Unit)? = null,

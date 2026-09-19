@@ -45,17 +45,23 @@ struct PKSurfaceShape: View {
 
 /// The circular tinted glyph that opens a row in `01-home-main.png` / `04-history-list.png`.
 struct PKIconChip: View {
+    /// Colour is opt-in, so a tinted chip means something.
+    ///
+    /// Every row used to choose its own and the screens ended up with three or four
+    /// accents arguing, which is the "버튼/카드마다 색상이 다른 UI" CLAUDE.md's design
+    /// harness rules out. `.neutral` is the default and is actually neutral now — it used
+    /// to be brand blue at 8%, which made "neutral" the same hue as "primary".
     enum Tint {
         case primary
         case accent
-        /// A record with nothing special about it — the plain rows in the history mock.
+        /// A row that is simply a row. The label already says what it is.
         case neutral
     }
 
     private let systemName: String
     private let tint: Tint
 
-    init(_ systemName: String, tint: Tint = .primary) {
+    init(_ systemName: String, tint: Tint = .neutral) {
         self.systemName = systemName
         self.tint = tint
     }
@@ -73,8 +79,9 @@ struct PKIconChip: View {
 
     private var foreground: Color {
         switch tint {
-        case .primary, .neutral: PKColor.primary
+        case .primary: PKColor.primary
         case .accent: PKColor.accent
+        case .neutral: PKColor.textSecondary
         }
     }
 
@@ -82,7 +89,7 @@ struct PKIconChip: View {
         switch tint {
         case .primary: PKColor.primarySoft
         case .accent: PKColor.accentSoft
-        case .neutral: PKColor.primary.opacity(0.08)
+        case .neutral: PKColor.textSecondary.opacity(0.10)
         }
     }
 }

@@ -57,7 +57,6 @@ struct HomeView: View {
                     .pkEntrance(1)
                     HomeActionRow(
                         icon: "mappin.and.ellipse",
-                        tint: .accent,
                         title: "주차 위치 보기",
                         subtitle: "저장된 주차 정보를 확인하세요"
                     ) {
@@ -134,7 +133,6 @@ private struct EmptyParkingCard: View {
 /// One of the tappable rows under the parking card.
 private struct HomeActionRow: View {
     let icon: String
-    let tint: PKIconChip.Tint
     let title: String
     let subtitle: String
     let action: () -> Void
@@ -142,7 +140,7 @@ private struct HomeActionRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: PKSpacing.l) {
-                PKIconChip(icon, tint: tint)
+                PKIconChip(icon)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
                         .font(PKTypography.row)

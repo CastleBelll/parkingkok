@@ -524,8 +524,6 @@ private fun PrimaryActions(
                     if (canOpenMap) R.string.home_map_caption else R.string.home_map_caption_none,
                 ),
                 iconRes = R.drawable.ic_map,
-                iconContainerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                iconContentColor = MaterialTheme.colorScheme.onTertiaryContainer,
                 enabled = canOpenMap,
                 onClick = onDirections,
                 trailing = { RowChevron(enabled = canOpenMap) },

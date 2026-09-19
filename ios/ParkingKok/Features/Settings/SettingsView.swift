@@ -195,7 +195,7 @@ struct SettingsView: View {
         Section {
             HStack(spacing: PKSpacing.s) {
                 Image(systemName: "lock.fill")
-                    .foregroundStyle(PKColor.accent)
+                    .foregroundStyle(PKColor.textSecondary)
                     .accessibilityHidden(true)
                 Text("주차핀은 위치 정보를 서버로 전송하지 않습니다.")
                     .font(PKTypography.supporting)
