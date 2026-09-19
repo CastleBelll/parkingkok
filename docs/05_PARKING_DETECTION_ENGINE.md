@@ -57,6 +57,82 @@ User-confirmed or policy-confirmed active parking.
 ### DEPARTURE_CANDIDATE
 New meaningful vehicle session while PARKED.
 
+## 3a. Transitions
+
+Section 3 describes what each state *is*. This says what moves between them, because
+"vehicle evidence appeared" and "validate duration/distance" are sentences two engines
+would each read differently — and this project has already had two platforms diverge from
+a contract that left a decision open.
+
+Every threshold below either points at the section that already fixes it, or is named here
+as a starting constant. **A constant marked `unvalidated` is a hypothesis**: no
+above-ground drive has been replayed against it yet (§18), and it is expected to move once
+field data exists. Neither platform may pick its own value for one.
+
+| from | to | condition |
+|---|---|---|
+| `IDLE` | `DRIVING_CANDIDATE` | `vehicle_enter` |
+| `DRIVING_CANDIDATE` | `DRIVING` | vehicle activity sustained ≥ `minimumVehicleDuration` |
+| `DRIVING_CANDIDATE` | `IDLE` | `vehicle_exit`, or no promotion within `drivingCandidateWindow` |
+| `DRIVING` | `PARKING_TRANSITION` | `vehicle_exit`, **or** no movement evidence for `movementIdleWindow` |
+| `PARKING_TRANSITION` | `CANDIDATE_PENDING` | any of `walking_enter`, `stationary_enter`, location stop — within `transitionWindow` |
+| `PARKING_TRANSITION` | `DRIVING` | movement evidence returns before `transitionWindow` elapses |
+| `PARKING_TRANSITION` | `IDLE` | `transitionWindow` elapses with no confirming signal |
+| `CANDIDATE_PENDING` | `PARKED` | user confirms (§10a) |
+| `CANDIDATE_PENDING` | `IDLE` | user rejects, or 45-minute expiry (§10) |
+| `PARKED` | `DEPARTURE_CANDIDATE` | vehicle ≥ 90s **and** movement ≥ 500m (§11) |
+| `DEPARTURE_CANDIDATE` | `DRIVING` | departure confirmed (§11) |
+| `DEPARTURE_CANDIDATE` | `PARKED` | evidence lapses |
+
+### Constants
+
+| name | value | source |
+|---|---|---|
+| `minimumVehicleDuration` | 90s | §11 uses 90s for departure; entry uses the same bar so one direction cannot be laxer than the other |
+| `drivingCandidateWindow` | 300s | §7 `vehicleEvidenceMaxAge` — evidence older than this is already not counted |
+| `movementIdleWindow` | 180s | §7 `maximumBaseline`. **unvalidated** |
+| `transitionWindow` | 300s | §7 vehicle window, reused so a walk that starts late still counts. **unvalidated** |
+
+### Movement evidence does not gate promotion
+
+An earlier draft of this table required movement evidence as well as sustained vehicle
+activity to reach `DRIVING`. Replaying the three real drives recorded on 2026-09-19
+against it showed why that is wrong: the 14:26 trip is the textbook signature —
+`vehicle_enter`, `vehicle_exit` seven minutes later, `walking_enter` after that — and it
+carries **zero location events**. Gated on movement it never leaves `DRIVING_CANDIDATE`,
+and the parking is never detected.
+
+That is not an edge case. §13 and the notes around §7 say underground car parks, tunnels
+and urban canyons are this product's main setting, and those are exactly the places GPS
+Doppler speed does not arrive. A rule that needs movement evidence to believe the OS is a
+rule that fails where the app is most needed.
+
+Movement evidence still matters — it is what §8 weighs and what separates a real trip from
+a phone on a desk — but it belongs in the confidence bucket (§9), not in the transition.
+A drive with no fixes can reach `CANDIDATE_PENDING` with lower confidence; it cannot be
+made invisible.
+
+### The red light
+
+`DRIVING → PARKING_TRANSITION → DRIVING` is the path a long stop takes, and it is why
+`PARKING_TRANSITION` exists as its own state rather than being folded into the candidate
+(§3 of the domain contract). Entering it is silent: nothing is persisted, nothing is
+notified. Fixture #2 in §17 exists to hold this.
+
+### One candidate per travel session
+
+§12 requires it. Concretely: leaving `CANDIDATE_PENDING` by rejection or expiry returns to
+`IDLE`, and a `DRIVING` session that has already produced a candidate cannot produce a
+second one — the trip must pass through `IDLE` first. This is what stops a bus with
+repeated stops from becoming a notification storm (fixture #5).
+
+### Reason codes
+
+Codes accumulate as evidence arrives and travel with the candidate; they are never
+recomputed at the end from the final state. The §4 list in the domain contract is closed —
+an engine that needs a code that is not on it has found a contract gap, and the answer is
+to raise it, not to add a string.
+
 ## 4. Platform Signal Mapping
 
 ### iOS

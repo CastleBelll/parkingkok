@@ -1,0 +1,19 @@
+{
+  "name": "long_red_light_drive_continues_no_candidate",
+  "initialState": "DRIVING",
+  "events": [
+    {"type":"location","t":0,"accuracy":8,"speed":11.0},
+    {"type":"location","t":30,"accuracy":9,"speed":9.5},
+    {"type":"stationary_enter","t":60},
+    {"type":"location","t":75,"accuracy":9,"speed":0.0},
+    {"type":"location","t":120,"accuracy":10,"speed":0.0},
+    {"type":"location","t":165,"accuracy":9,"speed":0.2},
+    {"type":"stationary_exit","t":195},
+    {"type":"location","t":210,"accuracy":8,"speed":7.0},
+    {"type":"location","t":260,"accuracy":8,"speed":12.0}
+  ],
+  "expected": {
+    "candidate": false,
+    "finalState": "DRIVING"
+  }
+}
