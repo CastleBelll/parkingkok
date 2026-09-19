@@ -36,8 +36,11 @@ struct HomeView: View {
     var body: some View {
         PKScreen {
             PKBrandHeader(
-                onOpenSettings: { path.append(.settings(focus: nil)) },
-                onOpenNotificationSettings: { path.append(.settings(focus: .notifications)) }
+                // docs/10 §7b: the dot is the whole reason the screen exists — a
+                // notification swiped away in the car is otherwise lost until it expires.
+                hasUnreadNotification: candidates.hasUnansweredCandidate,
+                onOpenSettings: { path.append(.settings) },
+                onOpenNotifications: { path.append(.notificationHistory) }
             )
             .pkEntrance(0)
 

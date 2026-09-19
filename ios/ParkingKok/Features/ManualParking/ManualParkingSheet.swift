@@ -19,6 +19,11 @@ struct ManualParkingSheet: View {
     /// shared on purpose — §7a says "opens the existing manual entry", and a second form
     /// would be one more place for the floor rules to drift.
     private let confirmation: CandidateConfirmationTarget?
+    /// docs/02 §6a: what a pillar photo offered, if anything. Pre-filled and focused,
+    /// **never saved on its own** — "a misread `B3` as `83` that silently became the
+    /// record would be worse than typing", so it arrives as text in a field the user is
+    /// already looking at and goes no further until they press 저장.
+    private let suggestion: PillarReading?
 
     @Environment(\.dismiss) private var dismiss
     @State private var draft = ManualParkingDraft()
@@ -32,16 +37,23 @@ struct ManualParkingSheet: View {
         case memo
     }
 
-    init(model: ParkingModel, editing: ParkingSession? = nil) {
+    init(model: ParkingModel, editing: ParkingSession? = nil, suggestion: PillarReading? = nil) {
         self.model = model
         self.editing = editing
+        self.suggestion = suggestion
         confirmation = nil
     }
 
     /// docs/10 §7a `직접 입력`. "Prefilled with nothing, and saving there confirms."
-    init(model: ParkingModel, confirming candidate: ParkingCandidate, candidates: CandidateModel) {
+    init(
+        model: ParkingModel,
+        confirming candidate: ParkingCandidate,
+        candidates: CandidateModel,
+        suggestion: PillarReading? = nil
+    ) {
         self.model = model
         editing = nil
+        self.suggestion = suggestion
         confirmation = CandidateConfirmationTarget(candidate: candidate, candidates: candidates)
     }
 
@@ -118,13 +130,29 @@ struct ManualParkingSheet: View {
     }
 
     private func loadDraft() {
-        guard let editing else { return }
-        draft = ManualParkingDraft(
-            floorText: editing.floor?.raw ?? "",
-            zone: editing.zone ?? "",
-            spot: editing.spot ?? "",
-            memo: editing.memo ?? ""
-        )
+        if let editing {
+            draft = ManualParkingDraft(
+                floorText: editing.floor?.raw ?? "",
+                zone: editing.zone ?? "",
+                spot: editing.spot ?? "",
+                memo: editing.memo ?? ""
+            )
+        }
+        applySuggestion()
+    }
+
+    /// docs/02 §6a: "the result is pre-filled into the fields the user was going to fill
+    /// anyway, focused and editable".
+    ///
+    /// It never overwrites something the user already recorded — a photo is a guess and
+    /// what is stored is not. On a record that already has a floor the read is simply
+    /// dropped, which is also why the detail screen does not re-ask with a photo it can
+    /// add nothing to.
+    private func applySuggestion() {
+        guard let floorText = suggestion?.suggestedFloorText(over: draft.floorText) else { return }
+        draft.floorText = floorText
+        // Focused, so the first thing the user can do is correct it.
+        focusedField = .floor
     }
 
     private func save() {

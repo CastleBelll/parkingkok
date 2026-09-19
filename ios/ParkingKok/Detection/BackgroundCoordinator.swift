@@ -129,6 +129,12 @@ actor BackgroundCoordinator {
     /// Where a created candidate is persisted so a screen opened minutes later can read
     /// it. `nil` disables candidates and nothing else.
     private let candidateStore: (any ParkingCandidateStoring)?
+    /// docs/10 §7b's bell (docs/05 §10a "History"). The engine retires a candidate the
+    /// user never answered — superseded by a newer trip, timed out, or overtaken by the
+    /// car link coming back — and those resolutions never reach `CandidateModel`, because
+    /// the file is already gone by the time a screen looks. `nil` disables the history and
+    /// nothing else.
+    private let candidateHistory: (any CandidateHistoryStoring)?
     private let candidateNotifier: (any CandidateNotifying)?
     /// docs/17 §2 `parking_candidate_created`. Reported from here rather than from the UI
     /// because the candidate is created in a process that may have no UI at all.
@@ -156,6 +162,7 @@ actor BackgroundCoordinator {
         dateProvider: any DateProviding = SystemDateProvider(),
         traceRecorder: TraceRecorder? = nil,
         candidateStore: (any ParkingCandidateStoring)? = nil,
+        candidateHistory: (any CandidateHistoryStoring)? = nil,
         candidateNotifier: (any CandidateNotifying)? = nil,
         analytics: any AnalyticsRecording = DisabledAnalyticsRecorder(),
         engine: ParkingDetectionEngine = ParkingDetectionEngine()
@@ -166,6 +173,7 @@ actor BackgroundCoordinator {
         self.dateProvider = dateProvider
         self.traceRecorder = traceRecorder
         self.candidateStore = candidateStore
+        self.candidateHistory = candidateHistory
         self.candidateNotifier = candidateNotifier
         self.analytics = analytics
         self.engine = engine
@@ -614,6 +622,13 @@ actor BackgroundCoordinator {
             await candidateNotifier?.post(candidate)
 
         case let .withdrawCandidate(id):
+            // §7b's `응답 없음`. Read before the clear, because the raised-at time the row
+            // shows lives only in the file this is about to delete. `append` is idempotent
+            // by candidate id, so a screen that retired the same candidate a moment
+            // earlier does not produce a second row.
+            if let candidate = candidateStore?.load(), candidate.id == id {
+                candidateHistory?.append(CandidateHistoryEntry(candidate: candidate, outcome: .expired))
+            }
             try? candidateStore?.clear()
             await candidateNotifier?.withdraw(candidateId: id)
 

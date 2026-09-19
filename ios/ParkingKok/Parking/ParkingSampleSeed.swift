@@ -45,7 +45,8 @@
         static func initialRoute(activeParkingID: UUID?) -> AppRoute? {
             switch ProcessInfo.processInfo.environment["PK_INITIAL_ROUTE"] {
             case "history": .history
-            case "settings": .settings(focus: nil)
+            case "notifications": .notificationHistory
+            case "settings": .settings
             case "diagnostics": .diagnostics
             case "detail": activeParkingID.map(AppRoute.parkingDetail(id:))
             default: nil
@@ -72,6 +73,8 @@
         static func apply(
             to store: any ParkingStoring,
             photoStore: (any ParkingPhotoStoring)? = nil,
+            candidateStore: (any ParkingCandidateStoring)? = nil,
+            historyStore: (any CandidateHistoryStoring)? = nil,
             now: Date
         ) async throws {
             try store.deleteAll()
@@ -90,6 +93,7 @@
             }
 
             var active = sample(
+                id: activeRecordID,
                 startedAt: now.addingTimeInterval(-84 * 60),
                 floor: "B3",
                 zone: "A구역",
@@ -108,6 +112,73 @@
                 }
             }
             try store.startSession(active)
+            applyNotifications(
+                candidateStore: candidateStore,
+                historyStore: historyStore,
+                savedRecordID: active.id,
+                now: now
+            )
+        }
+
+        /// docs/10 §7b's list: one unanswered candidate and the three resolved outcomes.
+        ///
+        /// History is append-only by contract (docs/05 §10a) and has no delete, so the
+        /// fixture keeps its promise — "the screenshot is the same every run" — the only
+        /// way it can: **fixed ids**. `append` deduplicates by candidate id, so a second
+        /// seeded run adds nothing and the list stays these four rows however often it is
+        /// reseeded. The `저장됨` row's `recordId` is `activeRecordID`, also fixed, so it
+        /// still opens a record that exists after the parking store was replaced.
+        ///
+        /// §7b's empty state is photographed from a fresh install with no seed flag at
+        /// all, which is the only honest way to reach it.
+        private static func applyNotifications(
+            candidateStore: (any ParkingCandidateStoring)?,
+            historyStore: (any CandidateHistoryStoring)?,
+            savedRecordID: UUID,
+            now: Date
+        ) {
+            // Oldest first: `append` puts each at the head, so the list reads newest first
+            // exactly as §7b's mock does.
+            let resolutions: [(minutesAgo: Double, outcome: CandidateOutcome, record: UUID?)] = [
+                (4 * 24 * 60, .expired, nil),
+                (26 * 60, .rejected, nil),
+                (84, .confirmed, savedRecordID)
+            ]
+            for (index, resolution) in resolutions.enumerated() {
+                historyStore?.append(
+                    CandidateHistoryEntry(
+                        id: notificationIDs[index],
+                        raisedAt: now.addingTimeInterval(-resolution.minutesAgo * 60),
+                        outcome: resolution.outcome,
+                        recordId: resolution.record
+                    )
+                )
+            }
+
+            // The unanswered one: what puts the dot on the bell and the
+            // `확인이 필요해요` row at the top of the list.
+            //
+            // `PK_INJECT_CANDIDATE` drives the engine to produce a real one, and the two
+            // flags answer the same question in different ways — so when it is set this
+            // fixture leaves the slot alone rather than overwriting what the engine put
+            // there. One live candidate at a time either way (§12).
+            guard ProcessInfo.processInfo.environment["PK_INJECT_CANDIDATE"] == nil else { return }
+            try? candidateStore?.clear()
+            try? candidateStore?.save(
+                ParkingCandidate(
+                    id: notificationIDs[3],
+                    detectedAt: now.addingTimeInterval(-6 * 60),
+                    confidenceBucket: .high,
+                    reasonCodes: [.recentVehicleActivity, .vehicleExitDetected, .walkingAfterVehicle],
+                    // No coordinate, like every other row of this fixture.
+                    lastReliableLocation: nil,
+                    expiresAt: now.addingTimeInterval(ParkingCandidatePolicy.expiry - 6 * 60),
+                    score: 82,
+                    driveDuration: 22 * 60,
+                    driveDistanceMeters: 7400,
+                    accuracyBucket: .fair
+                )
+            )
         }
 
         /// A drawn stand-in for a photo of a car park pillar.
@@ -115,7 +186,10 @@
         /// Generated rather than bundled: a real photograph in the repository would be
         /// somebody's car park, and the screenshot only needs the panel to be occupied at
         /// a realistic aspect ratio.
-        private static func placeholderPhotoData() -> Data? {
+        ///
+        /// Also what `PK_PILLAR_FIXTURE` feeds the docs/02 §6a reader, because a device
+        /// with no way to deliver a tap has no way to press a camera shutter either.
+        static func placeholderPhotoData() -> Data? {
             let size = CGSize(width: 1600, height: 1200)
             let renderer = UIGraphicsImageRenderer(size: size)
             let image = renderer.image { context in
@@ -179,7 +253,22 @@
             )
         ]
 
+        /// Fixed so a reseed keeps pointing at a record that exists — see
+        /// `applyNotifications`, where the `저장됨` row's `recordId` is written once and
+        /// then deduplicated away on every later run.
+        static let activeRecordID = UUID(uuidString: "5EED0000-0000-4000-8000-00000000A001") ?? UUID()
+
+        /// The three resolutions and the unanswered candidate, with fixed ids for the
+        /// same reason.
+        private static let notificationIDs = [
+            "5EED0000-0000-4000-8000-00000000B001",
+            "5EED0000-0000-4000-8000-00000000B002",
+            "5EED0000-0000-4000-8000-00000000B003",
+            "5EED0000-0000-4000-8000-00000000B004"
+        ].map { UUID(uuidString: $0) ?? UUID() }
+
         private static func sample(
+            id: UUID = UUID(),
             startedAt: Date,
             floor: String,
             zone: String?,
@@ -187,7 +276,7 @@
             source: ParkingSource
         ) -> ParkingSession {
             ParkingSession(
-                id: UUID(),
+                id: id,
                 startedAt: startedAt,
                 endedAt: nil,
                 source: source,

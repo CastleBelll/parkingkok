@@ -25,6 +25,7 @@ struct RootView: View {
                 }
         }
         .tint(PKColor.primary)
+        .preferredColorScheme(forcedColorScheme)
         // Composition happens here, not in `body`'s evaluation: docs/16 §5 keeps
         // storage work out of `body`, and opening a SwiftData container is storage work.
         .task {
@@ -74,6 +75,26 @@ struct RootView: View {
         }
     }
 
+    /// Capture hook, and `nil` in every shipped build.
+    ///
+    /// A real device cannot be switched to dark mode from the command line, and docs/10
+    /// §11 asks for both appearances to be reviewed:
+    ///
+    /// ```sh
+    ///   --environment-variables '{"PK_FORCE_COLOR_SCHEME":"dark"}'
+    /// ```
+    private var forcedColorScheme: ColorScheme? {
+        #if PK_DEV
+            switch ProcessInfo.processInfo.environment["PK_FORCE_COLOR_SCHEME"] {
+            case "dark": return .dark
+            case "light": return .light
+            default: return nil
+            }
+        #else
+            return nil
+        #endif
+    }
+
     @ViewBuilder
     private var content: some View {
         if let composition {
@@ -99,6 +120,10 @@ struct RootView: View {
             if let composition {
                 HistoryView(model: composition.model, path: $path)
             }
+        case .notificationHistory:
+            if let composition {
+                NotificationHistoryView(candidates: composition.candidates, path: $path)
+            }
         case let .candidateConfirmation(id):
             if let composition, let candidate = composition.candidates.candidate(id: id) {
                 CandidateConfirmationView(
@@ -108,8 +133,8 @@ struct RootView: View {
                     path: $path
                 )
             }
-        case let .settings(focus):
-            SettingsView(appInfo: appInfo, model: composition?.model, path: $path, focus: focus)
+        case .settings:
+            SettingsView(appInfo: appInfo, model: composition?.model, path: $path)
         case .diagnostics:
             DiagnosticsView(appInfo: appInfo)
         }
