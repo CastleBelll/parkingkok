@@ -39,6 +39,15 @@ fun interface PillarTextReader {
 
     /** The lines recognised in [source], or empty. */
     suspend fun read(source: PhotoSource): List<String>
+
+    /**
+     * Load whatever the first read would otherwise load, somewhere the user is not
+     * waiting. Called when the photo UI opens.
+     *
+     * Default no-op: a fake in a test has nothing to warm, and a reader that needs no
+     * warming should not have to say so.
+     */
+    suspend fun prepare() {}
 }
 
 /**
@@ -114,9 +123,15 @@ object PillarTextParser {
  * Reads the pillar in [PhotoSource], or gives up quietly.
  *
  * The timeout is the third of §6a's three silent failures: "the model is unavailable or
- * takes too long → same as no text found". It is short because the user is standing at
- * the pillar waiting for a form, and a form that arrives late is worse than one that
- * arrives empty.
+ * takes too long → same as no text found".
+ *
+ * **It has to survive a cold model load.** iOS measured its recogniser at 5224ms on the
+ * first call in a process against ~1010ms warm, and a four-second deadline there lost
+ * *every* first read — silently, because §6a makes failure quiet, and invisibly, because
+ * a warm test suite never sees it. This deadline was 3000ms, which would have lost them
+ * too. The pairing matters more than the number: [PillarTextReader.prepare] moves the load
+ * off the user's path, and the deadline is generous enough that a read which somehow
+ * arrives cold still finishes.
  */
 class ReadPillarSuggestionUseCase(
     private val reader: PillarTextReader,
@@ -129,7 +144,15 @@ class ReadPillarSuggestionUseCase(
             ?: PillarSuggestion.NONE
 
     companion object {
-        /** Long enough for a recogniser warming its model, short enough not to be a wait. */
-        const val DEFAULT_TIMEOUT_MILLIS: Long = 3_000L
+        /**
+         * Sized for a cold model load, not a warm read.
+         *
+         * Carried over from the iOS measurement rather than measured on ML Kit — a
+         * bundled model has the same first-use cost in kind, and an instrumented test
+         * warms the process before it can time one. Worth measuring properly when someone
+         * can; too generous costs nothing here, because [PillarTextReader.prepare] means
+         * almost no read ever approaches it.
+         */
+        const val DEFAULT_TIMEOUT_MILLIS: Long = 6_000L
     }
 }

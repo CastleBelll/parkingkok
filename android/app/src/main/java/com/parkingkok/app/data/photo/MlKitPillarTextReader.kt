@@ -1,5 +1,6 @@
 package com.parkingkok.app.data.photo
 
+import androidx.core.graphics.createBitmap
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.korean.KoreanTextRecognizerOptions
@@ -26,6 +27,24 @@ class MlKitPillarTextReader : PillarTextReader {
 
     private val recognizer by lazy {
         TextRecognition.getClient(KoreanTextRecognizerOptions.Builder().build())
+    }
+
+    /**
+     * One recognition on a throwaway bitmap, to pay the model load somewhere the user is
+     * not waiting. The result is discarded — only the loading matters.
+     *
+     * Silent like everything else here: if warming fails, the read that follows simply
+     * pays the cost itself, which is what the deadline is sized for.
+     */
+    override suspend fun prepare() {
+        val warmup = createBitmap(WARMUP_EDGE, WARMUP_EDGE)
+        try {
+            recognizer.process(InputImage.fromBitmap(warmup, ROTATION_APPLIED)).await()
+        } catch (_: Exception) {
+            // Nothing to do and nothing to say: the next read will load the model itself.
+        } finally {
+            warmup.recycle()
+        }
     }
 
     override suspend fun read(source: PhotoSource): List<String> {
@@ -56,6 +75,9 @@ class MlKitPillarTextReader : PillarTextReader {
          * this one is read, not looked at.
          */
         const val RECOGNITION_LONG_EDGE = 1_600
+
+        /** Big enough for ML Kit to accept, small enough to cost nothing. */
+        const val WARMUP_EDGE = 32
 
         /** [BitmapPhotos.decodeScaled] has already applied the EXIF rotation. */
         const val ROTATION_APPLIED = 0

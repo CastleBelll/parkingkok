@@ -228,6 +228,7 @@ private const val ROUTE_TRAVEL_DIVISOR = 8
 
 @Composable
 private fun HomeRoute(container: AppContainer, onNavigate: (ParkingkokRoute) -> Unit) {
+    PreparePillarReader(container)
     val viewModel: HomeViewModel = viewModel(factory = HomeViewModel.factory(container))
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val mapOpener = rememberMapOpener()
@@ -292,6 +293,7 @@ private fun ManualEntryRoute(
 
 @Composable
 private fun DetailRoute(container: AppContainer, recordId: String, onBack: () -> Unit) {
+    PreparePillarReader(container)
     val viewModel: ParkingDetailViewModel =
         viewModel(
             key = "detail-$recordId",
@@ -322,6 +324,21 @@ private fun DetailRoute(container: AppContainer, recordId: String, onBack: () ->
     )
 }
 
+
+/**
+ * Load the recogniser's model while the user is reading the screen, not while they wait
+ * for a form (docs/02 §6a).
+ *
+ * iOS measured its recogniser at 5224ms on the first call in a process against ~1010ms
+ * warm, and a deadline sized for the warm number lost every first read — silently, since
+ * §6a makes failure quiet. ML Kit's bundled model has the same cost in kind. Warming here
+ * means the read the user actually triggers is the warm one.
+ */
+@Composable
+private fun PreparePillarReader(container: AppContainer) {
+    LaunchedEffect(Unit) { container.pillarTextReader.prepare() }
+}
+
 /** docs/10_DESIGN_UX_SPEC.md §7a. */
 @Composable
 private fun ConfirmRoute(
@@ -337,6 +354,8 @@ private fun ConfirmRoute(
             factory = ConfirmCandidateViewModel.factory(container, candidateId),
         )
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+    PreparePillarReader(container)
 
     // The screen closes itself on every terminal outcome, so the shell holds no rule about
     // what a candidate is. `gone` covers §10a's expired notification: the user lands on
