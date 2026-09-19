@@ -105,7 +105,7 @@ struct FieldTraceReplayTests {
         // Assert — 0 before, 3 after, and 3 is past the "one event never confirms" bar.
         #expect(totals.moving == 3)
         #expect(totals.derived == 3)
-        #expect(totals.moving >= DrivingConfirmationPolicy.minimumMovingSamples)
+        #expect(totals.moving >= MovementEvidencePolicy.minimumMovingSamples)
     }
 
     // MARK: - Negative case: the same device, walking
@@ -119,7 +119,7 @@ struct FieldTraceReplayTests {
 
         // Assert
         #expect(totals.moving == 0)
-        #expect(totals.moving < DrivingConfirmationPolicy.minimumMovingSamples)
+        #expect(totals.moving < MovementEvidencePolicy.minimumMovingSamples)
     }
 
     /// The pair the gate was chosen against, in the run it actually appears in.

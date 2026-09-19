@@ -37,6 +37,17 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
     var lastLocationAt: Date?
     var travelDistanceEstimate: Double?
     var hasCandidate: Bool
+    /// Candidates this process created, and drives docs/05 §6's rule refused.
+    ///
+    /// The pair answers the one question a field run asks that nothing else can: a
+    /// refusal count climbing while the created count stays at zero means the transition
+    /// window is closing before Core Motion reports the walk, which is a tuning problem
+    /// and not a wiring one.
+    var candidateCreatedCount: Int
+    var candidateRuleUnmetCount: Int
+    var lastCandidateConfidence: String?
+    var parkingTransitionEnteredAt: Date?
+    var candidateStoreFailure: String?
     /// Presence and quality of the reliable fix — never where it was.
     var hasReliableLocation: Bool
     var reliableLocationCapturedAt: Date?
@@ -166,6 +177,11 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
         lastLocationAt = checkpoint?.lastLocationAt
         travelDistanceEstimate = checkpoint?.travelDistanceEstimate
         hasCandidate = checkpoint?.candidateId != nil
+        candidateCreatedCount = snapshot.candidateCreatedCount
+        candidateRuleUnmetCount = snapshot.candidateRuleUnmetCount
+        lastCandidateConfidence = snapshot.lastCandidateConfidence?.rawValue
+        parkingTransitionEnteredAt = snapshot.parkingTransitionEnteredAt
+        candidateStoreFailure = snapshot.candidateStoreFailure
         hasReliableLocation = checkpoint?.lastReliableLocation != nil
         reliableLocationCapturedAt = checkpoint?.lastReliableLocation?.capturedAt
         reliableLocationAccuracy = checkpoint?.lastReliableLocation?.horizontalAccuracy

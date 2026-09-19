@@ -11,6 +11,10 @@ enum DrivingSessionEndReason: String, Sendable, Equatable, Codable {
     case walkingDetected
     /// No further vehicle evidence within `DrivingSessionTimeoutPolicy.vehicleEvidenceTimeout`.
     case vehicleEvidenceExpired
+    /// docs/05 §3a `DRIVING → PARKING_TRANSITION`: movement evidence went quiet for
+    /// `ParkingTransitionPolicy.movementIdleWindow`. Only a confirmed session can end this
+    /// way — a session that has never moved is what `vehicleEvidenceExpired` is for.
+    case movementIdle
     /// The hard ceiling. A session that reaches this is a bug somewhere upstream; the
     /// ceiling exists so the bug costs one capped session instead of a day of GPS.
     case maximumDurationReached
@@ -76,6 +80,13 @@ struct DrivingEvidence: Sendable, Equatable {
     /// When the guard in `DrivingConfirmationPolicy` fired for this session. Latched so
     /// confirmation is reported — and checkpointed — exactly once.
     private(set) var confirmedAt: Date?
+    /// The newest fix that counted as movement, by either route.
+    ///
+    /// Not derivable from `lastFix`: that advances on every accepted fix, including the
+    /// hundred a car makes while standing in a car park. docs/05 §3a asks how long it has
+    /// been since the device actually *moved*, and this is the only field that answers it.
+    /// In memory only, exactly like `lastFix`.
+    private(set) var lastMovingSampleAt: Date?
 
     init(startedAt: Date, lastVehicleEvidenceAt: Date? = nil) {
         self.startedAt = startedAt
@@ -171,6 +182,7 @@ struct DrivingEvidence: Sendable, Equatable {
             speedAvailableCount += 1
             if speed >= DrivingConfirmationPolicy.movingSpeedThreshold {
                 movingSampleCount += 1
+                lastMovingSampleAt = fix.timestamp
             }
             // A fix that carried a speed is still the freshest anchor available to the
             // next fix that does not, so the fallback does not have to start cold when
@@ -190,6 +202,7 @@ struct DrivingEvidence: Sendable, Equatable {
         case .moving:
             movingSampleCount += 1
             derivedMovingSampleCount += 1
+            lastMovingSampleAt = fix.timestamp
             movementEvidenceRejection = nil
             movementAnchor = fix
         case .inconclusive:
@@ -282,6 +295,14 @@ enum MovementEvidencePolicy {
     /// `minimumMovingSamples`.
     static let minimumBaseline: TimeInterval = 30
 
+    /// docs/05 §7's "one event alone never confirms", applied to movement rather than to
+    /// the state transition: a single fix can never establish that a device travelled.
+    ///
+    /// It used to gate `DrivingConfirmationPolicy.isConfirmed` and no longer does (§3a).
+    /// It lives here because this is the policy it describes, and it is what the field
+    /// trace replay measures a recorded drive against.
+    static let minimumMovingSamples = 2
+
     /// The longest baseline an average speed still describes.
     ///
     /// Past this the average hides its own shape: a drive, a five-minute stop and another
@@ -350,26 +371,46 @@ enum DrivingConfirmationPolicy {
     /// while opening one too early costs a single timeout window.
     static let vehicleEvidenceMaxAge: TimeInterval = 300
 
-    /// docs/05 §7 initial conceptual guard.
+    /// docs/05 §3a `minimumVehicleDuration`: how long vehicle activity has to be
+    /// sustained before `DRIVING_CANDIDATE` is promoted to `DRIVING`.
+    ///
+    /// 90s, matching the bar §11 uses for departure, so one direction cannot be laxer than
+    /// the other.
+    static let minimumVehicleDuration: TimeInterval = 90
+
+    /// docs/05 §7's trip minimums. **No longer the promotion gate** — see `isConfirmed` —
+    /// but still what decides the `vehicle_duration_met` / `vehicle_distance_met` reason
+    /// codes and §8's "comfortably over minimum" weight.
     static let minimumDuration: TimeInterval = 120
     static let minimumDistance: Double = 800
 
     /// ~7.2 km/h — above brisk walking, below any real traffic speed.
     static let movingSpeedThreshold: Double = 2.0
 
-    /// The "one event alone never confirms" clause, made concrete: a single fix can never
-    /// satisfy the movement requirement.
-    static let minimumMovingSamples = 2
-
+    /// docs/05 §3a: sustained vehicle activity, and nothing else.
+    ///
+    /// ### Movement evidence deliberately does not gate this
+    /// An earlier reading required movement evidence as well. Replaying the three drives
+    /// recorded on 2026-09-19 against it found the defect: the 14:26 trip is the textbook
+    /// signature — `vehicle_enter`, `vehicle_exit` seven minutes later, `walking_enter` —
+    /// and it carries **zero location events**. Gated on movement it never leaves
+    /// `DRIVING_CANDIDATE`, and the parking is never detected at all.
+    ///
+    /// That is not an edge case: §13 and the notes around §7 put underground car parks,
+    /// tunnels and urban canyons at the centre of this product, and those are exactly the
+    /// places GPS Doppler speed never arrives. Movement evidence still matters — it is what
+    /// §8 weighs through distance, and what separates a real trip from a phone on a desk —
+    /// but it belongs in the confidence bucket, not in the transition. A drive with no
+    /// fixes reaches `CANDIDATE_PENDING` with lower confidence; it is never made invisible.
+    ///
+    /// **This is time-based, so it cannot be evaluated only when a fix arrives.** A drive
+    /// that produces no fixes produces no call sites either, which is why the coordinator
+    /// also asks on every wake.
     static func isConfirmed(_ evidence: DrivingEvidence, now: Date) -> Bool {
         guard let vehicleAt = evidence.lastVehicleEvidenceAt,
               now.timeIntervalSince(vehicleAt) <= vehicleEvidenceMaxAge
         else { return false }
-
-        guard evidence.movingSampleCount >= minimumMovingSamples else { return false }
-
-        return evidence.duration(now: now) >= minimumDuration
-            || evidence.distanceMeters >= minimumDistance
+        return evidence.duration(now: now) >= minimumVehicleDuration
     }
 }
 
@@ -392,6 +433,13 @@ enum DrivingSessionTimeoutPolicy {
     static func expiryReason(for evidence: DrivingEvidence, now: Date) -> DrivingSessionEndReason? {
         if evidence.duration(now: now) >= maximumDuration {
             return .maximumDurationReached
+        }
+        // docs/05 §3a. Deliberately gated on a *confirmed* session that has already moved:
+        // before confirmation there is no movement to have stopped, and treating silence
+        // there as a parking transition would open a candidate for a car nobody drove.
+        if evidence.isConfirmed,
+           ParkingTransitionPolicy.isMovementIdle(lastMovingSampleAt: evidence.lastMovingSampleAt, now: now) {
+            return .movementIdle
         }
         // Before any vehicle observation lands, the session start is the anchor —
         // otherwise a session opened on a stale signal would never time out.
@@ -418,6 +466,20 @@ enum MotionEvidenceReader {
     static func latestWalkingEvidence(in samples: [MotionSample], after reference: Date) -> MotionSample? {
         samples
             .filter { $0.walking && !$0.automotive && $0.timestamp > reference }
+            .max { $0.timestamp < $1.timestamp }
+    }
+
+    /// Stationary that starts *after* `reference` — docs/05 §8 "stationary after driving",
+    /// and §3a's second way into `CANDIDATE_PENDING`.
+    ///
+    /// `!automotive` matters more here than anywhere else: Core Motion reports `automotive`
+    /// and `stationary` together at a red light (see `MotionSample`), and a sample that
+    /// still says "in a vehicle" is the light, not the car park. The caller has a second
+    /// guard on top — vehicle evidence arriving after the transition began sends the state
+    /// back to `DRIVING` before this is ever consulted.
+    static func latestStationaryEvidence(in samples: [MotionSample], after reference: Date) -> MotionSample? {
+        samples
+            .filter { $0.stationary && !$0.automotive && $0.timestamp > reference }
             .max { $0.timestamp < $1.timestamp }
     }
 }

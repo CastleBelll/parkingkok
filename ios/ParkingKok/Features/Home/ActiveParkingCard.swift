@@ -77,7 +77,9 @@ struct ActiveParkingCard: View {
         }
     }
 
-    private var placeText: String? { session.placeText }
+    private var placeText: String? {
+        session.placeText
+    }
 
     /// Two compact keys with a hairline between them, centred under the hero — the mock's
     /// proportions. Full-width slabs made adjusting the floor look like the screen's first

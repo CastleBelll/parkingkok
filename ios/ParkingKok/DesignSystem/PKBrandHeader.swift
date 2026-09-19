@@ -94,14 +94,12 @@ struct PKBrandMark: View {
     }
 }
 
-
-/// `주차는 쉽고 / 일상은 더 가볍게 ☺` — the aside in the mock's top-right corner.
-///
-/// The mock sets it in a handwriting face. iOS ships no Korean handwriting font, and
-/// bundling one is a licence decision this change is not allowed to make, so the nearest
-/// honest thing is the rounded system face at a quiet weight. It keeps the warmth without
-/// faking a typeface.
-
+// `주차는 쉽고 / 일상은 더 가볍게 ☺` — the aside in the mock's top-right corner.
+//
+// The mock sets it in a handwriting face. iOS ships no Korean handwriting font, and
+// bundling one is a licence decision this change is not allowed to make, so the nearest
+// honest thing is the rounded system face at a quiet weight. It keeps the warmth without
+// faking a typeface.
 
 /// Screen scaffold: the token background under a scrolling column with the standard
 /// gutter. Every screen uses it so the gutter and the background cannot drift apart.

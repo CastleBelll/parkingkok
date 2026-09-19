@@ -50,34 +50,47 @@ struct DrivingConfirmationPolicyTests {
         #expect(!DrivingConfirmationPolicy.isConfirmed(evidence, now: start.addingTimeInterval(3600)))
     }
 
-    // MARK: - duration >= 120 s OR distance >= 800 m
+    // MARK: - docs/05 §3a: sustained vehicle activity, and nothing else
 
-    @Test("The 120 s duration boundary confirms at the bound and not one second before")
-    func durationBoundary() {
-        // Arrange — short distance, so only duration can carry it.
-        let evidence = evidence(vehicleEvidenceAt: start.addingTimeInterval(100), fixes: movingFixes(metres: 50))
+    @Test("The 90 s vehicle-duration boundary promotes at the bound and not one second before")
+    func vehicleDurationBoundary() {
+        // Arrange — no distance worth anything, so only the duration can carry it.
+        let evidence = evidence(vehicleEvidenceAt: start.addingTimeInterval(60), fixes: movingFixes(metres: 50))
 
         // Act
-        let justBefore = start.addingTimeInterval(DrivingConfirmationPolicy.minimumDuration - 1)
-        let atBound = start.addingTimeInterval(DrivingConfirmationPolicy.minimumDuration)
+        let justBefore = start.addingTimeInterval(DrivingConfirmationPolicy.minimumVehicleDuration - 1)
+        let atBound = start.addingTimeInterval(DrivingConfirmationPolicy.minimumVehicleDuration)
 
         // Assert
         #expect(!DrivingConfirmationPolicy.isConfirmed(evidence, now: justBefore))
         #expect(DrivingConfirmationPolicy.isConfirmed(evidence, now: atBound))
     }
 
-    @Test("The 800 m distance boundary confirms before the duration bound is reached")
-    func distanceBoundary() {
-        // Arrange — only 60 s in, so duration cannot be what confirms it.
-        let short = evidence(vehicleEvidenceAt: start, fixes: movingFixes(metres: 700))
-        let long = evidence(vehicleEvidenceAt: start, fixes: movingFixes(metres: 900))
+    /// **The defect the 2026-09-19 field drives found.** The 14:26 trip is the textbook
+    /// parking signature and carries zero location events; under the rule this replaced it
+    /// never left `DRIVING_CANDIDATE` and the parking was never detected. §13 puts
+    /// underground car parks at the centre of this product, so that is not an edge case.
+    @Test("A drive with no location fix at all still confirms")
+    func noFixesStillConfirms() {
+        // Arrange — seven minutes of vehicle activity, nothing else.
+        let evidence = evidence(vehicleEvidenceAt: start.addingTimeInterval(400), fixes: [])
+
+        // Act / Assert
+        #expect(evidence.movingSampleCount == 0)
+        #expect(DrivingConfirmationPolicy.isConfirmed(evidence, now: start.addingTimeInterval(420)))
+    }
+
+    /// Distance no longer promotes on its own: §3a moved movement evidence out of the
+    /// transition and into §8's weights, where it reaches the confidence bucket instead.
+    @Test("Distance alone does not promote before the vehicle duration bound")
+    func distanceAloneDoesNotPromote() {
+        // Arrange — 900 m covered, but only 60 s of vehicle activity.
+        let evidence = evidence(vehicleEvidenceAt: start, fixes: movingFixes(metres: 900))
         let now = start.addingTimeInterval(60)
 
         // Assert
-        #expect(short.distanceMeters < DrivingConfirmationPolicy.minimumDistance)
-        #expect(long.distanceMeters > DrivingConfirmationPolicy.minimumDistance)
-        #expect(!DrivingConfirmationPolicy.isConfirmed(short, now: now))
-        #expect(DrivingConfirmationPolicy.isConfirmed(long, now: now))
+        #expect(evidence.distanceMeters > DrivingConfirmationPolicy.minimumDistance)
+        #expect(!DrivingConfirmationPolicy.isConfirmed(evidence, now: now))
     }
 
     // MARK: - "recent vehicle evidence"
@@ -103,6 +116,9 @@ struct DrivingConfirmationPolicyTests {
         #expect(!DrivingConfirmationPolicy.isConfirmed(evidence, now: start.addingTimeInterval(300)))
     }
 
+    /// Movement evidence no longer decides the transition (§3a), but it still has to be
+    /// *counted* correctly: §8 weighs it through distance and the confidence bucket, so a
+    /// walk must not read as a drive there either.
     @Test("Fixes below the movement threshold are not movement evidence")
     func walkingSpeedIsNotMovementEvidence() {
         // Arrange — 1 m/s is a walk, not a drive.
@@ -112,7 +128,7 @@ struct DrivingConfirmationPolicyTests {
 
         // Assert
         #expect(evidence.movingSampleCount == 0)
-        #expect(!DrivingConfirmationPolicy.isConfirmed(evidence, now: start.addingTimeInterval(300)))
+        #expect(evidence.lastMovingSampleAt == nil)
     }
 }
 
@@ -513,7 +529,7 @@ struct MovementEvidencePolicyTests {
 
         // Assert
         #expect(evidence.speedAvailableCount == 0)
-        #expect(evidence.movingSampleCount >= DrivingConfirmationPolicy.minimumMovingSamples)
+        #expect(evidence.movingSampleCount >= MovementEvidencePolicy.minimumMovingSamples)
         #expect(DrivingConfirmationPolicy.isConfirmed(evidence, now: start.addingTimeInterval(130)))
     }
 }

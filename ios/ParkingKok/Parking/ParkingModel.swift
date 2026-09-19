@@ -197,6 +197,56 @@ final class ParkingModel {
         return saved
     }
 
+    /// docs/05 §10a confirmation: a detected candidate becomes a parking record.
+    ///
+    /// `source = detected`, the candidate's `lastReliableLocation`, and the floor the user
+    /// chose — those three are the whole of the contract, and nothing else about the
+    /// candidate is copied in. The draft is the same value the manual sheet produces,
+    /// because docs/10 §7a routes `직접 입력` into "the existing manual entry" rather than
+    /// into a second form that would drift from it. The record's `startedAt` is `detectedAt` rather than now,
+    /// because the user parked when the engine says they did, not when they got round to
+    /// answering.
+    ///
+    /// **FR-004's conflict policy, stated rather than left to the store.** One parking can
+    /// be active. If one already is, the car cannot have been in two places, so the old
+    /// one is ended at the moment this drive finished. That is not the "destructive silent
+    /// end" docs/05 §11 forbids: it happens only because the user just said, explicitly,
+    /// that they parked somewhere else.
+    ///
+    /// @return the new record's id, or `nil` if it could not be written — in which case
+    /// nothing was ended either.
+    @discardableResult
+    func saveDetectedParking(from candidate: ParkingCandidate, draft: ManualParkingDraft) -> UUID? {
+        if let active = activeSession {
+            // Never before the record started, however far the clocks have drifted.
+            let endedAt = max(active.startedAt, candidate.detectedAt)
+            guard perform({ try store.endSession(id: active.id, at: endedAt) }) else { return nil }
+        }
+        let now = clock.now
+        let session = ParkingSession(
+            id: UUID(),
+            startedAt: candidate.detectedAt,
+            endedAt: nil,
+            source: .detected,
+            confidenceBucket: candidate.confidenceBucket,
+            location: candidate.lastReliableLocation.map(ParkedLocation.init),
+            floor: FloorValue.parse(draft.floorText),
+            zone: draft.zone,
+            spot: draft.spot,
+            memo: draft.memo,
+            photoRelativePath: nil,
+            createdAt: now,
+            updatedAt: now
+        )
+        guard perform({
+            try store.startSession(session)
+            refreshAfterWrite()
+        }) else {
+            return nil
+        }
+        return session.id
+    }
+
     /// The `-` / `+` keys on home. FR-005: only a numerically parsed floor moves.
     @discardableResult
     func stepActiveFloor(by delta: Int) -> Bool {

@@ -12,6 +12,7 @@ struct HomeView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @Bindable private var model: ParkingModel
+    @Bindable private var candidates: CandidateModel
     private let storageWarning: String?
     @Binding private var path: [AppRoute]
 
@@ -20,8 +21,14 @@ struct HomeView: View {
     /// timer that survives the screen.
     @State private var displayNow = Date()
 
-    init(model: ParkingModel, storageWarning: String?, path: Binding<[AppRoute]>) {
+    init(
+        model: ParkingModel,
+        candidates: CandidateModel,
+        storageWarning: String?,
+        path: Binding<[AppRoute]>
+    ) {
         self.model = model
+        self.candidates = candidates
         self.storageWarning = storageWarning
         _path = path
     }
@@ -73,9 +80,21 @@ struct HomeView: View {
                         }
                     }
                     .pkEntrance(3)
-                } else {
+                } else if candidates.pending == nil {
                     EmptyParkingCard { isManualSheetPresented = true }
                         .pkEntrance(1)
+                }
+
+                // docs/05 §10a: "Denied, the candidate is saved and surfaces in the app on
+                // next launch." This row is that surface, and it is what makes the
+                // notification an optimisation rather than the feature. It sits *under*
+                // the active parking because docs/10 §6 ranks the current location first —
+                // a guess about a new one must never outrank the one being looked up.
+                if let candidate = candidates.pending {
+                    PendingCandidateCard(candidate: candidate) {
+                        path.append(.candidateConfirmation(id: candidate.id))
+                    }
+                    .pkEntrance(model.activeSession == nil ? 1 : 4)
                 }
             }
             .transition(.opacity)
@@ -86,13 +105,13 @@ struct HomeView: View {
                 onSeeAll: { path.append(.history) }
             )
             .pkEntrance(4)
-
-                .pkEntrance(5)
+            .pkEntrance(5)
         }
         .navigationBarHidden(true)
         // `.task`/`.onAppear`, never `body`: docs/16 §5 keeps storage work out of render.
         .onAppear {
             model.refresh()
+            candidates.refresh()
             displayNow = model.now
         }
         .sheet(isPresented: $isManualSheetPresented) {
@@ -105,6 +124,43 @@ struct HomeView: View {
                 displayNow = model.now
             }
         }
+    }
+}
+
+/// The pending guess, on home.
+///
+/// One card, not a banner and not an alert: docs/10 §7 makes this something the user
+/// answers when they choose to, and §7a keeps the answering on its own screen. The copy is
+/// docs/02 §5's, unchanged — the row may not state the parking as settled any more than
+/// the notification may.
+private struct PendingCandidateCard: View {
+    let candidate: ParkingCandidate
+    let onOpen: () -> Void
+
+    var body: some View {
+        Button(action: onOpen) {
+            HStack(spacing: PKSpacing.l) {
+                PKIconChip("questionmark.circle", tint: .primary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(CandidateNotificationCopy.title)
+                        .font(PKTypography.row)
+                        .foregroundStyle(PKColor.textPrimary)
+                    Text(ParkingDateText.time(candidate.detectedAt))
+                        .font(PKTypography.supporting)
+                        .foregroundStyle(PKColor.textSecondary)
+                }
+                Spacer(minLength: PKSpacing.s)
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(PKColor.textSecondary)
+                    .accessibilityHidden(true)
+            }
+            .padding(PKSpacing.l)
+            .frame(minHeight: PKSize.minimumTouchTarget)
+        }
+        .buttonStyle(PKSurfaceButtonStyle())
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
     }
 }
 

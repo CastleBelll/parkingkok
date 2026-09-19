@@ -29,7 +29,10 @@ struct RootView: View {
         // storage work out of `body`, and opening a SwiftData container is storage work.
         .task {
             guard composition == nil else { return }
-            let live = ParkingComposition.live()
+            // The shared one, not a fresh `live()`: a notification action answered from
+            // the lock screen writes through the same composition, and two containers
+            // would let the screen and the lock screen disagree about what is stored.
+            let live = ParkingComposition.shared
             composition = live
             // DEV fixture first: it replaces the store, so refreshing before it runs
             // would cache rows it is about to delete.
@@ -57,6 +60,17 @@ struct RootView: View {
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
             composition?.model.refresh()
+            // docs/05 §10 expiry is evaluated here rather than on a timer — see
+            // `CandidateModel`. Activation is the moment it matters, because it is the
+            // moment somebody could be shown a guess that is 46 minutes old.
+            composition?.candidates.refresh()
+        }
+        // A notification tap can arrive before this stack exists, so the destination is
+        // parked on the model and collected here rather than pushed from the responder.
+        .onChange(of: composition?.candidates.pendingNavigation) { _, route in
+            guard let route else { return }
+            composition?.candidates.pendingNavigation = nil
+            path.append(route)
         }
     }
 
@@ -65,6 +79,7 @@ struct RootView: View {
         if let composition {
             HomeView(
                 model: composition.model,
+                candidates: composition.candidates,
                 storageWarning: composition.storageWarning,
                 path: $path
             )
@@ -83,6 +98,15 @@ struct RootView: View {
         case .history:
             if let composition {
                 HistoryView(model: composition.model, path: $path)
+            }
+        case let .candidateConfirmation(id):
+            if let composition, let candidate = composition.candidates.candidate(id: id) {
+                CandidateConfirmationView(
+                    candidate: candidate,
+                    candidates: composition.candidates,
+                    parking: composition.model,
+                    path: $path
+                )
             }
         case let .settings(focus):
             SettingsView(appInfo: appInfo, model: composition?.model, path: $path, focus: focus)

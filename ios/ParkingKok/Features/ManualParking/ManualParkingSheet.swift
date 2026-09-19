@@ -14,6 +14,11 @@ struct ManualParkingSheet: View {
     @Bindable private var model: ParkingModel
     /// `nil` to create; a session to edit.
     private let editing: ParkingSession?
+    /// Non-nil when this sheet is docs/10 §7a's `직접 입력`: the same form, but saving
+    /// confirms a detection candidate instead of creating a manual record. The screen is
+    /// shared on purpose — §7a says "opens the existing manual entry", and a second form
+    /// would be one more place for the floor rules to drift.
+    private let confirmation: CandidateConfirmationTarget?
 
     @Environment(\.dismiss) private var dismiss
     @State private var draft = ManualParkingDraft()
@@ -30,6 +35,14 @@ struct ManualParkingSheet: View {
     init(model: ParkingModel, editing: ParkingSession? = nil) {
         self.model = model
         self.editing = editing
+        confirmation = nil
+    }
+
+    /// docs/10 §7a `직접 입력`. "Prefilled with nothing, and saving there confirms."
+    init(model: ParkingModel, confirming candidate: ParkingCandidate, candidates: CandidateModel) {
+        self.model = model
+        editing = nil
+        confirmation = CandidateConfirmationTarget(candidate: candidate, candidates: candidates)
     }
 
     var body: some View {
@@ -65,7 +78,7 @@ struct ManualParkingSheet: View {
             }
             .scrollContentBackground(.hidden)
             .background(PKColor.background)
-            .navigationTitle(editing == nil ? "주차 직접 저장" : "주차 정보 수정")
+            .navigationTitle(navigationTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -79,6 +92,15 @@ struct ManualParkingSheet: View {
             .onAppear(perform: loadDraft)
         }
         .presentationDetents([.medium, .large])
+    }
+
+    /// Never `주차 완료` — docs/10 §7 forbids stating a detection as settled, and this
+    /// sheet is reached from a guess as often as from a deliberate save.
+    private var navigationTitle: String {
+        if confirmation != nil {
+            return "주차 정보 입력"
+        }
+        return editing == nil ? "주차 직접 저장" : "주차 정보 수정"
     }
 
     /// FR-005's accepted spellings, plus what happens to anything else.
@@ -107,6 +129,12 @@ struct ManualParkingSheet: View {
 
     private func save() {
         isSaving = true
+        if let confirmation {
+            // §7a: saving here *is* the confirmation. One path, so the record a quick pick
+            // writes and the record this writes differ only in what the user typed.
+            finish(succeeded: confirmation.candidates.confirm(confirmation.candidate, draft: draft))
+            return
+        }
         if var editing {
             editing.floor = FloorValue.parse(draft.floorText)
             editing.zone = draft.zone
@@ -129,4 +157,13 @@ struct ManualParkingSheet: View {
             dismiss()
         }
     }
+}
+
+/// What `직접 입력` is answering.
+///
+/// A struct rather than two more stored properties so "this sheet is confirming" is one
+/// optional that cannot be half-set.
+struct CandidateConfirmationTarget {
+    let candidate: ParkingCandidate
+    let candidates: CandidateModel
 }

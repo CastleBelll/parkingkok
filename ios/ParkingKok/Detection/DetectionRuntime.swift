@@ -35,6 +35,11 @@ final class DetectionRuntime {
     /// process that was launched for it, and a delegate nobody retains is never called.
     /// P0 instrumentation (docs/05 §9 labelling) — delete with `TraceLabelPrompt`.
     private let labelPromptResponder: TraceLabelPromptResponder?
+    /// The pending candidate's file (docs/05 §10a). Exposed because `ParkingComposition`
+    /// builds the screen's `CandidateModel` on the same file this writes to — one store,
+    /// so a candidate created on a background wake is the one the screen shows.
+    /// `nil` when the directory is unavailable, which disables candidates and nothing else.
+    private(set) var candidateStore: (any ParkingCandidateStoring)?
 
     init(
         monitor: SignificantLocationMonitor = SignificantLocationMonitor(),
@@ -44,7 +49,10 @@ final class DetectionRuntime {
         checkpointStore: (any DetectionCheckpointStoring)? = nil,
         diagnosticsStore: (any DiagnosticsReportStoring)? = nil,
         traceStore: (any TraceStoring)? = nil,
-        labelPromptDelivery: (any LabelPromptDelivering)? = nil
+        labelPromptDelivery: (any LabelPromptDelivering)? = nil,
+        candidateStore: (any ParkingCandidateStoring)? = nil,
+        candidateNotifier: (any CandidateNotifying)? = nil,
+        analytics: any AnalyticsRecording = AnalyticsComposition.recorder
     ) {
         self.monitor = monitor
         self.locationCapture = locationCapture
@@ -93,11 +101,21 @@ final class DetectionRuntime {
             )
         }
 
+        // Beside the checkpoint, in the directory that already carries the protection
+        // class a locked-device wake needs (docs/05 §10a: the candidate must survive a
+        // process that existed only to create it).
+        let candidates = candidateStore
+            ?? (try? FileParkingCandidateStore(fileURL: FileParkingCandidateStore.defaultFileURL()))
+        self.candidateStore = candidates
+
         coordinator = BackgroundCoordinator(
             checkpointStore: store,
             motionHistory: motionHistory,
             locationCapture: locationCapture,
-            traceRecorder: traces.map { TraceRecorder(store: $0, prompter: prompter) }
+            traceRecorder: traces.map { TraceRecorder(store: $0, prompter: prompter) },
+            candidateStore: candidates,
+            candidateNotifier: candidateNotifier ?? UserNotificationCandidateDelivery(),
+            analytics: analytics
         )
         locationAuthorization = monitor.authorization
         motionAuthorization = motionHistory.authorization
@@ -130,9 +148,7 @@ final class DetectionRuntime {
         locationCapture.delegate = self
         // Before anything async, for the same reason the Core Location work is synchronous:
         // a tap that launched this process is delivered as soon as launch returns.
-        if let labelPromptResponder {
-            UNUserNotificationCenter.current().delegate = labelPromptResponder
-        }
+        installNotificationRouter()
         locationAuthorization = monitor.authorization
         startMonitoringIfPermitted()
         hasBootstrapped = true
@@ -146,16 +162,77 @@ final class DetectionRuntime {
             await coordinator.setTraceRecordingEnabled(isOptedIn)
             await coordinator.rehydrate(launchReason: launchReason)
             #if PK_DEV
-                // Field-test hook, DEV only. See `startDrivingSessionForFieldTest`.
+                // Field-test hooks, DEV only. See `startDrivingSessionForFieldTest` and
+                // `injectCandidateIfRequestedAtLaunch`.
                 if Self.isFieldTestDrivingSessionForced {
                     await coordinator.startDrivingSessionForFieldTest()
                 }
+                await self?.injectCandidateIfRequestedAtLaunch()
             #endif
             await self?.exportDiagnostics()
         }
     }
 
+    /// Wires the app's one `UNUserNotificationCenterDelegate`.
+    ///
+    /// Both handlers are registered as providers rather than as objects, because the
+    /// candidate handler needs the parking store and opening that is UI-time work this
+    /// method must not do: a launch triggered by Core Location has to return before the
+    /// event that woke us is lost (docs/04 §3). The provider runs at tap time instead,
+    /// which is the only moment the store is actually needed.
+    private func installNotificationRouter() {
+        guard !hasBootstrapped else { return }
+        let router = PKNotificationRouter.shared
+        if let labelPromptResponder {
+            router.register { labelPromptResponder }
+        }
+        router.register { ParkingComposition.shared?.candidateResponder }
+        UNUserNotificationCenter.current().delegate = router
+    }
+
     #if PK_DEV
+        /// Creates a candidate from synthetic evidence, through the real engine path.
+        /// See `BackgroundCoordinator.injectCandidateForFieldTest(walking:)`.
+        func injectCandidateForFieldTest(walking: Bool) async {
+            await coordinator.injectCandidateForFieldTest(walking: walking)
+            await exportDiagnostics()
+        }
+
+        /// Reproduces the notification → confirmation flow from one command, for the
+        /// capture the acceptance criteria ask for:
+        ///
+        /// ```sh
+        /// xcrun simctl launch <udid> com.parkingkok.app.dev \
+        ///   PK_INJECT_CANDIDATE=medium PK_OPEN_CANDIDATE=1
+        /// ```
+        ///
+        /// `medium` posts, anything else scores `low` and must stay silent, and
+        /// `PK_OPEN_CANDIDATE` opens the confirmation screen the notification would have
+        /// opened. The second flag exists because a headless simulator has no way to
+        /// deliver a tap; it routes through exactly the value a real tap sets, so the
+        /// screen it produces is the screen a tap produces.
+        private func injectCandidateIfRequestedAtLaunch() async {
+            guard let requested = ProcessInfo.processInfo.environment["PK_INJECT_CANDIDATE"] else { return }
+            await requestProvisionalNotificationPermission()
+            await injectCandidateForFieldTest(walking: requested != "low")
+
+            guard ProcessInfo.processInfo.environment["PK_OPEN_CANDIDATE"] == "1",
+                  let candidate = candidateStore?.load(),
+                  let candidates = ParkingComposition.shared?.candidates
+            else { return }
+            candidates.refresh()
+            candidates.pendingNavigation = .candidateConfirmation(id: candidate.id)
+        }
+
+        /// Provisional, not `.alert`: the machine that runs the capture has no Simulator
+        /// window and therefore nobody to answer a permission alert. Provisional
+        /// authorization needs no alert, and the foreground presentation the router asks
+        /// for is what puts the real notification on the screen to be photographed.
+        private func requestProvisionalNotificationPermission() async {
+            _ = try? await UNUserNotificationCenter.current()
+                .requestAuthorization(options: [.alert, .sound, .provisional])
+        }
+
         /// Launch with `PK_FORCE_DRIVING_SESSION=1` to open a bounded session immediately:
         ///
         /// ```sh
@@ -293,6 +370,16 @@ final class DetectionRuntime {
         } else {
             monitor.stopMonitoring()
         }
+    }
+}
+
+/// docs/05 §3a: leaving `CANDIDATE_PENDING` is a checkpoint write, and the checkpoint is
+/// behind the coordinator's actor. The screen and the notification action both arrive on
+/// the main actor, so this is the one hop between them.
+extension DetectionRuntime: CandidateResolving {
+    func resolveCandidate(_ outcome: CandidateOutcome) async {
+        await coordinator.resolveCandidate(outcome)
+        await exportDiagnostics()
     }
 }
 
