@@ -78,7 +78,7 @@ fun StaticLocationArtwork(
             drawBlocks(blocks, park, blockEdge, blockRadius)
         }
 
-        BrandPin(modifier = Modifier.align(Alignment.Center), width = pinSize)
+        BrandPin(modifier = Modifier.align(Alignment.Center), height = pinSize)
 
         if (pinLabel != null) {
             MapChip(

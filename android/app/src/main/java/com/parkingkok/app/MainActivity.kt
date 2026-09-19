@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.activity.enableEdgeToEdge
 import com.parkingkok.app.analytics.AnalyticsEvent
 import com.parkingkok.app.theme.ParkingkokTheme
@@ -19,6 +20,10 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Before super.onCreate, which is what the library requires: it swaps the splash
+        // theme out for Theme.Parkingkok, so the activity is never drawn wearing the
+        // splash's white window.
+        installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         // The fallback only fires under a harness whose Application is not ours. It is

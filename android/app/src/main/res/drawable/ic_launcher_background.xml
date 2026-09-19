@@ -1,10 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  The launcher background is the app's own surface colour, not a brand slab. The mark is
-  the blue pin in the foreground layer; a blue field behind a blue pin would erase it,
-  and a coloured background is the kind of decoration CLAUDE.md's design harness rules
-  out. Literal here rather than a token because a launcher drawable is resolved by the
-  launcher process, outside the app's theme.
+  White, because the mark carries the colour. A tinted field behind a gradient pin would
+  fight it, and the launcher already sits on the user's wallpaper.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"

@@ -1,4 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!--
+      The launch theme. androidx.core:core-splashscreen backports the Android 12 splash to
+      our minSdk of 29, so every supported device shows the same thing instead of a blank
+      window on 29-30 and a mark on 31+.
+
+      White behind the mark, matching the launcher icon's background layer: the icon the
+      user tapped and the screen that replaces it are then the same image, which is the
+      whole point of a splash.
+    -->
+    <style name="Theme.Parkingkok.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@android:color/white</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
+        <item name="postSplashScreenTheme">@style/Theme.Parkingkok</item>
+    </style>
+
     <style name="Theme.Parkingkok" parent="android:Theme.Material.Light.NoActionBar" />
 </resources>

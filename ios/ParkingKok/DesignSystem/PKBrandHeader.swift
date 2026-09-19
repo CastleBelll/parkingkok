@@ -72,60 +72,28 @@ struct PKBrandHeader: View {
     }
 }
 
-/// The brand mark: a map pin with a car in it (`01-home-main.png`).
+/// The brand mark, drawn once as artwork and shown everywhere.
 ///
-/// A `Circle` and a triangle stacked, both in the same solid fill, rather than one
-/// hand-derived teardrop path — the overlap hides the join, and there is no arc-direction
-/// arithmetic to get subtly wrong. A gradient fill would show the seam; a solid one, which
-/// is what the token gives, does not.
+/// This used to be a pin composed from a circle and a triangle in code. The app now ships
+/// a real icon, and a hand-built approximation of it in the header meant the mark the user
+/// tapped on the home screen and the mark at the top of the app were two different
+/// drawings. It is the same asset now.
 struct PKBrandMark: View {
     /// Tied to `.largeTitle`, which is what the name beside it uses, so the mark grows
     /// with the title instead of shrinking beside it.
-    @ScaledMetric(relativeTo: .largeTitle) private var width: CGFloat = 36
+    @ScaledMetric(relativeTo: .largeTitle) private var height: CGFloat = 40
+
+    /// The artwork's own proportions, so it is never stretched.
+    private static let aspect: CGFloat = 0.847
 
     var body: some View {
-        ZStack {
-            // Only the silhouette is lifted. Putting the shadow on the whole stack would
-            // put it under the white car glyph as well, which reads as a blur, not depth.
-            ZStack {
-                PKPinTail()
-                    .fill(PKColor.primary)
-                Circle()
-                    .fill(PKColor.primary)
-                    .frame(width: width, height: width)
-                    .frame(maxHeight: .infinity, alignment: .top)
-            }
-            Image(systemName: "car.fill")
-                .font(.system(size: width * 0.44, weight: .bold))
-                .foregroundStyle(Color.white)
-                .frame(maxHeight: .infinity, alignment: .top)
-                .padding(.top, width * 0.28)
-        }
-        .frame(width: width, height: width * 1.28)
+        Image(.brandMark)
+            .resizable()
+            .scaledToFit()
+            .frame(width: height * Self.aspect, height: height)
     }
 }
 
-/// The pin's point. Its top edge is a chord through the head's centre, so the circle
-/// drawn over it covers the join completely.
-private struct PKPinTail: Shape {
-    func path(in rect: CGRect) -> Path {
-        let headRadius = rect.width / 2
-        let shoulder = rect.minY + headRadius
-        var path = Path()
-        path.move(to: CGPoint(x: rect.midX - headRadius * 0.78, y: shoulder))
-        path.addLine(to: CGPoint(x: rect.midX + headRadius * 0.78, y: shoulder))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.midX, y: rect.maxY),
-            control: CGPoint(x: rect.midX + headRadius * 0.34, y: rect.maxY - headRadius * 0.5)
-        )
-        path.addQuadCurve(
-            to: CGPoint(x: rect.midX - headRadius * 0.78, y: shoulder),
-            control: CGPoint(x: rect.midX - headRadius * 0.34, y: rect.maxY - headRadius * 0.5)
-        )
-        path.closeSubpath()
-        return path
-    }
-}
 
 /// `주차는 쉽고 / 일상은 더 가볍게 ☺` — the aside in the mock's top-right corner.
 ///
