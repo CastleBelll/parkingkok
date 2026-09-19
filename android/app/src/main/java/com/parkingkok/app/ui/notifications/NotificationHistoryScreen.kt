@@ -126,7 +126,11 @@ private fun NotificationRowItem(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                if (row.tappable) {
+                // §7b "The pending row": the chevron belongs to the one row that is
+                // asking for something. A confirmed row still opens its record, but it
+                // is history first, and a column of chevrons would make the whole list
+                // look like a list of things to do.
+                if (row.outcome == null) {
                     Spacer(Modifier.width(MaterialTheme.spacing.tiny))
                     RowChevron()
                 }

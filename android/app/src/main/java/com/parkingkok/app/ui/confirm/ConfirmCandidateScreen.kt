@@ -52,6 +52,7 @@ fun ConfirmCandidateScreen(
     state: ConfirmCandidateUiState,
     onPickFloor: (Floor) -> Unit,
     onManualEntry: () -> Unit,
+    onPhotoEntry: () -> Unit,
     onReject: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
@@ -107,6 +108,7 @@ fun ConfirmCandidateScreen(
                 enabled = !state.working,
                 onPickFloor = onPickFloor,
                 onManualEntry = onManualEntry,
+                onPhotoEntry = onPhotoEntry,
             )
         }
 
@@ -123,14 +125,19 @@ fun ConfirmCandidateScreen(
 }
 
 /**
- * §7a "The floor choices": up to three picks from the user's own history, then 직접 입력.
+ * §7a "The floor choices": up to three picks from the user's own history, then the two
+ * escapes.
  *
  * The picks are the screen's one emphasised action — choosing a floor *is* confirming —
  * so they carry the primary fill and everything else on the screen is secondary or text
- * (CLAUDE.md design harness). They share a row at equal width; 직접 입력 takes its own line
- * rather than squeezing a fourth column, because four Korean labels at a large font scale
- * stop being readable before they stop fitting. With no history the row is empty and 직접
- * 입력 is the whole choice, which is exactly §7a's first-ever run.
+ * (CLAUDE.md design harness). They share a row at equal width; the escapes take their own
+ * line rather than squeezing into a fourth column, because Korean labels at a large font
+ * scale stop being readable before they stop fitting. With no history the picks row is
+ * empty and the escapes are the whole choice, which is exactly §7a's first-ever run.
+ *
+ * `사진으로 입력` comes first because it is the faster of the two and typing less is the
+ * point (§7a). Both land in the same manual entry form; the photo one arrives with what
+ * the pillar said already filled in.
  */
 @Composable
 private fun FloorChoices(
@@ -138,6 +145,7 @@ private fun FloorChoices(
     enabled: Boolean,
     onPickFloor: (Floor) -> Unit,
     onManualEntry: () -> Unit,
+    onPhotoEntry: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small)) {
         if (picks.isNotEmpty()) {
@@ -168,19 +176,38 @@ private fun FloorChoices(
                 }
             }
         }
-        OutlinedButton(
-            onClick = onManualEntry,
-            enabled = enabled,
-            shape = MaterialTheme.shapes.small,
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = FLOOR_PICK_HEIGHT),
-        ) {
-            Text(
-                text = stringResource(R.string.candidate_confirm_manual),
-                style = MaterialTheme.typography.titleMedium,
+        Row(horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small)) {
+            Escape(
+                label = stringResource(R.string.candidate_confirm_photo),
+                enabled = enabled,
+                onClick = onPhotoEntry,
+                modifier = Modifier.weight(1f),
+            )
+            Escape(
+                label = stringResource(R.string.candidate_confirm_manual),
+                enabled = enabled,
+                onClick = onManualEntry,
+                modifier = Modifier.weight(1f),
             )
         }
+    }
+}
+
+/** One of §7a's two ways into the form. Outlined, because neither is the answer. */
+@Composable
+private fun Escape(
+    label: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        shape = MaterialTheme.shapes.small,
+        modifier = modifier.heightIn(min = FLOOR_PICK_HEIGHT),
+    ) {
+        Text(text = label, style = MaterialTheme.typography.titleMedium)
     }
 }
 
@@ -225,6 +252,7 @@ private fun ConfirmCandidatePreview() {
             ),
             onPickFloor = {},
             onManualEntry = {},
+            onPhotoEntry = {},
             onReject = {},
             onBack = {},
         )
@@ -239,6 +267,7 @@ private fun ConfirmCandidateFirstRunPreview() {
             state = ConfirmCandidateUiState(loaded = true, parkedAtMillis = 1_700_000_000_000L),
             onPickFloor = {},
             onManualEntry = {},
+            onPhotoEntry = {},
             onReject = {},
             onBack = {},
         )

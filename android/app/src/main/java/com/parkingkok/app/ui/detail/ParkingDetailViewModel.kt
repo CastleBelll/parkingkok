@@ -8,14 +8,18 @@ import com.parkingkok.app.core.Clock
 import com.parkingkok.app.data.photo.ParkingPhotoImage
 import com.parkingkok.app.data.photo.ParkingPhotoImageLoader
 import com.parkingkok.app.domain.parking.ParkingRecord
+import com.parkingkok.app.domain.parking.usecase.ApplyPillarSuggestionUseCase
 import com.parkingkok.app.domain.parking.usecase.AttachParkingPhotoResult
 import com.parkingkok.app.domain.parking.usecase.AttachParkingPhotoUseCase
 import com.parkingkok.app.domain.parking.usecase.DeleteParkingRecordUseCase
 import com.parkingkok.app.domain.parking.usecase.EndParkingUseCase
 import com.parkingkok.app.domain.parking.usecase.ObserveParkingRecordUseCase
 import com.parkingkok.app.domain.parking.usecase.RemoveParkingPhotoUseCase
+import com.parkingkok.app.domain.parking.usecase.SuggestFromPillarPhotoUseCase
 import com.parkingkok.app.domain.photo.PhotoSaveResult
 import com.parkingkok.app.domain.photo.PhotoSource
+import com.parkingkok.app.domain.photo.PillarSuggestion
+import com.parkingkok.app.domain.photo.ReadPillarSuggestionUseCase
 import com.parkingkok.app.map.MapOpenResult
 import com.parkingkok.app.ui.UiNotice
 import kotlinx.coroutines.flow.Flow
@@ -42,6 +46,13 @@ data class ParkingDetailUiState(
     val loaded: Boolean = false,
     val photoBusy: Boolean = false,
     val notice: UiNotice? = null,
+    /**
+     * What a pillar photo read for the fields this record left empty, or null.
+     *
+     * The same offer home makes and for the same reason (docs/02 §6a): detail has no
+     * editable floor or zone field either, so the read is shown and written on a tap.
+     */
+    val pillarSuggestion: PillarSuggestion? = null,
 ) {
     /** True once the record is known to be gone — deleted here, or from another screen. */
     val missing: Boolean get() = loaded && record == null
@@ -61,11 +72,15 @@ class ParkingDetailViewModel(
     private val deleteRecord: DeleteParkingRecordUseCase,
     private val attachPhoto: AttachParkingPhotoUseCase,
     private val removePhoto: RemoveParkingPhotoUseCase,
+    /** docs/02 §6a: offered for the blanks, written only on a tap. */
+    private val suggestFromPillarPhoto: SuggestFromPillarPhotoUseCase,
+    private val applyPillarSuggestion: ApplyPillarSuggestionUseCase,
     clock: Clock,
 ) : ViewModel() {
 
     private val notice = MutableStateFlow<UiNotice?>(null)
     private val photoBusy = MutableStateFlow(false)
+    private val pillarSuggestion = MutableStateFlow<PillarSuggestion?>(null)
 
     private val record: Flow<ParkingRecord?> = observeRecord(recordId)
 
@@ -79,7 +94,8 @@ class ParkingDetailViewModel(
         .map { photoLoader.load(it) }
 
     val uiState: StateFlow<ParkingDetailUiState> =
-        combine(record, photo, notice, photoBusy) { record, photo, notice, busy ->
+        combine(record, photo, notice, photoBusy, pillarSuggestion) {
+                record, photo, notice, busy, suggestion ->
             ParkingDetailUiState(
                 record = record,
                 photo = photo,
@@ -87,6 +103,7 @@ class ParkingDetailViewModel(
                 loaded = true,
                 photoBusy = busy,
                 notice = notice,
+                pillarSuggestion = suggestion,
             )
         }.stateIn(
             scope = viewModelScope,
@@ -106,14 +123,30 @@ class ParkingDetailViewModel(
     fun onPhotoSelected(source: PhotoSource) {
         viewModelScope.launch {
             photoBusy.value = true
-            notice.value = when (val result = attachPhoto(recordId, source)) {
+            val result = attachPhoto(recordId, source)
+            notice.value = when (result) {
                 is AttachParkingPhotoResult.Failed -> result.reason.toNotice()
                 // The record vanished mid-pick; the screen is already closing itself.
                 AttachParkingPhotoResult.RecordGone -> null
                 is AttachParkingPhotoResult.Attached -> null
             }
             photoBusy.value = false
+            if (result is AttachParkingPhotoResult.Attached) {
+                pillarSuggestion.value =
+                    suggestFromPillarPhoto(recordId, source).takeUnless { it.isEmpty }
+            }
         }
+    }
+
+    /** §6a: the record changes here and nowhere earlier. */
+    fun onApplyPillarSuggestion() {
+        val suggestion = pillarSuggestion.value ?: return
+        pillarSuggestion.value = null
+        viewModelScope.launch { applyPillarSuggestion(recordId, suggestion) }
+    }
+
+    fun onDismissPillarSuggestion() {
+        pillarSuggestion.value = null
     }
 
     fun onRemovePhoto() {
@@ -170,6 +203,14 @@ class ParkingDetailViewModel(
                         removePhoto = RemoveParkingPhotoUseCase(
                             container.parkingRepository,
                             container.parkingPhotoStore,
+                            container.clock,
+                        ),
+                        suggestFromPillarPhoto = SuggestFromPillarPhotoUseCase(
+                            container.parkingRepository,
+                            ReadPillarSuggestionUseCase(container.pillarTextReader),
+                        ),
+                        applyPillarSuggestion = ApplyPillarSuggestionUseCase(
+                            container.parkingRepository,
                             container.clock,
                         ),
                         clock = container.clock,

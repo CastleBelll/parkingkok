@@ -23,10 +23,12 @@ import com.parkingkok.app.data.DetectionStateStore
 import com.parkingkok.app.data.detectionDataStore
 import com.parkingkok.app.data.parking.ParkingDatabase
 import com.parkingkok.app.data.parking.RoomParkingRepository
+import com.parkingkok.app.data.photo.CameraCaptureFile
 import com.parkingkok.app.data.photo.FileParkingPhotoImageLoader
 import com.parkingkok.app.data.photo.FileParkingPhotoStore
 import com.parkingkok.app.data.photo.JpegPhotoEncoder
 import com.parkingkok.app.data.photo.ParkingPhotoFiles
+import com.parkingkok.app.data.photo.MlKitPillarTextReader
 import com.parkingkok.app.data.photo.ParkingPhotoImageLoader
 import com.parkingkok.app.detection.ActivityTransitionRegistrar
 import com.parkingkok.app.detection.DetectionRegistrationCoordinator
@@ -40,8 +42,12 @@ import com.parkingkok.app.diagnostics.DiagnosticsExporter
 import com.parkingkok.app.diagnostics.FileDiagnosticsReportStore
 import com.parkingkok.app.domain.parking.ParkingLocationProvider
 import com.parkingkok.app.domain.parking.ParkingRepository
+import com.parkingkok.app.domain.parking.usecase.AttachParkingPhotoUseCase
 import com.parkingkok.app.domain.parking.usecase.CleanUpOrphanPhotosUseCase
 import com.parkingkok.app.domain.photo.ParkingPhotoStore
+import com.parkingkok.app.domain.photo.PillarTextReader
+import com.parkingkok.app.domain.photo.ReadPillarSuggestionUseCase
+import com.parkingkok.app.ui.manual.PillarPhotoEntry
 import com.parkingkok.app.domain.trace.TraceDeviceInfo
 import com.parkingkok.app.domain.widget.ParkingWidgetSync
 import com.parkingkok.app.entitlement.isWidgetStepperEntitled
@@ -273,6 +279,27 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
      * FR-001: this returning null is an ordinary outcome, not a failure — see
      * [CheckpointParkingLocationProvider].
      */
+    /**
+     * Reads a pillar photo on device (docs/02_PRODUCT_SCOPE_AND_FLOWS.md §6a).
+     *
+     * Built lazily and only when `사진으로 입력` is used: ML Kit's bundled recogniser loads
+     * a model, and a process a detection broadcast started has no business paying for one.
+     */
+    val pillarTextReader: PillarTextReader by lazy { MlKitPillarTextReader() }
+
+    /**
+     * The pillar photo the camera just wrote, with what the form does with it.
+     *
+     * A function rather than a value because the file it points at is the *last* capture:
+     * the entry is built when the form opens, so it can never be holding a stale
+     * [CameraCaptureFile] from a previous screen.
+     */
+    fun pillarPhotoEntry(): PillarPhotoEntry = PillarPhotoEntry(
+        photo = CameraCaptureFile.sourceIn(appContext),
+        readSuggestion = ReadPillarSuggestionUseCase(pillarTextReader),
+        attachPhoto = AttachParkingPhotoUseCase(parkingRepository, parkingPhotoStore, clock),
+    )
+
     val parkingLocationProvider: ParkingLocationProvider by lazy {
         CheckpointParkingLocationProvider(detectionStateStore)
     }

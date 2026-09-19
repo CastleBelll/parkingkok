@@ -77,6 +77,7 @@ import com.parkingkok.app.ui.motion.MotionDurations
 import com.parkingkok.app.ui.motion.pressScale
 import com.parkingkok.app.ui.UiNotice
 import com.parkingkok.app.ui.photo.ParkingPhotoPicker
+import com.parkingkok.app.ui.photo.PillarSuggestionCard
 import com.parkingkok.app.ui.format.dayText
 import com.parkingkok.app.ui.format.elapsedText
 import com.parkingkok.app.ui.format.timeOfDayText
@@ -104,6 +105,8 @@ fun HomeScreen(
     onPhotoSelected: (PhotoSource) -> Unit,
     onCameraUnavailable: () -> Unit,
     onNoticeShown: () -> Unit,
+    onApplyPillarSuggestion: () -> Unit,
+    onDismissPillarSuggestion: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var pickingPhoto by remember { mutableStateOf(false) }
@@ -142,6 +145,20 @@ fun HomeScreen(
                 PendingCandidateRow(
                     parkedAtMillis = state.pendingCandidateAtMillis,
                     onClick = { onOpenCandidate(candidateId) },
+                )
+            }
+        }
+
+        // docs/02 §6a. Above the actions, because the user has just tapped 사진 추가 and
+        // this is the answer to it; below the hero, because the floor on screen still
+        // leads (docs/10 §6). It is gone the moment it is applied or waved away.
+        val suggestion = state.pillarSuggestion
+        if (active != null && suggestion != null) {
+            item("pillar-suggestion") {
+                PillarSuggestionCard(
+                    suggestion = suggestion,
+                    onApply = onApplyPillarSuggestion,
+                    onDismiss = onDismissPillarSuggestion,
                 )
             }
         }
@@ -798,6 +815,8 @@ private fun HomeParkedPreview() {
             onOpenCandidate = {},
             onDirections = {},
             onPhotoSelected = {},
+            onApplyPillarSuggestion = {},
+            onDismissPillarSuggestion = {},
             onCameraUnavailable = {},
             onNoticeShown = {},
         )
@@ -820,6 +839,8 @@ private fun HomeEmptyPreview() {
             onOpenCandidate = {},
             onDirections = {},
             onPhotoSelected = {},
+            onApplyPillarSuggestion = {},
+            onDismissPillarSuggestion = {},
             onCameraUnavailable = {},
             onNoticeShown = {},
         )
@@ -870,6 +891,8 @@ private fun HomeCandidatePreview() {
             onOpenCandidate = {},
             onDirections = {},
             onPhotoSelected = {},
+            onApplyPillarSuggestion = {},
+            onDismissPillarSuggestion = {},
             onCameraUnavailable = {},
             onNoticeShown = {},
         )

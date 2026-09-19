@@ -49,6 +49,7 @@ import com.parkingkok.app.ui.manual.ManualParkingScreen
 import com.parkingkok.app.ui.manual.ManualParkingViewModel
 import com.parkingkok.app.ui.notifications.NotificationHistoryScreen
 import com.parkingkok.app.ui.notifications.NotificationHistoryViewModel
+import com.parkingkok.app.ui.photo.rememberCameraCapture
 import com.parkingkok.app.ui.settings.SettingsScreen
 import com.parkingkok.app.ui.settings.SettingsViewModel
 import kotlinx.coroutines.launch
@@ -110,6 +111,7 @@ fun ParkingkokApp(
             is ParkingkokRoute.ManualEntry -> ManualEntryRoute(
                 container = container,
                 candidateId = route.candidateId,
+                fromPillarPhoto = route.fromPillarPhoto,
                 // A confirmation reached through `직접 입력` leaves two screens behind it —
                 // the form and the confirmation screen it came from — and the user is done
                 // with both.
@@ -124,6 +126,14 @@ fun ParkingkokApp(
                 candidateId = route.candidateId,
                 onManualEntry = {
                     backStack = backStack.push(ParkingkokRoute.ManualEntry(route.candidateId))
+                },
+                // docs/10 §7a: the camera lands in the same form, already filled with
+                // what the pillar said. The photo itself is the one file the camera
+                // writes, so nothing about it travels in the route.
+                onPhotoEntry = {
+                    backStack = backStack.push(
+                        ParkingkokRoute.ManualEntry(route.candidateId, fromPillarPhoto = true),
+                    )
                 },
                 // Confirmed, rejected or gone: all three end with the user back where they
                 // were. §7a: rejecting "returns to where the user was" and never asks why.
@@ -228,6 +238,8 @@ private fun HomeRoute(container: AppContainer, onNavigate: (ParkingkokRoute) -> 
         onPhotoSelected = viewModel::onPhotoSelected,
         onCameraUnavailable = viewModel::onCameraUnavailable,
         onNoticeShown = viewModel::onNoticeShown,
+        onApplyPillarSuggestion = viewModel::onApplyPillarSuggestion,
+        onDismissPillarSuggestion = viewModel::onDismissPillarSuggestion,
         onStepFloor = viewModel::onStepFloor,
         onEndParking = viewModel::onEndParking,
         onSaveParking = { onNavigate(ParkingkokRoute.ManualEntry()) },
@@ -245,13 +257,17 @@ private fun HomeRoute(container: AppContainer, onNavigate: (ParkingkokRoute) -> 
 private fun ManualEntryRoute(
     container: AppContainer,
     candidateId: String?,
+    fromPillarPhoto: Boolean,
     onSaved: () -> Unit,
     onBack: () -> Unit,
 ) {
     val viewModel: ManualParkingViewModel =
         viewModel(
-            key = "manual-${candidateId ?: "new"}",
-            factory = ManualParkingViewModel.factory(container, candidateId),
+            // The pillar arrival is keyed apart from the empty one: reaching the same
+            // form twice, once by 직접 입력 and once by 사진으로 입력, must not reuse the
+            // ViewModel that already decided there was no photo to read.
+            key = "manual-${candidateId ?: "new"}-$fromPillarPhoto",
+            factory = ManualParkingViewModel.factory(container, candidateId, fromPillarPhoto),
         )
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
@@ -300,6 +316,8 @@ private fun DetailRoute(container: AppContainer, recordId: String, onBack: () ->
         onRemovePhoto = viewModel::onRemovePhoto,
         onCameraUnavailable = viewModel::onCameraUnavailable,
         onNoticeShown = viewModel::onNoticeShown,
+        onApplyPillarSuggestion = viewModel::onApplyPillarSuggestion,
+        onDismissPillarSuggestion = viewModel::onDismissPillarSuggestion,
         onBack = onBack,
     )
 }
@@ -310,6 +328,7 @@ private fun ConfirmRoute(
     container: AppContainer,
     candidateId: String,
     onManualEntry: () -> Unit,
+    onPhotoEntry: () -> Unit,
     onDone: (String?) -> Unit,
 ) {
     val viewModel: ConfirmCandidateViewModel =
@@ -326,10 +345,19 @@ private fun ConfirmRoute(
         if (state.gone || state.rejected || state.confirmedRecordId != null) onDone(state.openRecordId)
     }
 
+    val takePillarPhoto = rememberCameraCapture(
+        onCaptured = onPhotoEntry,
+        // No camera app, or no file to write to. §6a makes a failed read silent, and a
+        // camera that never opened is the same thing one step earlier: the user is left
+        // on the screen with 직접 입력 beside the button they pressed.
+        onCameraUnavailable = {},
+    )
+
     ConfirmCandidateScreen(
         state = state,
         onPickFloor = viewModel::onPickFloor,
         onManualEntry = onManualEntry,
+        onPhotoEntry = takePillarPhoto,
         onReject = viewModel::onReject,
         onBack = { onDone(null) },
     )

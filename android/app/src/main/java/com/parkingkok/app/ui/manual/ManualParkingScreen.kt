@@ -18,9 +18,12 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
@@ -52,6 +55,17 @@ fun ManualParkingScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val floorFocus = remember { FocusRequester() }
+
+    // docs/02 §6a: what the pillar said is "pre-filled into the fields the user was going
+    // to fill anyway, focused and editable". The cursor goes to the floor because that is
+    // the field a misread would matter most in, and the user is now checking a guess
+    // rather than starting from nothing. Nothing happens when the read found nothing —
+    // the form opens exactly as it does today.
+    LaunchedEffect(state.pillarSuggestionOffered) {
+        if (state.pillarSuggestionOffered) floorFocus.requestFocus()
+    }
+
     ParkingkokScreen(
         modifier = modifier,
         header = { DetailHeader(title = stringResource(R.string.manual_title), onBack = onBack) },
@@ -72,6 +86,7 @@ fun ManualParkingScreen(
                     label = stringResource(R.string.manual_floor_label),
                     placeholder = stringResource(R.string.manual_floor_placeholder),
                     supporting = stringResource(R.string.manual_floor_help),
+                    focusRequester = floorFocus,
                 )
                 Spacer(Modifier.height(MaterialTheme.spacing.medium))
                 Field(
@@ -161,6 +176,8 @@ private fun Field(
     placeholder: String,
     supporting: String? = null,
     imeAction: ImeAction = ImeAction.Next,
+    /** Set only on the field a pillar read puts the cursor in (docs/02 §6a). */
+    focusRequester: FocusRequester? = null,
 ) {
     OutlinedTextField(
         value = value,
@@ -171,7 +188,9 @@ private fun Field(
         singleLine = true,
         shape = MaterialTheme.shapes.small,
         keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = imeAction),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier),
     )
 }
 

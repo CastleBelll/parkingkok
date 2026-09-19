@@ -22,6 +22,11 @@ androidxRoom = "2.8.5"
 androidxSqlite = "2.7.1"
 ksp = "2.3.12"
 playServicesLocation = "21.4.0"
+# ML Kit on-device Korean text recognition (docs/02 §6a). The BUNDLED artifact, not the
+# Play-services one that fetches the model on first use: an underground car park is where
+# reading the pillar is worth the most and where there is no network. 16.0.1 is the newest
+# release of the bundled Korean model.
+mlkitTextRecognitionKorean = "16.0.1"
 kotlinxSerialization = "1.9.0"
 kotlinxCoroutines = "1.10.2"
 androidxTestRunner = "1.7.0"
@@ -52,6 +57,7 @@ androidx-datastore-preferences = { module = "androidx.datastore:datastore-prefer
 androidx-glance-appwidget = { module = "androidx.glance:glance-appwidget", version.ref = "androidxGlance" }
 androidx-glance-material3 = { module = "androidx.glance:glance-material3", version.ref = "androidxGlance" }
 play-services-location = { module = "com.google.android.gms:play-services-location", version.ref = "playServicesLocation" }
+mlkit-text-recognition-korean = { module = "com.google.mlkit:text-recognition-korean", version.ref = "mlkitTextRecognitionKorean" }
 # docs/07 §2 lists the services this app may use. Analytics and Auth are the two this
 # milestone wires; Firestore, Functions, App Check, Remote Config and Crashlytics are
 # deliberately absent until the feature that needs them lands, and Storage is forbidden.

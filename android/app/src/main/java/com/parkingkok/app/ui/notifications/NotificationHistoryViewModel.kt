@@ -36,10 +36,12 @@ data class NotificationRow(
 ) {
     /**
      * §7b: a rejected or expired row "does nothing — it is history, and there is nothing
-     * left to act on. A row that does nothing must not look tappable."
+     * left to act on."
      *
      * A confirmed row whose record the user has since deleted falls in the same bucket:
-     * the thing it would open is gone.
+     * the thing it would open is gone. The chevron is a narrower question and belongs to
+     * the pending row alone (§7b "The pending row"), so the screen asks [outcome] for it
+     * rather than this.
      */
     val tappable: Boolean get() = outcome == null || openRecordId != null
 }
