@@ -105,6 +105,15 @@
             android:name=".detection.LocationUpdateReceiver"
             android:exported="false" />
 
+        <!-- Target of the candidate notification's 주차 아님 action (docs/05 §10a). Not
+             exported: only the notification holds the PendingIntent, and a PendingIntent
+             target does not need to be exported to be delivered. Rejecting must cost no
+             app launch — it is the answer the detector learns most from, so it is the
+             cheapest thing on the notification. -->
+        <receiver
+            android:name=".detection.ParkingCandidateReceiver"
+            android:exported="false" />
+
         <!-- Target of the label-prompt notification actions. Not exported: only the
              notification holds the PendingIntent, and a PendingIntent target does not need
              to be exported to be delivered. -->

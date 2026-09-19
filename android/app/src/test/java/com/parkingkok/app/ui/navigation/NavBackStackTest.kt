@@ -2,6 +2,7 @@ package com.parkingkok.app.ui.navigation
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -61,7 +62,7 @@ class NavBackStackTest {
     @Test
     fun `replaceTop swaps the screen without deepening the stack`() {
         val stack = NavBackStack.rootedAtHome()
-            .push(ParkingkokRoute.ManualEntry)
+            .push(ParkingkokRoute.ManualEntry())
             .replaceTop(ParkingkokRoute.History)
 
         assertEquals(2, stack.entries.size)
@@ -95,11 +96,13 @@ class NavBackStackTest {
     fun `every route survives the round trip`() {
         val routes = listOf(
             ParkingkokRoute.Home,
-            ParkingkokRoute.ManualEntry,
+            ParkingkokRoute.ManualEntry(),
+            ParkingkokRoute.ManualEntry("candidate-with-dashes-1234"),
             ParkingkokRoute.History,
             ParkingkokRoute.Settings,
             ParkingkokRoute.Diagnostics,
             ParkingkokRoute.Detail("id-with-dashes-1234"),
+            ParkingkokRoute.Confirm("candidate-with-dashes-1234"),
         )
 
         routes.forEach { route ->
@@ -130,5 +133,27 @@ class NavBackStackTest {
     @Test
     fun `a detail token with no id is not a destination`() {
         assertEquals(null, ParkingkokRouteCodec.decode("detail:"))
+    }
+
+    @Test
+    fun `a tapped candidate notification opens the confirmation over home`() {
+        // docs/05 §10a: the tap "opens the confirmation screen for that candidateId".
+        val stack = NavBackStack.openingCandidate("candidate-1")
+
+        assertEquals(ParkingkokRoute.Confirm("candidate-1"), stack.current)
+        // Back leaves the guess unanswered and shows the app, rather than closing it.
+        assertTrue(stack.canGoBack)
+        assertEquals(ParkingkokRoute.Home, stack.pop().current)
+    }
+
+    @Test
+    fun `a manual form opened to confirm a candidate is a different screen from a blank one`() {
+        // They share a composable but not an identity: encoding one must not restore the
+        // other, or a process death would turn a confirmation into a fresh manual save.
+        assertNotEquals(ParkingkokRoute.ManualEntry(), ParkingkokRoute.ManualEntry("candidate-1"))
+        assertEquals(
+            ParkingkokRoute.ManualEntry("candidate-1"),
+            ParkingkokRouteCodec.decode(ParkingkokRouteCodec.encode(ParkingkokRoute.ManualEntry("candidate-1"))),
+        )
     }
 }

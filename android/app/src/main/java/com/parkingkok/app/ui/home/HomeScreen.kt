@@ -52,6 +52,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.parkingkok.app.R
+import com.parkingkok.app.domain.detection.ParkingCandidateNotice
 import com.parkingkok.app.domain.parking.ElapsedTime
 import com.parkingkok.app.domain.parking.Floor
 import com.parkingkok.app.domain.parking.FloorParser
@@ -98,6 +99,7 @@ fun HomeScreen(
     onOpenHistory: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenNotificationSettings: () -> Unit,
+    onOpenCandidate: (String) -> Unit,
     onDirections: () -> Unit,
     onPhotoSelected: (PhotoSource) -> Unit,
     onCameraUnavailable: () -> Unit,
@@ -128,6 +130,16 @@ fun HomeScreen(
                 onSaveParking = onSaveParking,
             )
         }
+        val candidateId = state.pendingCandidateId
+        if (candidateId != null) {
+            item("candidate") {
+                PendingCandidateRow(
+                    parkedAtMillis = state.pendingCandidateAtMillis,
+                    onClick = { onOpenCandidate(candidateId) },
+                )
+            }
+        }
+
         if (active != null) {
             item("actions") {
                 PrimaryActions(
@@ -181,6 +193,35 @@ fun HomeScreen(
         onPhotoSelected = onPhotoSelected,
         onCameraUnavailable = onCameraUnavailable,
     )
+}
+
+/**
+ * The unanswered guess, on the screen the user actually opens.
+ *
+ * docs/05 §10a puts this here: notification permission is not a condition of correctness,
+ * so a candidate has to be reachable without one. It sits under the hero rather than above
+ * it because docs/10 §6 ranks the current parking first and this is only a question about
+ * one — and it is a single bordered row, not a fifth card, because a stack of cards is the
+ * dashboard the design harness rules out.
+ *
+ * It carries the copy the notification carries and the time, and nothing else: no floor, no
+ * address, no coordinate (docs/09 §9).
+ */
+@Composable
+private fun PendingCandidateRow(parkedAtMillis: Long?, onClick: () -> Unit) {
+    ParkingkokCard(contentPadding = 0.dp) {
+        ParkingkokRow(
+            title = ParkingCandidateNotice.TITLE,
+            supporting = if (parkedAtMillis != null) {
+                stringResource(R.string.home_candidate_supporting, timeOfDayText(parkedAtMillis))
+            } else {
+                stringResource(R.string.candidate_confirm_body)
+            },
+            iconRes = R.drawable.ic_car,
+            onClick = onClick,
+            trailing = { RowChevron() },
+        )
+    }
 }
 
 /**
@@ -748,6 +789,7 @@ private fun HomeParkedPreview() {
             onOpenHistory = {},
             onOpenSettings = {},
             onOpenNotificationSettings = {},
+            onOpenCandidate = {},
             onDirections = {},
             onPhotoSelected = {},
             onCameraUnavailable = {},
@@ -769,6 +811,7 @@ private fun HomeEmptyPreview() {
             onOpenHistory = {},
             onOpenSettings = {},
             onOpenNotificationSettings = {},
+            onOpenCandidate = {},
             onDirections = {},
             onPhotoSelected = {},
             onCameraUnavailable = {},
@@ -799,3 +842,30 @@ private fun previewRecord(
     updatedAtMillis = 1_700_000_000_000L,
     revision = 1,
 )
+
+@Preview(name = "Home - candidate pending", showBackground = true)
+@Composable
+private fun HomeCandidatePreview() {
+    ParkingkokTheme {
+        HomeScreen(
+            state = HomeUiState(
+                loaded = true,
+                nowMillis = PREVIEW_NOW,
+                pendingCandidateId = "candidate-1",
+                pendingCandidateAtMillis = PREVIEW_NOW,
+            ),
+            onStepFloor = {},
+            onEndParking = {},
+            onSaveParking = {},
+            onOpenDetail = {},
+            onOpenHistory = {},
+            onOpenSettings = {},
+            onOpenNotificationSettings = {},
+            onOpenCandidate = {},
+            onDirections = {},
+            onPhotoSelected = {},
+            onCameraUnavailable = {},
+            onNoticeShown = {},
+        )
+    }
+}

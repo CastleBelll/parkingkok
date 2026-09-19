@@ -1,5 +1,7 @@
 package com.parkingkok.app.domain.parking
 
+import kotlinx.serialization.Serializable
+
 /**
  * How a record came to exist (docs/06_LOCAL_DATA_AND_WIDGET_SYNC.md §2 `source`).
  *
@@ -8,6 +10,7 @@ package com.parkingkok.app.domain.parking
 enum class ParkingSource { MANUAL, DETECTED }
 
 /** docs/06 §2 `confidenceBucket`. Only detection sets it; a manual save leaves it null. */
+@Serializable
 enum class ConfidenceBucket { LOW, MEDIUM, HIGH }
 
 /**

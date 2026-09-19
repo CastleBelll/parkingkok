@@ -32,6 +32,8 @@ import com.parkingkok.app.detection.ActivityTransitionRegistrar
 import com.parkingkok.app.detection.DetectionRegistrationCoordinator
 import com.parkingkok.app.detection.FusedLocationSessionController
 import com.parkingkok.app.detection.FusedLocationSessionRegistrar
+import com.parkingkok.app.detection.NotificationCandidateDelivery
+import com.parkingkok.app.detection.ParkingCandidateCoordinator
 import com.parkingkok.app.detection.TransitionEventIngestor
 import com.parkingkok.app.diagnostics.DiagnosticsExporter
 import com.parkingkok.app.diagnostics.FileDiagnosticsReportStore
@@ -57,6 +59,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -240,6 +243,27 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
         if (parkingWidgetSyncStarted.compareAndSet(false, true)) {
             applicationScope.launch { parkingWidgetSync.keepInSync() }
         }
+    }
+
+    /**
+     * The candidate prompt and everything that answers it
+     * (docs/05_PARKING_DETECTION_ENGINE.md §10a).
+     *
+     * Lazy, and holding the repository as a provider rather than a value, for the same
+     * bargain [parkingDatabase] makes. `주차 아님` is answered from a broadcast-started
+     * process that never reads parking history, and it must not pay to open Room; only
+     * [ParkingCandidateCoordinator.confirm] calls the provider, and confirming is exactly
+     * the moment a database is genuinely needed.
+     */
+    val parkingCandidateCoordinator: ParkingCandidateCoordinator by lazy {
+        ParkingCandidateCoordinator(
+            store = detectionStateStore,
+            repository = { parkingRepository },
+            notifier = NotificationCandidateDelivery(appContext),
+            clock = clock,
+            idGenerator = { UUID.randomUUID().toString() },
+            analytics = analyticsRecorder,
+        )
     }
 
     /**

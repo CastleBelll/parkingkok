@@ -35,6 +35,8 @@ import com.parkingkok.app.R
 import com.parkingkok.app.map.ExternalMapOpener
 import com.parkingkok.app.ui.motion.LocalMotionEnabled
 import com.parkingkok.app.ui.motion.MotionDurations
+import com.parkingkok.app.ui.confirm.ConfirmCandidateScreen
+import com.parkingkok.app.ui.confirm.ConfirmCandidateViewModel
 import com.parkingkok.app.ui.detail.ParkingDetailScreen
 import com.parkingkok.app.ui.detail.ParkingDetailViewModel
 import com.parkingkok.app.ui.diagnostics.DiagnosticsScreen
@@ -47,6 +49,7 @@ import com.parkingkok.app.ui.manual.ManualParkingScreen
 import com.parkingkok.app.ui.manual.ManualParkingViewModel
 import com.parkingkok.app.ui.settings.SettingsScreen
 import com.parkingkok.app.ui.settings.SettingsViewModel
+import kotlinx.coroutines.launch
 
 /**
  * The app shell: one back stack, one screen at a time.
@@ -56,7 +59,16 @@ import com.parkingkok.app.ui.settings.SettingsViewModel
  * (docs/01_PRODUCT_REQUIREMENTS.md §8).
  */
 @Composable
-fun ParkingkokApp(container: AppContainer) {
+fun ParkingkokApp(
+    container: AppContainer,
+    /**
+     * The candidate a tapped notification is asking about, or null for an ordinary
+     * launch. It changes while the app is running — a second notification is tapped —
+     * which is why it is a parameter and not a start destination.
+     */
+    candidateId: String? = null,
+    onCandidateOpened: () -> Unit = {},
+) {
     var backStack by rememberSaveable(saver = NavBackStackSaver) {
         mutableStateOf(NavBackStack.rootedAtHome())
     }
@@ -65,6 +77,24 @@ fun ParkingkokApp(container: AppContainer) {
     // `ParkingkokApplication`: it is the first thing that would open the database, and a
     // process started by a detection broadcast must not pay for one (see `AppContainer`).
     LaunchedEffect(container) { container.cleanUpOrphanPhotos() }
+
+    // docs/05 §10a expiry. The OS takes the notification down on its own timeout; this is
+    // what takes the stored candidate down, so nothing can be created from one that is
+    // past its 45 minutes. Every resume, because the process may have been dead for hours.
+    LifecycleResumeEffect(container) {
+        val job = container.applicationScope.launch { container.parkingCandidateCoordinator.expireIfDue() }
+        onPauseOrDispose { job.cancel() }
+    }
+
+    // A tapped notification, whether it started the process or arrived while the app was
+    // open. §10a: "opens the confirmation screen for that candidateId" — and when the
+    // candidate has since gone, the screen itself sends the user home.
+    LaunchedEffect(candidateId) {
+        if (candidateId != null) {
+            backStack = NavBackStack.openingCandidate(candidateId)
+            onCandidateOpened()
+        }
+    }
 
     BackHandler(enabled = backStack.canGoBack) { backStack = backStack.pop() }
 
@@ -75,10 +105,36 @@ fun ParkingkokApp(container: AppContainer) {
                 onNavigate = { backStack = backStack.push(it) },
             )
 
-            ParkingkokRoute.ManualEntry -> ManualEntryRoute(
+            is ParkingkokRoute.ManualEntry -> ManualEntryRoute(
                 container = container,
-                onSaved = { backStack = backStack.pop() },
+                candidateId = route.candidateId,
+                // A confirmation reached through `직접 입력` leaves two screens behind it —
+                // the form and the confirmation screen it came from — and the user is done
+                // with both.
+                onSaved = {
+                    backStack = if (route.candidateId != null) backStack.popToRoot() else backStack.pop()
+                },
                 onBack = { backStack = backStack.pop() },
+            )
+
+            is ParkingkokRoute.Confirm -> ConfirmRoute(
+                container = container,
+                candidateId = route.candidateId,
+                onManualEntry = {
+                    backStack = backStack.push(ParkingkokRoute.ManualEntry(route.candidateId))
+                },
+                // Confirmed, rejected or gone: all three end with the user back where they
+                // were. §7a: rejecting "returns to where the user was" and never asks why.
+                // The one exception is §10a's handled candidate, which opens on the record
+                // it became — replacing this screen rather than stacking on it, because
+                // back from there should not return to a question already answered.
+                onDone = { recordId ->
+                    backStack = if (recordId != null) {
+                        backStack.replaceTop(ParkingkokRoute.Detail(recordId))
+                    } else {
+                        backStack.pop()
+                    }
+                },
             )
 
             is ParkingkokRoute.Detail -> DetailRoute(
@@ -166,7 +222,8 @@ private fun HomeRoute(container: AppContainer, onNavigate: (ParkingkokRoute) -> 
         onNoticeShown = viewModel::onNoticeShown,
         onStepFloor = viewModel::onStepFloor,
         onEndParking = viewModel::onEndParking,
-        onSaveParking = { onNavigate(ParkingkokRoute.ManualEntry) },
+        onSaveParking = { onNavigate(ParkingkokRoute.ManualEntry()) },
+        onOpenCandidate = { onNavigate(ParkingkokRoute.Confirm(it)) },
         onOpenDetail = { onNavigate(ParkingkokRoute.Detail(it)) },
         onOpenHistory = { onNavigate(ParkingkokRoute.History) },
         onOpenSettings = { onNavigate(ParkingkokRoute.Settings) },
@@ -191,18 +248,23 @@ private fun notificationSettingsIntent(context: Context): Intent =
 @Composable
 private fun ManualEntryRoute(
     container: AppContainer,
+    candidateId: String?,
     onSaved: () -> Unit,
     onBack: () -> Unit,
 ) {
     val viewModel: ManualParkingViewModel =
-        viewModel(factory = ManualParkingViewModel.factory(container))
+        viewModel(
+            key = "manual-${candidateId ?: "new"}",
+            factory = ManualParkingViewModel.factory(container, candidateId),
+        )
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
     // The save is asynchronous, so the screen leaves when the record id arrives rather
     // than when the button is pressed — otherwise a failure would navigate away silently.
-    val savedRecordId = state.savedRecordId
-    LaunchedEffect(savedRecordId) {
-        if (savedRecordId != null) onSaved()
+    // `candidateGone` is the other way out: the candidate this form was confirming expired
+    // while it was open, so there is nothing left to write (docs/05 §10a).
+    LaunchedEffect(state.savedRecordId, state.candidateGone) {
+        if (state.savedRecordId != null || state.candidateGone) onSaved()
     }
 
     ManualParkingScreen(
@@ -243,6 +305,37 @@ private fun DetailRoute(container: AppContainer, recordId: String, onBack: () ->
         onCameraUnavailable = viewModel::onCameraUnavailable,
         onNoticeShown = viewModel::onNoticeShown,
         onBack = onBack,
+    )
+}
+
+/** docs/10_DESIGN_UX_SPEC.md §7a. */
+@Composable
+private fun ConfirmRoute(
+    container: AppContainer,
+    candidateId: String,
+    onManualEntry: () -> Unit,
+    onDone: (String?) -> Unit,
+) {
+    val viewModel: ConfirmCandidateViewModel =
+        viewModel(
+            key = "confirm-$candidateId",
+            factory = ConfirmCandidateViewModel.factory(container, candidateId),
+        )
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+    // The screen closes itself on every terminal outcome, so the shell holds no rule about
+    // what a candidate is. `gone` covers §10a's expired notification: the user lands on
+    // home, and nothing apologises.
+    LaunchedEffect(state.gone, state.rejected, state.confirmedRecordId) {
+        if (state.gone || state.rejected || state.confirmedRecordId != null) onDone(state.openRecordId)
+    }
+
+    ConfirmCandidateScreen(
+        state = state,
+        onPickFloor = viewModel::onPickFloor,
+        onManualEntry = onManualEntry,
+        onReject = viewModel::onReject,
+        onBack = { onDone(null) },
     )
 }
 

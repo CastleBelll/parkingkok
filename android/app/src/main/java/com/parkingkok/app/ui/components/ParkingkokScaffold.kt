@@ -219,6 +219,7 @@ private fun HeaderAction(iconRes: Int, contentDescription: String, onClick: () -
  */
 @Composable
 fun DetailHeader(
+    /** Empty for a screen that carries its own title in the content below. */
     title: String,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
@@ -242,17 +243,25 @@ fun DetailHeader(
                 tint = MaterialTheme.colorScheme.onBackground,
             )
         }
-        Text(
-            text = title,
-            style = MaterialTheme.typography.headlineSmall,
-            color = MaterialTheme.colorScheme.onBackground,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .weight(1f)
-                .padding(start = MaterialTheme.spacing.tiny)
-                .semantics { heading() },
-        )
+        if (title.isEmpty()) {
+            // A screen whose own first line is its title — the confirmation screen, where
+            // 주차한 것 같아요 has to be the largest thing on screen (docs/10 §7a). Repeating
+            // it up here would put the most important sentence in the app on the page
+            // twice, at two sizes.
+            Spacer(Modifier.weight(1f))
+        } else {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.onBackground,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = MaterialTheme.spacing.tiny)
+                    .semantics { heading() },
+            )
+        }
         trailing?.invoke()
     }
 }

@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.parkingkok.app.AppContainer
 import com.parkingkok.app.core.Clock
+import com.parkingkok.app.domain.detection.ParkingCandidate
 import com.parkingkok.app.domain.parking.ParkingRecord
 import com.parkingkok.app.domain.parking.usecase.AdjustParkingFloorUseCase
 import com.parkingkok.app.domain.parking.usecase.AttachParkingPhotoResult
@@ -26,6 +27,9 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+/** The two transient bits of screen state the ViewModel owns itself. */
+private data class HomeChrome(val notice: UiNotice?, val photoBusy: Boolean)
+
 /** What `01-home-main.png` renders. */
 data class HomeUiState(
     val active: ParkingRecord? = null,
@@ -42,6 +46,18 @@ data class HomeUiState(
     /** True while a chosen photo is being downsampled and written (FR-007). */
     val photoBusy: Boolean = false,
     val notice: UiNotice? = null,
+    /**
+     * The candidate waiting for an answer, or null.
+     *
+     * docs/05 §10a: "denied, the candidate is saved and surfaces in the app on next
+     * launch". Home is where that promise is kept — a candidate that only existed in a
+     * notification would be lost for every user who turned notifications off.
+     *
+     * The id and the time, and nothing else. This row must not state a floor, an address
+     * or a coordinate any more than the notification may (docs/09 §9).
+     */
+    val pendingCandidateId: String? = null,
+    val pendingCandidateAtMillis: Long? = null,
 ) {
     /** FR-008: with no stored coordinate there is nowhere to send a maps app. */
     val canOpenMap: Boolean get() = active?.location != null
@@ -58,6 +74,7 @@ data class HomeUiState(
 class HomeViewModel(
     observeActive: ObserveActiveParkingUseCase,
     observeHistory: ObserveParkingHistoryUseCase,
+    private val observePendingCandidate: () -> Flow<ParkingCandidate?>,
     private val endParking: EndParkingUseCase,
     private val adjustParkingFloor: AdjustParkingFloorUseCase,
     private val attachPhoto: AttachParkingPhotoUseCase,
@@ -72,16 +89,21 @@ class HomeViewModel(
             observeActive(),
             observeHistory(limit = ObserveParkingHistoryUseCase.HOME_PREVIEW),
             minuteTicker(),
-            notice,
-            photoBusy,
-        ) { active, recent, nowMillis, notice, busy ->
+            // Paired so the combine stays on the five-argument typed overload. A sixth
+            // source would fall onto the `Array<*>` one, where every field becomes an
+            // unchecked cast and the compiler stops catching a reordered argument.
+            combine(notice, photoBusy, ::HomeChrome),
+            observePendingCandidate(),
+        ) { active, recent, nowMillis, chrome, candidate ->
             HomeUiState(
                 active = active,
                 recent = recent,
                 nowMillis = nowMillis,
                 loaded = true,
-                photoBusy = busy,
-                notice = notice,
+                photoBusy = chrome.photoBusy,
+                notice = chrome.notice,
+                pendingCandidateId = candidate?.id,
+                pendingCandidateAtMillis = candidate?.parkedAtMillis,
             )
         }.stateIn(
             scope = viewModelScope,
@@ -165,6 +187,7 @@ class HomeViewModel(
                 override fun <T : ViewModel> create(modelClass: Class<T>): T = HomeViewModel(
                     observeActive = ObserveActiveParkingUseCase(container.parkingRepository),
                     observeHistory = ObserveParkingHistoryUseCase(container.parkingRepository),
+                    observePendingCandidate = container.parkingCandidateCoordinator::observePending,
                     endParking = EndParkingUseCase(container.parkingRepository, container.clock),
                     adjustParkingFloor = AdjustParkingFloorUseCase(
                         container.parkingRepository,
