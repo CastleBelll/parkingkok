@@ -161,7 +161,7 @@ struct ParkingDetailView: View {
                             + (session.floor?.accessibilityText ?? "층 미입력")
                     )
 
-                if let place = [session.zone, session.spot].compactMap(\.self).nonEmptyJoined(" · ") {
+                if let place = session.placeText {
                     Text(place)
                         .font(PKTypography.heroSupport)
                         .foregroundStyle(PKColor.textPrimary)
@@ -211,21 +211,20 @@ struct ParkingDetailView: View {
                     title: "저장 방식",
                     value: session.source == .detected ? "자동 감지" : "직접 저장"
                 )
-                divider
-                DetailFactRow(
-                    icon: "scope",
-                    title: ParkingMapPoint.label,
-                    value: locationText(session)
-                )
+                // Only when there is a location. With none, the banner above and the
+                // caption under the disabled 길찾기 button already say so — a third row
+                // reading 저장 안 됨 was the same fact a third time.
+                if let accuracy = ParkingMapPoint(session)?.accuracyText {
+                    divider
+                    DetailFactRow(
+                        icon: "scope",
+                        title: ParkingMapPoint.label,
+                        value: accuracy
+                    )
+                }
             }
             .padding(.vertical, PKSpacing.xs)
         }
-    }
-
-    /// FR-008 forbids wording that implies the exact car position, and the accuracy is
-    /// the honest version of it. No location at all is the FR-001 case and says so.
-    private func locationText(_ session: ParkingSession) -> String {
-        ParkingMapPoint(session)?.accuracyText ?? "저장 안 됨"
     }
 
     private var divider: some View {
@@ -375,12 +374,5 @@ private struct DetailFactRow: View {
         .padding(.vertical, PKSpacing.m)
         .frame(minHeight: PKSize.minimumTouchTarget)
         .accessibilityElement(children: .combine)
-    }
-}
-
-extension [String] {
-    /// Joins, or `nil` when there was nothing to join.
-    func nonEmptyJoined(_ separator: String) -> String? {
-        isEmpty ? nil : joined(separator: separator)
     }
 }

@@ -268,7 +268,18 @@ private fun SummaryCard(record: ParkingRecord, nowMillis: Long) {
                 modifier = Modifier.semantics { contentDescription = spoken },
             )
 
-            val supporting = listOfNotNull(record.zone, record.spot)
+            // Same rule as home: a spot with no zone needs the word, or it reads as an
+            // unexplained numeral at hero weight.
+            val zone = record.zone
+            val spot = record.spot
+            val supporting = listOfNotNull(
+                when {
+                    zone != null && spot != null -> "$zone · $spot"
+                    zone != null -> zone
+                    spot != null -> stringResource(R.string.home_spot_only, spot)
+                    else -> null
+                },
+            )
             if (supporting.isNotEmpty()) {
                 Text(
                     text = supporting.joinToString(" · "),
@@ -324,12 +335,17 @@ private fun Facts(record: ParkingRecord, nowMillis: Long) {
             },
         ),
     )
-    FactDivider()
-    FactRow(
-        iconRes = R.drawable.ic_place,
-        label = stringResource(R.string.detail_accuracy),
-        value = record.location.accuracyText(),
-    )
+    // Only when there is a location. With none, the banner at the top of the screen and
+    // the caption under the disabled 길찾기 button already say so — a third row reading
+    // "위치 없음" was the same fact a third time.
+    if (record.location != null) {
+        FactDivider()
+        FactRow(
+            iconRes = R.drawable.ic_place,
+            label = stringResource(R.string.detail_accuracy),
+            value = record.location.accuracyText(),
+        )
+    }
     val memo = record.memo
     if (memo != null) {
         FactDivider()

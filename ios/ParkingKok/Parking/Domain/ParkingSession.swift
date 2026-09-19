@@ -51,6 +51,21 @@ struct ParkingSession: Sendable, Equatable, Identifiable {
         endedAt == nil
     }
 
+    /// `A구역 · 142`, `A구역`, or `142번` — nil when neither was recorded.
+    ///
+    /// Lives here because three screens were each joining zone and spot themselves and
+    /// each produced a bare number when only the spot existed: a record holding `03` read
+    /// as `03` under the floor, at hero weight, with nothing saying what the number was.
+    /// The zone is what made the pair legible, so without one the number takes the word.
+    var placeText: String? {
+        switch (zone, spot) {
+        case let (zone?, spot?): "\(zone) · \(spot)"
+        case let (zone?, nil): zone
+        case let (nil, spot?): "\(spot)번"
+        case (nil, nil): nil
+        }
+    }
+
     /// FR-006: zone and spot are capped at 40 characters each.
     static let maximumFieldLength = 40
     /// Not in FR-006, which is silent on memo. A ceiling all the same: an unbounded

@@ -36,12 +36,22 @@ struct HistoryView: View {
                 // The stagger is on the group, not on each row: `04-history-list.png` can
                 // run to dozens of records, and animating them individually would mean a
                 // wait proportional to the history's length.
-                VStack(spacing: PKSpacing.s) {
-                    ForEach(filtered) { session in
-                        Button { path.append(.parkingDetail(id: session.id)) } label: {
-                            ParkingHistoryRow(session: session, style: .full)
+                // One surface for the whole list, divided. A card per record turned the
+                // screen into a stack of floating panels — the AI dashboard the design
+                // harness rules out, and what home's preview was fixed for.
+                PKCard(radius: PKRadius.row) {
+                    VStack(spacing: 0) {
+                        ForEach(Array(filtered.enumerated()), id: \.element.id) { index, session in
+                            if index > 0 {
+                                Divider()
+                                    .overlay(PKColor.divider)
+                                    .padding(.leading, PKSpacing.l)
+                            }
+                            Button { path.append(.parkingDetail(id: session.id)) } label: {
+                                ParkingHistoryRow(session: session, style: .full)
+                            }
+                            .buttonStyle(PKGroupedRowButtonStyle())
                         }
-                        .buttonStyle(PKSurfaceButtonStyle(radius: PKRadius.row))
                     }
                 }
                 .pkEntrance(2)

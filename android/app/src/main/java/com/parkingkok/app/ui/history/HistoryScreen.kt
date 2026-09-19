@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -84,13 +85,24 @@ fun HistoryScreen(
             )
         }
 
-        items(state.records, key = { it.id }) { record ->
+        // One surface for the whole list, divided. A card per record turned the screen
+        // into a stack of floating panels — the AI dashboard CLAUDE.md's design harness
+        // rules out, and the same thing home's preview was fixed for.
+        item("records") {
             ParkingkokCard(contentPadding = 0.dp) {
-                HistoryRow(
-                    record = record,
-                    nowMillis = state.nowMillis,
-                    onClick = { onOpenDetail(record.id) },
-                )
+                state.records.forEachIndexed { index, record ->
+                    if (index > 0) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(start = MaterialTheme.spacing.large),
+                            color = MaterialTheme.colorScheme.outlineVariant,
+                        )
+                    }
+                    HistoryRow(
+                        record = record,
+                        nowMillis = state.nowMillis,
+                        onClick = { onOpenDetail(record.id) },
+                    )
+                }
             }
         }
 

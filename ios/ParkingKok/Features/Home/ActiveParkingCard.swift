@@ -77,20 +77,7 @@ struct ActiveParkingCard: View {
         }
     }
 
-    /// `A구역 · 142`, or `142번` when there is no zone.
-    ///
-    /// A spot on its own used to render as the bare number, so a record saved with only
-    /// `03` in it showed `03` under the floor at hero weight — a large unexplained
-    /// numeral. The zone is what made the pair readable; without it the number needs the
-    /// word.
-    private var placeText: String? {
-        switch (session.zone, session.spot) {
-        case let (zone?, spot?): "\(zone) · \(spot)"
-        case let (zone?, nil): zone
-        case let (nil, spot?): "\(spot)번"
-        case (nil, nil): nil
-        }
-    }
+    private var placeText: String? { session.placeText }
 
     /// Two compact keys with a hairline between them, centred under the hero — the mock's
     /// proportions. Full-width slabs made adjusting the floor look like the screen's first
