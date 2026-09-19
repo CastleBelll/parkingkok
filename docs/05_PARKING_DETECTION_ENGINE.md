@@ -72,7 +72,7 @@ field data exists. Neither platform may pick its own value for one.
 | from | to | condition |
 |---|---|---|
 | `IDLE` | `DRIVING_CANDIDATE` | `vehicle_enter` |
-| `DRIVING_CANDIDATE` | `DRIVING` | vehicle activity sustained ≥ `minimumVehicleDuration` **and** movement evidence present (§7) |
+| `DRIVING_CANDIDATE` | `DRIVING` | vehicle activity sustained ≥ `minimumVehicleDuration` |
 | `DRIVING_CANDIDATE` | `IDLE` | `vehicle_exit`, or no promotion within `drivingCandidateWindow` |
 | `DRIVING` | `PARKING_TRANSITION` | `vehicle_exit`, **or** no movement evidence for `movementIdleWindow` |
 | `PARKING_TRANSITION` | `CANDIDATE_PENDING` | any of `walking_enter`, `stationary_enter`, location stop — within `transitionWindow` |
@@ -92,6 +92,25 @@ field data exists. Neither platform may pick its own value for one.
 | `drivingCandidateWindow` | 300s | §7 `vehicleEvidenceMaxAge` — evidence older than this is already not counted |
 | `movementIdleWindow` | 180s | §7 `maximumBaseline`. **unvalidated** |
 | `transitionWindow` | 300s | §7 vehicle window, reused so a walk that starts late still counts. **unvalidated** |
+
+### Movement evidence does not gate promotion
+
+An earlier draft of this table required movement evidence as well as sustained vehicle
+activity to reach `DRIVING`. Replaying the three real drives recorded on 2026-09-19
+against it showed why that is wrong: the 14:26 trip is the textbook signature —
+`vehicle_enter`, `vehicle_exit` seven minutes later, `walking_enter` after that — and it
+carries **zero location events**. Gated on movement it never leaves `DRIVING_CANDIDATE`,
+and the parking is never detected.
+
+That is not an edge case. §13 and the notes around §7 say underground car parks, tunnels
+and urban canyons are this product's main setting, and those are exactly the places GPS
+Doppler speed does not arrive. A rule that needs movement evidence to believe the OS is a
+rule that fails where the app is most needed.
+
+Movement evidence still matters — it is what §8 weighs and what separates a real trip from
+a phone on a desk — but it belongs in the confidence bucket (§9), not in the transition.
+A drive with no fixes can reach `CANDIDATE_PENDING` with lower confidence; it cannot be
+made invisible.
 
 ### The red light
 
