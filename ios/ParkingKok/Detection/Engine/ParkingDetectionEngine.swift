@@ -135,7 +135,6 @@ actor ParkingDetectionEngine {
         // minutes ran out must be withdrawn whatever the checkpoint believes.
         if let pendingCandidate, pendingCandidate.isExpired(now: now) {
             effects += retirePendingCandidate(now: now)
-            return effects
         }
 
         switch checkpoint.state {
@@ -326,7 +325,16 @@ actor ParkingDetectionEngine {
             return [.candidateRuleUnmet] + moveTo(.idle, now: now)
 
         case .candidatePending:
-            guard let candidate = pendingCandidate, candidate.isExpired(now: now) else { return [] }
+            guard let candidate = pendingCandidate else {
+                // The checkpoint says a candidate is pending and its file is gone. §10's
+                // 45 minutes still bound the state, and leaving it here forever would
+                // make every later drive invisible — so the bound is applied to the state
+                // rather than to a candidate nobody can read.
+                guard now.timeIntervalSince(checkpoint.stateEnteredAt) >= ParkingCandidatePolicy.expiry
+                else { return [] }
+                return moveTo(.idle, now: now)
+            }
+            guard candidate.isExpired(now: now) else { return [] }
             // docs/05 §10: no record is created and nothing is reported — docs/17 §2 has
             // no event for a guess that went unanswered.
             return retirePendingCandidate(now: now)

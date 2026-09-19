@@ -392,3 +392,65 @@ struct DerivedVehicleExitTests {
         #expect(!snapshot.isCapturingDrivingLocation)
     }
 }
+
+/// What a process that died mid-trip is handed back (docs/05 §16 `restore`).
+@Suite("Restoring a checkpoint")
+struct DetectionEngineRestoreTests {
+    private let t0 = TestTime.offset(0)
+
+    /// The checkpoint and the candidate file are two files and can disagree after a crash.
+    /// §10's 45 minutes bound the state either way — otherwise every later drive is
+    /// invisible because nothing can leave `CANDIDATE_PENDING`.
+    @Test("A CANDIDATE_PENDING checkpoint whose candidate file is gone still expires")
+    func pendingWithoutACandidateFileStillExpires() async {
+        // Arrange
+        let engine = ParkingDetectionEngine()
+        let checkpoint = DetectionCheckpoint(
+            state: .candidatePending,
+            stateEnteredAt: t0,
+            candidateId: UUID()
+        )
+
+        // Act — restored inside the window, then again past it.
+        _ = await engine.restore(checkpoint, pendingCandidate: nil, seedIfAbsent: false, now: t0.addingTimeInterval(60))
+        #expect(await engine.state == .candidatePending)
+        _ = await engine.handle(.timerTick(at: t0.addingTimeInterval(ParkingCandidatePolicy.expiry)))
+
+        // Assert
+        #expect(await engine.state == .idle)
+        #expect(await engine.snapshot().checkpoint.candidateId == nil)
+    }
+
+    /// An expired candidate must not cost the drive that is also in the checkpoint.
+    @Test("An expired candidate is retired without losing a restored driving session")
+    func expiredCandidateDoesNotCancelARestoredDrive() async {
+        // Arrange — a checkpoint that says DRIVING, beside a candidate file left behind.
+        let engine = ParkingDetectionEngine()
+        let stale = ParkingCandidate(
+            id: UUID(),
+            detectedAt: t0.addingTimeInterval(-ParkingCandidatePolicy.expiry - 60),
+            confidenceBucket: .medium,
+            reasonCodes: [],
+            lastReliableLocation: nil,
+            expiresAt: t0.addingTimeInterval(-60),
+            score: 70,
+            driveDuration: nil,
+            driveDistanceMeters: nil,
+            accuracyBucket: nil
+        )
+        let checkpoint = DetectionCheckpoint(state: .driving, stateEnteredAt: t0, lastAutomotiveAt: t0)
+
+        // Act
+        let effects = await engine.restore(
+            checkpoint,
+            pendingCandidate: stale,
+            seedIfAbsent: false,
+            now: t0.addingTimeInterval(30)
+        )
+
+        // Assert
+        #expect(effects.contains(.withdrawCandidate(id: stale.id)))
+        #expect(await engine.state == .driving)
+        #expect(effects.contains(.startBoundedLocationCapture))
+    }
+}
