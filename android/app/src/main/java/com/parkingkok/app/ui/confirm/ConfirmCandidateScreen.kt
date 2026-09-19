@@ -7,7 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -144,7 +144,10 @@ private fun FloorChoices(
             Row(horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small)) {
                 for (floor in picks) {
                     val interaction = remember(floor.displayLabel) { MutableInteractionSource() }
-                    Button(
+                    // Tonal, not filled. Three filled blue buttons are three primary CTAs
+                    // shouting at once, which CLAUDE.md's harness allows one of — and they
+                    // are peers, so none of them may look like the answer.
+                    FilledTonalButton(
                         onClick = { onPickFloor(floor) },
                         enabled = enabled,
                         shape = MaterialTheme.shapes.small,
