@@ -101,6 +101,15 @@ the confirmation screen. Recognition is **on-device**: Vision on iOS, ML Kit's o
 Korean text model on Android. The photo never leaves the phone (docs/06 §1, docs/09), and
 neither does the text read from it.
 
+The Android model must be the **bundled** artifact, not the Play-services one that fetches
+on first use. An underground car park is where this feature is worth the most and where
+there is no network, and a model that downloads on demand would be missing at exactly the
+moment it is needed. The APK cost is the price of the feature working where it matters.
+
+The most valuable place to offer it is the confirmation screen: the user is standing at
+the pillar when the prompt arrives. Home and detail keep their existing 사진 추가 path and
+gain the same reading.
+
 ### What it produces
 A *suggestion*, never a saved value. Recognised text is parsed with the existing rules —
 floor by docs/02 §6, which already accepts `B3`, `지하 3층`, `3F` — and the result is
