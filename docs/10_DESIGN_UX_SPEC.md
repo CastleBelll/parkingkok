@@ -165,8 +165,19 @@ before**, most recent first — local history, no network, no guessing. A user w
 parks on B3 sees B3. With fewer than three past floors the row simply shows fewer, and a
 first-ever run shows only 직접 입력.
 
-Choosing a floor confirms in one tap. 직접 입력 opens the existing manual entry, prefilled
-with nothing, and saving there confirms.
+Choosing a floor confirms in one tap. Under the picks sit two escapes, side by side:
+
+```text
+[ 사진으로 입력 ]   [ 직접 입력 ]
+```
+
+`직접 입력` opens the existing manual entry, empty, and saving there confirms.
+`사진으로 입력` opens the camera, reads the pillar (docs/02 §6a) and opens that same manual
+entry with what it read already filled in. Photo first, because it is the faster path and
+typing less is the point.
+
+Neither adds a field to this screen. §7a's shape is deliberate, and an inline text box
+would make the quick picks compete with a keyboard.
 
 ### 주차 아님
 A text button, full width, under the choices — reachable without a scroll on the smallest
@@ -206,6 +217,11 @@ that expired unanswered (docs/05 §10a).
 
 Nothing else is a notification. Trace label prompts are a diagnostics tool and do not
 appear here.
+
+### The pending row
+A candidate still waiting for an answer sits at the top with **확인이 필요해요** on its
+second line, and is the only row with a chevron. That is how "rows that do nothing must
+not look tappable" reads from the other side: the one row that does something says so.
 
 ### Tapping a row
 A candidate still pending opens the confirmation screen. One that became a record opens

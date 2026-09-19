@@ -107,8 +107,16 @@ there is no network, and a model that downloads on demand would be missing at ex
 moment it is needed. The APK cost is the price of the feature working where it matters.
 
 The most valuable place to offer it is the confirmation screen: the user is standing at
-the pillar when the prompt arrives. Home and detail keep their existing 사진 추가 path and
-gain the same reading.
+the pillar when the prompt arrives. `사진으로 입력` there opens the camera and lands in the
+same manual entry `직접 입력` opens, prefilled (docs/10 §7a). The photo is **kept and
+attached to the record**, not read and thrown away — it is the pillar photo the user would
+otherwise have to take again from the detail screen.
+
+Home and detail are different: they have no editable floor or zone field for a suggestion
+to land in, and building one is not this feature. There, after a photo is attached, a
+single suggestion row appears **only for fields the record leaves empty**, and applies only
+when tapped. Nothing changes before the tap. A record that already says `B3` is not
+second-guessed by a photo.
 
 ### What it produces
 A *suggestion*, never a saved value. Recognised text is parsed with the existing rules —
@@ -132,8 +140,12 @@ helps when it can.
 
 ### Not analytics
 Recognised strings are floor, zone and bay — docs/17 §3 puts those on the forbidden list
-and docs/09 keeps them local. What may be counted is whether a suggestion was offered and
-whether the user kept it, as booleans, because that is how the feature earns its place.
+and docs/09 keeps them local.
+
+Counting whether a suggestion was offered and kept would be how the feature earns its
+place, but **v1 adds no event for it**. docs/17 §2 is a closed list of fourteen, and
+widening it for a feature with no field data yet is the wrong order: ship it, watch it,
+then decide what is worth measuring.
 
 ## 7. Active Home Hierarchy
 1. floor
