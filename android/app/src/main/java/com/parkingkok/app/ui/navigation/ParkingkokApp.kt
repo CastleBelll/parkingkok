@@ -170,7 +170,7 @@ private fun HomeRoute(container: AppContainer, onNavigate: (ParkingkokRoute) -> 
         onOpenDetail = { onNavigate(ParkingkokRoute.Detail(it)) },
         onOpenHistory = { onNavigate(ParkingkokRoute.History) },
         onOpenSettings = { onNavigate(ParkingkokRoute.Settings) },
-        // The bell in the mockup's header. 주차콕 has no notification centre of its own, so
+        // The bell in the mockup's header. 주차핀 has no notification centre of its own, so
         // it leads to the place its detection notifications are actually switched on and
         // off — a real destination rather than a decorative icon.
         onOpenNotificationSettings = { context.startActivity(notificationSettingsIntent(context)) },

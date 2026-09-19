@@ -43,7 +43,7 @@ class ParkingCompactWidgetReceiver : ParkingWidgetReceiver()
 class ParkingWideWidgetReceiver : ParkingWidgetReceiver()
 
 /**
- * Whether the user has placed any 주차콕 widget.
+ * Whether the user has placed any 주차핀 widget.
  *
  * A binder call to the widget manager, never a database read: `AppContainer` opens Room
  * lazily so a process started by a detection broadcast pays nothing for storage it will

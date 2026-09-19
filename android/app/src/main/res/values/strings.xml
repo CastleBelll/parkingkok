@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">주차콕</string>
+    <string name="app_name">주차핀</string>
 
     <!-- P0 diagnostics screen. Instrumentation only, not product UI. -->
     <string name="diagnostics_title">감지 진단 (P0)</string>
@@ -115,7 +115,7 @@
     <string name="diagnostics_trace_label_prompt_suppressed">알림 못 띄움</string>
 
     <!-- Brand header, shown on every root screen (design-references/01-home-main.png). -->
-    <string name="brand_name">주차콕</string>
+    <string name="brand_name">주차핀</string>
     <string name="brand_subtitle">자동 주차 기록</string>
     <!-- Two lines, right-aligned beside the header icons, as in the mockup. -->
     <string name="brand_tagline">주차는 쉽고\n일상은 더 가볍게 ☺</string>
@@ -271,7 +271,7 @@
       "no data leaves the device" claim — Firebase and ad SDK metadata does leave — so this
       says the specific true thing instead of the sweeping false one. Do not reword.
     -->
-    <string name="settings_analytics_footnote">주차 위치 좌표와 주차 사진은 주차콕 서버에 저장하지 않습니다.</string>
+    <string name="settings_analytics_footnote">주차 위치 좌표와 주차 사진은 주차핀 서버에 저장하지 않습니다.</string>
     <string name="settings_section_notification">알림</string>
     <string name="settings_notification_status">주차 감지 알림</string>
     <string name="settings_notification_pending_caption">감지된 주차를 알려주는 기능은 준비 중이에요</string>
@@ -287,7 +287,7 @@
     <string name="settings_permission_granted">허용됨</string>
     <string name="settings_permission_denied">거부됨</string>
     <string name="settings_permission_open">시스템 설정 열기</string>
-    <string name="settings_section_plus">주차콕 Plus</string>
+    <string name="settings_section_plus">주차핀 Plus</string>
     <string name="settings_plus_title">아직 준비 중이에요</string>
     <string name="settings_plus_caption">구독 기능은 이 버전에 없습니다</string>
     <string name="settings_section_data">데이터</string>
@@ -296,7 +296,7 @@
     <string name="settings_data_delete">주차 기록 전체 삭제</string>
     <string name="settings_data_delete_caption">이 기기에 저장된 기록을 지웁니다</string>
     <string name="settings_section_privacy">개인정보</string>
-    <string name="settings_privacy_body">주차콕은 위치, 사진, 메모를 서버로 보내지 않습니다. 모두 이 기기 안에만 있습니다.</string>
+    <string name="settings_privacy_body">주차핀은 위치, 사진, 메모를 서버로 보내지 않습니다. 모두 이 기기 안에만 있습니다.</string>
     <string name="settings_section_developer">개발자</string>
     <string name="settings_diagnostics">감지 진단 (P0)</string>
     <string name="settings_diagnostics_caption">감지 엔진 상태와 트레이스를 확인합니다</string>

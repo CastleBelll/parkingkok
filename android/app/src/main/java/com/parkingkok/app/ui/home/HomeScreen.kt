@@ -60,7 +60,6 @@ import com.parkingkok.app.domain.parking.ParkingRecord
 import com.parkingkok.app.domain.parking.ParkingSource
 import com.parkingkok.app.domain.photo.PhotoSource
 import com.parkingkok.app.theme.ParkingkokTheme
-import com.parkingkok.app.theme.elevation
 import com.parkingkok.app.theme.spacing
 import com.parkingkok.app.ui.components.BrandFooter
 import com.parkingkok.app.ui.components.BrandHeader
@@ -247,7 +246,7 @@ private fun ActiveParkingCard(
     onStepFloor: (Int) -> Unit,
 ) {
     // One step nearer than the rows below it: this is the card the screen is about.
-    ParkingkokCard(elevation = MaterialTheme.elevation.hero) {
+    ParkingkokCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
             // The live dot is paired with the words beside it; §8 of
             // docs/01_PRODUCT_REQUIREMENTS.md rules out signalling state by colour alone.
@@ -551,8 +550,13 @@ private fun PrimaryActions(
                 onClick = onPhoto,
                 trailing = { RowChevron(enabled = !photoBusy) },
             )
-        }
-        ParkingkokCard(contentPadding = 0.dp) {
+            // Detail used to sit in a card of its own. Three actions in two cards is the
+            // stack of panels the design harness calls the AI dashboard: the cards were
+            // drawing boundaries where the content has none. One group, divided.
+            HorizontalDivider(
+                modifier = Modifier.padding(start = MaterialTheme.spacing.large),
+                color = MaterialTheme.colorScheme.outlineVariant,
+            )
             ParkingkokRow(
                 title = stringResource(R.string.home_detail),
                 supporting = stringResource(R.string.home_detail_caption),

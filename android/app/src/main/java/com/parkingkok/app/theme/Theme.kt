@@ -14,7 +14,7 @@ import com.parkingkok.app.ui.motion.rememberMotionEnabled
  * docs/10_DESIGN_UX_SPEC.md §2 tokens mapped onto Material 3 roles.
  *
  * There is no `dynamicColor` switch. §3 states that dynamic colour "is **not** allowed to
- * replace core 주차콕 brand colours automatically"; a parameter defaulting to `true` — which
+ * replace core 주차핀 brand colours automatically"; a parameter defaulting to `true` — which
  * is what the Compose project template ships and what this file used to hold — is exactly
  * that prohibited behaviour, so the capability is gone rather than defaulted off.
  *
@@ -103,8 +103,8 @@ fun ParkingkokTheme(
 ) {
     CompositionLocalProvider(
         LocalParkingkokSpacing provides ParkingkokSpacing(),
-        LocalParkingkokElevation provides ParkingkokElevation(
-            tint = if (darkTheme) BrandPalette.DarkBackground else BrandPalette.LightTextPrimary,
+        LocalParkingkokSurfaces provides ParkingkokSurfaces(
+            border = if (darkTheme) BrandPalette.DarkDivider else BrandPalette.LightDivider,
         ),
         // Read once, here, so that every animation below this point obeys the same answer
         // and no screen has to remember to ask (docs/01_PRODUCT_REQUIREMENTS.md §8).
@@ -123,6 +123,6 @@ fun ParkingkokTheme(
 val MaterialTheme.spacing: ParkingkokSpacing
     @Composable @ReadOnlyComposable get() = LocalParkingkokSpacing.current
 
-/** Elevation tokens, reached the same way as `MaterialTheme.colorScheme`. */
-val MaterialTheme.elevation: ParkingkokElevation
-    @Composable @ReadOnlyComposable get() = LocalParkingkokElevation.current
+/** Surface tokens, reached the same way as `MaterialTheme.colorScheme`. */
+val MaterialTheme.surfaces: ParkingkokSurfaces
+    @Composable @ReadOnlyComposable get() = LocalParkingkokSurfaces.current

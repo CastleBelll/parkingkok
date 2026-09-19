@@ -24,7 +24,7 @@ internal object ParkingWidgetSizes {
 }
 
 /**
- * The 주차콕 home-screen widget (docs/04_ANDROID_IMPLEMENTATION.md §10).
+ * The 주차핀 home-screen widget (docs/04_ANDROID_IMPLEMENTATION.md §10).
  *
  * It reads its Glance state and nothing else. Room stays canonical and
  * `ParkingWidgetSync` is what puts a projection here (docs/06 §4, §7) — composing off the
