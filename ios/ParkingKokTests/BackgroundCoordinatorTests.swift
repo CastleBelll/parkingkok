@@ -59,13 +59,14 @@ struct BackgroundCoordinatorTests {
         #expect(motion.requestedWindow?.start == anchor)
         #expect(motion.requestedWindow?.end == TestTime.offset(0))
         #expect(snapshot.motionSamples.count == 2)
-        // This fixture is "drove, then walked", which M0A-2 reads as a parking
-        // transition — and docs/05 §14 makes that a checkpoint write. What must still
-        // hold is that nothing re-seeds: every write builds on the restored revision
-        // rather than resetting it.
+        // This fixture is "drove, then walked", which docs/05 §3a reads all the way to a
+        // candidate: the restored session had been driving for 600 s, past the 90 s bar,
+        // and the walk is the confirming signal. docs/05 §14 makes each step a checkpoint
+        // write. What must still hold is that nothing re-seeds: every write builds on the
+        // restored revision rather than resetting it.
         #expect(!store.savedCheckpoints.isEmpty)
         #expect(store.savedCheckpoints.allSatisfy { $0.revision > checkpoint.revision })
-        #expect(store.savedCheckpoints.last?.state == .idle)
+        #expect(store.savedCheckpoints.last?.state == .candidatePending)
     }
 
     @Test("A corrupt checkpoint is reported, not swallowed, and the app keeps going")

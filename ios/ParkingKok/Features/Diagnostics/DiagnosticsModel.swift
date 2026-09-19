@@ -65,6 +65,17 @@ final class DiagnosticsModel {
         await runtime.requestNotificationPermission()
         await refresh()
     }
+
+    #if PK_DEV
+        /// Field-test hook for docs/05 §10a. See
+        /// `BackgroundCoordinator.injectCandidateForFieldTest(walking:)` — the candidate
+        /// goes through the real §6/§8/§9 path, so `walking: false` scores `low` and must
+        /// post nothing.
+        func injectCandidate(walking: Bool) async {
+            await runtime.injectCandidateForFieldTest(walking: walking)
+            await refresh()
+        }
+    #endif
 }
 
 /// Presentation helpers. Kept beside the screen because they exist only for it.

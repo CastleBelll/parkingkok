@@ -421,3 +421,123 @@ enum TestTrace {
         )
     }
 }
+
+/// In-memory candidate store. One slot, exactly like the file it stands in for.
+final class StubParkingCandidateStore: ParkingCandidateStoring, @unchecked Sendable {
+    private let lock = NSLock()
+    private var current: ParkingCandidate?
+    private var saveError: ParkingCandidateStoreError?
+    private var saved: [ParkingCandidate] = []
+    private var clears = 0
+
+    init(current: ParkingCandidate? = nil, saveError: ParkingCandidateStoreError? = nil) {
+        self.current = current
+        self.saveError = saveError
+    }
+
+    /// Every candidate ever written, so "superseded, then replaced" is observable.
+    var savedCandidates: [ParkingCandidate] {
+        lock.withLock { saved }
+    }
+
+    var clearCount: Int {
+        lock.withLock { clears }
+    }
+
+    func load() -> ParkingCandidate? {
+        lock.withLock { current }
+    }
+
+    func save(_ candidate: ParkingCandidate) throws {
+        try lock.withLock {
+            if let saveError {
+                throw saveError
+            }
+            current = candidate
+            saved.append(candidate)
+        }
+    }
+
+    func clear() throws {
+        lock.withLock {
+            current = nil
+            clears += 1
+        }
+    }
+}
+
+/// Stands in for `UNUserNotificationCenter`, which a unit test cannot reach.
+///
+/// Posts are appended rather than deduplicated: the real centre replaces by identifier, so
+/// a test that wants to prove "re-posting does not stack" has to assert on the identifier
+/// this records, not on the count.
+final class StubCandidateNotifier: CandidateNotifying, @unchecked Sendable {
+    private let lock = NSLock()
+    private var posted: [ParkingCandidate] = []
+    private var withdrawn: [UUID] = []
+
+    var postedCandidates: [ParkingCandidate] {
+        lock.withLock { posted }
+    }
+
+    /// The identifiers the notification centre would have seen. Equal identifiers are what
+    /// "replaces rather than stacks" means.
+    var postedRequestIdentifiers: [String] {
+        postedCandidates.map { CandidateNotificationAction.requestIdentifier(for: $0.id) }
+    }
+
+    var withdrawnCandidateIds: [UUID] {
+        lock.withLock { withdrawn }
+    }
+
+    func post(_ candidate: ParkingCandidate) async {
+        lock.withLock { posted.append(candidate) }
+    }
+
+    func withdraw(candidateId: UUID) async {
+        lock.withLock { withdrawn.append(candidateId) }
+    }
+}
+
+/// Records the state transitions the screen asks the engine for.
+@MainActor
+final class StubCandidateResolver: CandidateResolving {
+    private(set) var outcomes: [CandidateOutcome] = []
+
+    func resolveCandidate(_ outcome: CandidateOutcome) async {
+        outcomes.append(outcome)
+    }
+}
+
+enum TestCandidate {
+    /// A candidate with a stated bucket, for the screens and the model — the policy's own
+    /// tests are what hold the bucket to the evidence.
+    static func make(
+        id: UUID = UUID(),
+        detectedAt: Date = TestTime.reference,
+        confidence: ConfidenceBucket = .medium,
+        reasonCodes: [CandidateReasonCode] = [.recentVehicleActivity, .vehicleExitDetected, .walkingAfterVehicle],
+        lastReliableLocation: LastReliableLocation? = nil,
+        expiresIn: TimeInterval = ParkingCandidatePolicy.expiry
+    ) -> ParkingCandidate {
+        ParkingCandidate(
+            id: id,
+            detectedAt: detectedAt,
+            confidenceBucket: confidence,
+            reasonCodes: reasonCodes,
+            lastReliableLocation: lastReliableLocation,
+            expiresAt: detectedAt.addingTimeInterval(expiresIn),
+            score: 70,
+            driveDuration: 900,
+            driveDistanceMeters: 5000,
+            accuracyBucket: .good
+        )
+    }
+
+    static let location = LastReliableLocation(
+        latitude: TestGeo.originLatitude,
+        longitude: TestGeo.originLongitude,
+        horizontalAccuracy: 12,
+        capturedAt: TestTime.reference
+    )
+}

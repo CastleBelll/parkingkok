@@ -171,6 +171,7 @@ struct TraceLabelPromptTests {
 
     // MARK: - What a tap writes
 
+    @MainActor
     @Test("Tapping a mode writes that label to the session")
     func tapWritesLabel() throws {
         // Arrange
@@ -202,6 +203,7 @@ struct TraceLabelPromptTests {
 
     /// The body tap opens the app, where the existing labelling screen takes over; it must
     /// not silently write a mode nobody chose.
+    @MainActor
     @Test("The body tap writes nothing")
     func defaultActionWritesNothing() throws {
         // Arrange
@@ -223,6 +225,7 @@ struct TraceLabelPromptTests {
 
     /// The rolling cap can evict a session between the prompt and the tap, which is an
     /// ordinary outcome and must not throw out of a notification callback.
+    @MainActor
     @Test("Tapping a session the store no longer has is refused, not thrown")
     func missingSessionIsRefused() {
         // Arrange

@@ -63,7 +63,6 @@ struct HistoryView: View {
                     .padding(.top, PKSpacing.s)
                     .pkEntrance(3)
             }
-
         }
         .navigationTitle("주차 기록")
         .navigationBarTitleDisplayMode(.large)

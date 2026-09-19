@@ -10,6 +10,9 @@ enum AppRoute: Hashable {
     /// The active parking, or a finished one opened from history.
     case parkingDetail(id: UUID)
     case history
+    /// docs/10 §7a: "A screen, pushed, with a normal back." Never a sheet and never an
+    /// alert — backing out has to leave the candidate pending rather than answer it.
+    case candidateConfirmation(id: UUID)
     case settings(focus: SettingsFocus?)
     /// P0 instrumentation. Reachable from settings → 개발자, and still the only way to
     /// read the field-test counters.

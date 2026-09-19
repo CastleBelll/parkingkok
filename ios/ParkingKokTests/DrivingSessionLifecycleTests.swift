@@ -144,7 +144,10 @@ struct DrivingSessionLifecycleTests {
         #expect(!capture.isActive())
         #expect(capture.startCount == capture.stopCount)
         #expect(snapshot.lastDrivingSessionEndReason == .walkingDetected)
-        #expect(store.savedCheckpoints.last?.state == .idle)
+        // docs/05 §3a: 120 s of vehicle activity clears the 90 s bar with no fix ever
+        // arriving, so the walk lands on `CANDIDATE_PENDING` rather than back on `IDLE`.
+        // That is the underground drive the promotion rule was corrected for.
+        #expect(store.savedCheckpoints.last?.state == .candidatePending)
     }
 
     @Test("Silence past the ceiling ends the session and releases the capture")
@@ -264,20 +267,25 @@ struct DrivingSessionLifecycleTests {
         let harness = harness(motion: [automotive(secondsAgo: 30)])
         await harness.coordinator.rehydrate(launchReason: .significantLocationChange)
 
-        // Act — two moving fixes 900 m apart.
+        // Act — two moving fixes 900 m apart, then one past docs/05 §3a's 90 s bar. The
+        // third is what promotes: distance no longer does that on its own.
         await harness.coordinator.handleDrivingFix(TestGeo.fix(at: reference, metersNorth: 0, accuracy: 8))
         harness.clock.advance(by: 60)
         await harness.coordinator.handleDrivingFix(
             TestGeo.fix(at: reference.addingTimeInterval(60), metersNorth: 900, accuracy: 8)
         )
+        harness.clock.advance(by: 30)
+        await harness.coordinator.handleDrivingFix(
+            TestGeo.fix(at: reference.addingTimeInterval(90), metersNorth: 900, accuracy: 8)
+        )
         let snapshot = await harness.coordinator.currentSnapshot()
 
         // Assert
-        #expect(snapshot.drivingConfirmedAt == reference.addingTimeInterval(60))
-        #expect(snapshot.reliableLocationUpdateCount == 2)
+        #expect(snapshot.drivingConfirmedAt == reference.addingTimeInterval(90))
+        #expect(snapshot.reliableLocationUpdateCount == 3)
         let saved = harness.store.savedCheckpoints.last
         #expect(saved?.state == .driving)
-        #expect(saved?.lastReliableLocation?.capturedAt == reference.addingTimeInterval(60))
+        #expect(saved?.lastReliableLocation?.capturedAt == reference.addingTimeInterval(90))
         // Haversine on a sphere; a metre of slack against the nominal 900 m.
         #expect(abs((saved?.travelDistanceEstimate ?? 0) - 900) < 2)
     }

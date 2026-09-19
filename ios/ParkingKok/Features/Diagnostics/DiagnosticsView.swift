@@ -24,6 +24,7 @@ struct DiagnosticsView: View {
             permissionSection
             checkpointSection
             drivingSessionSection
+            candidateSection
             traceSection
             traceGapSection
             motionSection
@@ -87,6 +88,36 @@ struct DiagnosticsView: View {
                     Task { await model.requestNotificationPermission() }
                 }
             }
+        }
+    }
+
+    /// docs/05 §10a. Counters first — they are what a field run is read from — and the
+    /// DEV injection below them.
+    private var candidateSection: some View {
+        Section("주차 후보") {
+            LabeledContent("생성", value: "\(model.snapshot.candidateCreatedCount)건")
+            LabeledContent("규칙 미충족", value: "\(model.snapshot.candidateRuleUnmetCount)건")
+            LabeledContent("최근 신뢰도", value: model.snapshot.lastCandidateConfidence?.rawValue ?? "없음")
+            LabeledContent(
+                "전이 진입",
+                value: model.snapshot.parkingTransitionEnteredAt.map(Self.time) ?? "없음"
+            )
+            if let failure = model.snapshot.candidateStoreFailure {
+                Text(failure)
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+            }
+            #if PK_DEV
+                // The only way to see the notification and the confirmation screen without
+                // parking a car. Not compiled into STAGING or PROD, and it bypasses no gate:
+                // `medium` posts, `low` is recorded in silence, exactly as a real trip would.
+                Button("후보 주입 (medium · 알림 게시)") {
+                    Task { await model.injectCandidate(walking: true) }
+                }
+                Button("후보 주입 (low · 알림 없음)") {
+                    Task { await model.injectCandidate(walking: false) }
+                }
+            #endif
         }
     }
 

@@ -112,11 +112,10 @@ struct UserNotificationLabelPromptDelivery: LabelPromptDelivering {
     }
 
     func deliver(_ prompt: TraceLabelPrompt) async {
-        // Registered here rather than at launch so the whole feature is one file to delete.
-        // `setNotificationCategories` replaces the set, which is safe only while this is
-        // the app's sole category — the M3 candidate notification will need a single
-        // registration point, and this is the line that has to move then.
-        center.setNotificationCategories([Self.category])
+        // The candidate notification arrived and `setNotificationCategories` replaces the
+        // whole set, so registration moved to `PKNotificationCategories`. This call site
+        // stays because a prompt can be the first notification of a launch.
+        PKNotificationCategories.register()
 
         let content = UNMutableNotificationContent()
         content.title = TraceLabelPrompt.title
@@ -143,15 +142,23 @@ struct UserNotificationLabelPromptDelivery: LabelPromptDelivering {
             )
         }
     }
+}
 
-    private static var category: UNNotificationCategory {
-        let actions = TraceLabelPrompt.offeredModes.prefix(maximumActionCount).map { mode in
-            UNNotificationAction(
-                identifier: TraceLabelPromptAction.identifier(for: mode),
-                title: mode.promptActionTitle,
-                options: []
-            )
-        }
+/// The diagnostics category, owned here and registered by `PKNotificationCategories`.
+///
+/// Separate from the delivery type so the app's one registration point can build the whole
+/// set without reaching into a delivery implementation.
+enum TraceLabelPromptCategory {
+    static var category: UNNotificationCategory {
+        let actions = TraceLabelPrompt.offeredModes
+            .prefix(UserNotificationLabelPromptDelivery.maximumActionCount)
+            .map { mode in
+                UNNotificationAction(
+                    identifier: TraceLabelPromptAction.identifier(for: mode),
+                    title: mode.promptActionTitle,
+                    options: []
+                )
+            }
         return UNNotificationCategory(
             identifier: TraceLabelPromptAction.categoryIdentifier,
             actions: Array(actions),
@@ -166,11 +173,23 @@ struct UserNotificationLabelPromptDelivery: LabelPromptDelivering {
 /// The notification arrives in a process that may have been launched for it, so this is
 /// wired in `DetectionRuntime.bootstrap` and holds the store directly: there is no view
 /// model and no screen involved in a one-tap label.
-final class TraceLabelPromptResponder: NSObject, UNUserNotificationCenterDelegate {
+///
+/// Not the `UNUserNotificationCenterDelegate` itself any more — the app has two categories
+/// now, and one object can be the delegate. `PKNotificationRouter` is that object and
+/// hands this one the responses it recognises.
+@MainActor
+final class TraceLabelPromptResponder: NotificationResponding {
+    let categoryIdentifier = TraceLabelPromptAction.categoryIdentifier
+
     private let store: any TraceStoring
 
     init(store: any TraceStoring) {
         self.store = store
+    }
+
+    func handle(actionIdentifier: String, userInfo: [String: String]) {
+        let sessionId = userInfo[TraceLabelPromptAction.sessionIdKey].flatMap(UUID.init(uuidString:))
+        applyLabel(actionIdentifier: actionIdentifier, sessionId: sessionId)
     }
 
     /// The pure half, so the mapping from an action identifier to a written label is
@@ -192,16 +211,5 @@ final class TraceLabelPromptResponder: NSObject, UNUserNotificationCenterDelegat
             AppLog.detection.notice("trace label prompt tap could not be applied: \(String(describing: error))")
             return false
         }
-    }
-
-    func userNotificationCenter(
-        _ center: UNUserNotificationCenter,
-        didReceive response: UNNotificationResponse,
-        withCompletionHandler completionHandler: @escaping () -> Void
-    ) {
-        let userInfo = response.notification.request.content.userInfo
-        let sessionId = (userInfo[TraceLabelPromptAction.sessionIdKey] as? String).flatMap(UUID.init(uuidString:))
-        applyLabel(actionIdentifier: response.actionIdentifier, sessionId: sessionId)
-        completionHandler()
     }
 }
