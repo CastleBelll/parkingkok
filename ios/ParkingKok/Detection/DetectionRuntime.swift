@@ -16,6 +16,9 @@ final class DetectionRuntime {
     private let locationCapture: LiveDrivingLocationCapture
     private let coordinator: BackgroundCoordinator
     private let preference: SmartDetectionPreference
+    /// docs/05 §3a "The car link". Sampled at each wake rather than observed as an event —
+    /// see `AudioRouteCarLinkObserver` for what iOS actually exposes.
+    private let carLink: any CarLinkObserving
 
     private(set) var motionAuthorization: MotionAuthorization
     private(set) var isMotionHistoryAvailable: Bool
@@ -52,9 +55,11 @@ final class DetectionRuntime {
         labelPromptDelivery: (any LabelPromptDelivering)? = nil,
         candidateStore: (any ParkingCandidateStoring)? = nil,
         candidateNotifier: (any CandidateNotifying)? = nil,
-        analytics: any AnalyticsRecording = AnalyticsComposition.recorder
+        analytics: any AnalyticsRecording = AnalyticsComposition.recorder,
+        carLink: any CarLinkObserving = AudioRouteCarLinkObserver()
     ) {
         self.monitor = monitor
+        self.carLink = carLink
         self.locationCapture = locationCapture
         self.motionHistory = motionHistory
         self.preference = preference
@@ -156,11 +161,12 @@ final class DetectionRuntime {
         AppLog.lifecycle.notice("bootstrap reason=\(launchReason.rawValue, privacy: .public)")
 
         let isOptedIn = preference.isEnabled
-        Task { [weak self, coordinator] in
+        Task { [weak self, coordinator, carLink] in
             // Before rehydration, because rehydration replays motion history and docs/05 §9
             // records nothing while the user is opted out.
             await coordinator.setTraceRecordingEnabled(isOptedIn)
             await coordinator.rehydrate(launchReason: launchReason)
+            await coordinator.handleCarLink(carLink.observe())
             #if PK_DEV
                 // Field-test hooks, DEV only. See `startDrivingSessionForFieldTest` and
                 // `injectCandidateIfRequestedAtLaunch`.
@@ -392,8 +398,11 @@ extension DetectionRuntime: SignificantLocationMonitorDelegate {
     /// The one path that runs while nobody is watching, so it is the one whose evidence
     /// most needs to outlive the process.
     func monitorDidReceiveLocation(_ sample: LocationQualitySample) {
-        Task { [weak self, coordinator] in
+        Task { [weak self, coordinator, carLink] in
             await coordinator.handleSignificantChange(sample)
+            // The one wake that reliably happens during a drive, so it is where the §3a
+            // link edges are derived from consecutive samples of the audio route.
+            await coordinator.handleCarLink(carLink.observe())
             await self?.exportDiagnostics()
         }
     }
@@ -434,8 +443,12 @@ extension DetectionRuntime: BoundedLocationCaptureDelegate {
     }
 
     func captureWatchdogDidTick() {
-        Task { [weak self, coordinator] in
+        Task { [weak self, coordinator, carLink] in
             await coordinator.evaluateDrivingTimeouts()
+            // While a bounded session is open this ticks far more often than a significant
+            // change arrives, which is what makes a disconnect at the destination land in
+            // seconds rather than minutes.
+            await coordinator.handleCarLink(carLink.observe())
             await self?.exportDiagnostics()
         }
     }

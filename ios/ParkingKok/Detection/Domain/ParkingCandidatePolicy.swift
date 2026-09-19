@@ -32,9 +32,10 @@ struct ParkingEvidence: Sendable, Equatable {
     /// in §13. **Supporting evidence only**: §6 says it can never satisfy the rule alone,
     /// which is why it is absent from `confirmationSignals`.
     var gpsQualityDegraded = false
-    /// A trusted car projection (CarPlay) disconnected. Always `false` in this build —
-    /// nothing observes CarPlay yet — and modelled anyway because §8 gives it a weight and
-    /// Android's engine has the same field.
+    /// A car link went away — CarPlay/Android Auto projection, or the car's Bluetooth
+    /// audio (docs/05 §3a "The car link"). §8 weighs the two the same, so there is one
+    /// flag; the *kind* is carried by `CarLinkKind` and never becomes a reason code,
+    /// because §4 is closed.
     var carProjectionDisconnected = false
     /// A reliable point was captured for this drive.
     var reliableLocationCaptured = false

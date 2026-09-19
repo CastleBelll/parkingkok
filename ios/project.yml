@@ -111,6 +111,12 @@ targets:
     platform: iOS
     sources:
       - path: ParkingKokTests
+      # docs/05_CROSS_PLATFORM_DOMAIN_CONTRACT.md §8: the parity fixtures both platforms
+      # replay. A folder reference, not a file list — the runner enumerates what is there,
+      # so a fixture added to the contract cannot be silently skipped by this manifest.
+      - path: ../platform-tests
+        buildPhase: resources
+        type: folder
     dependencies:
       - target: ParkingKok
     settings:

@@ -9,6 +9,14 @@ enum DrivingSessionEndReason: String, Sendable, Equatable, Codable {
     /// Core Motion stopped reporting `automotive` and started reporting `walking` —
     /// the parking transition the product is built around.
     case walkingDetected
+    /// The normalized `vehicle_exit` edge (docs/05_CROSS_PLATFORM_DOMAIN_CONTRACT.md §2).
+    /// Distinct from `walkingDetected` because Android delivers a real IN_VEHICLE EXIT
+    /// while iOS derives one, and a fixture only ever carries this one.
+    case vehicleExit
+    /// docs/05 §3a "The car link": the projection or the car's Bluetooth audio went away.
+    /// The only end reason that reaches `CANDIDATE_PENDING` without passing through
+    /// `PARKING_TRANSITION`.
+    case carLinkDisconnected
     /// No further vehicle evidence within `DrivingSessionTimeoutPolicy.vehicleEvidenceTimeout`.
     case vehicleEvidenceExpired
     /// docs/05 §3a `DRIVING → PARKING_TRANSITION`: movement evidence went quiet for
@@ -378,6 +386,15 @@ enum DrivingConfirmationPolicy {
     /// the other.
     static let minimumVehicleDuration: TimeInterval = 90
 
+    /// docs/05 §3a `drivingCandidateWindow`: how long `DRIVING_CANDIDATE` may wait for a
+    /// promotion before it gives up and returns to `IDLE`.
+    ///
+    /// 300 s, which §3a takes from §7's `vehicleEvidenceMaxAge` — evidence older than that
+    /// is already not counted. It is deliberately longer than `minimumVehicleDuration`, so
+    /// on a wake where both windows have elapsed the promotion is the one that became true
+    /// first and the engine reads it first.
+    static let drivingCandidateWindow: TimeInterval = 300
+
     /// docs/05 §7's trip minimums. **No longer the promotion gate** — see `isConfirmed` —
     /// but still what decides the `vehicle_duration_met` / `vehicle_distance_met` reason
     /// codes and §8's "comfortably over minimum" weight.
@@ -430,7 +447,16 @@ enum DrivingSessionTimeoutPolicy {
     static let vehicleEvidenceTimeout: TimeInterval = 10 * 60
 
     /// The reason to stop right now, or `nil` to keep going.
+    ///
+    /// Both halves, for the one caller that needs both: recreating a session from a
+    /// checkpoint written by a process that has since died.
     static func expiryReason(for evidence: DrivingEvidence, now: Date) -> DrivingSessionEndReason? {
+        boundReason(for: evidence, now: now) ?? silenceReason(for: evidence, now: now)
+    }
+
+    /// The bounds `ParkingDetectionEngine` owns, because both are rules about the drive
+    /// itself rather than about how a platform delivers evidence.
+    static func boundReason(for evidence: DrivingEvidence, now: Date) -> DrivingSessionEndReason? {
         if evidence.duration(now: now) >= maximumDuration {
             return .maximumDurationReached
         }
@@ -441,13 +467,24 @@ enum DrivingSessionTimeoutPolicy {
            ParkingTransitionPolicy.isMovementIdle(lastMovingSampleAt: evidence.lastMovingSampleAt, now: now) {
             return .movementIdle
         }
+        return nil
+    }
+
+    /// The **adapter's** bound, and the engine deliberately does not apply it.
+    ///
+    /// iOS polls Core Motion history, so the absence of automotive evidence is the only
+    /// way an exit edge ever arrives; `BackgroundCoordinator` turns that silence into the
+    /// normalized `vehicle_exit` the contract's §2 vocabulary has. Android gets a real
+    /// IN_VEHICLE EXIT and needs nothing here, and a fixture carries its exit explicitly —
+    /// `subway_commute_underground.json` has 45 minutes between its `vehicle_enter` and
+    /// its `vehicle_exit`, and an engine that expired vehicle evidence on its own clock
+    /// could never replay it.
+    static func silenceReason(for evidence: DrivingEvidence, now: Date) -> DrivingSessionEndReason? {
         // Before any vehicle observation lands, the session start is the anchor —
         // otherwise a session opened on a stale signal would never time out.
         let anchor = evidence.lastVehicleEvidenceAt ?? evidence.startedAt
-        if now.timeIntervalSince(anchor) >= vehicleEvidenceTimeout {
-            return .vehicleEvidenceExpired
-        }
-        return nil
+        guard now.timeIntervalSince(anchor) >= vehicleEvidenceTimeout else { return nil }
+        return .vehicleEvidenceExpired
     }
 }
 

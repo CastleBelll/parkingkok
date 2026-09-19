@@ -93,16 +93,34 @@ struct RehydrationSnapshot: Sendable, Equatable {
     /// Last candidate write failure. Best-effort like every other persistence path here,
     /// so the failure has to be visible or it is silent.
     var candidateStoreFailure: String?
+    /// Car links the adapter currently observes (docs/05 §3a "The car link"). Exported so
+    /// the field checklist can tell "the phone never saw the car" from "the link was seen
+    /// and the engine ignored it".
+    var connectedCarLinks: Set<CarLinkKind> = []
+    /// Whether the audio route could be read at all. `nil` means it has not been sampled
+    /// yet; a description means the sample failed, which is the difference between "no car"
+    /// and "no answer".
+    var carLinkFailure: String?
 }
 
-/// Owns the detection state that outlives any one screen or callback.
+/// The adapter between the platform and `ParkingDetectionEngine`.
 ///
-/// An `actor` because the checkpoint is shared mutable state touched from a background
-/// relaunch, a delegate callback, and the UI (docs/03_SYSTEM_ARCHITECTURE.md §4).
+/// An `actor` because the state it holds is touched from a background relaunch, a delegate
+/// callback and the UI (docs/03_SYSTEM_ARCHITECTURE.md §4).
 ///
-/// Scope note: this coordinates rehydration, the bounded driving session, and the
-/// `DRIVING → PARKING_TRANSITION → CANDIDATE_PENDING` half of the docs/05 §3a table.
-/// Departure (`PARKED → DEPARTURE_CANDIDATE`, §11) is not implemented here yet.
+/// ### What moved out of here
+/// The §3a transition table used to live in this type. It is now `ParkingDetectionEngine`,
+/// and the split is what lets `platform-tests/*.json` be replayed through the very code the
+/// device runs. What remains is everything that is genuinely about *this platform*:
+///
+/// * turning Core Motion history and Core Location callbacks into the §2 normalized events,
+///   including the `vehicle_exit` edge iOS has to derive because it polls history rather
+///   than receiving transitions,
+/// * performing the `DetectionEffect`s — files, notifications, analytics, the bounded
+///   capture,
+/// * trace recording (§9) and the diagnostics snapshot.
+///
+/// Departure (`PARKED → DEPARTURE_CANDIDATE`, §11) is not implemented yet on either side.
 actor BackgroundCoordinator {
     private let checkpointStore: any DetectionCheckpointStoring
     private let motionHistory: any MotionHistoryProviding
@@ -122,16 +140,14 @@ actor BackgroundCoordinator {
     /// it is off nothing is recorded, and turning it off closes the open session.
     private var isTraceRecordingEnabled = true
 
-    private var checkpoint: DetectionCheckpoint?
+    private let engine: ParkingDetectionEngine
     private var snapshot = RehydrationSnapshot()
-    /// Non-nil exactly while a bounded session is open.
-    private var drivingEvidence: DrivingEvidence?
-    /// Newest vehicle observation that has already opened a session. Motion history is
-    /// replayed on every wake, so without this the same `automotive` sample would reopen
-    /// a session the walking transition had just closed.
+    /// Newest vehicle observation already handed to the engine. Motion history is replayed
+    /// on every wake, so without this the same `automotive` sample would send a second
+    /// `vehicle_enter` for a drive that is already under way.
     private var consumedVehicleEvidenceAt: Date?
-    /// Non-nil exactly while the state is `PARKING_TRANSITION`.
-    private var parkingTransition: ParkingTransition?
+    /// Newest non-automotive observation already handed to the engine, for the same reason.
+    private var consumedVehicleExitAt: Date?
 
     init(
         checkpointStore: any DetectionCheckpointStoring,
@@ -141,7 +157,8 @@ actor BackgroundCoordinator {
         traceRecorder: TraceRecorder? = nil,
         candidateStore: (any ParkingCandidateStoring)? = nil,
         candidateNotifier: (any CandidateNotifying)? = nil,
-        analytics: any AnalyticsRecording = DisabledAnalyticsRecorder()
+        analytics: any AnalyticsRecording = DisabledAnalyticsRecorder(),
+        engine: ParkingDetectionEngine = ParkingDetectionEngine()
     ) {
         self.checkpointStore = checkpointStore
         self.motionHistory = motionHistory
@@ -151,21 +168,7 @@ actor BackgroundCoordinator {
         self.candidateStore = candidateStore
         self.candidateNotifier = candidateNotifier
         self.analytics = analytics
-    }
-
-    /// The drive that just ended, held while `PARKING_TRANSITION` decides what it was.
-    ///
-    /// docs/05 §3a: "codes accumulate as evidence arrives and travel with the candidate".
-    /// `evidence` is that accumulation — it is added to as signals show up and handed to
-    /// the policy unchanged, never recomputed at the end from the final state.
-    private struct ParkingTransition {
-        let enteredAt: Date
-        /// Newest vehicle observation of the drive. "After the vehicle" is measured from
-        /// here, not from `enteredAt`, so a walk that began before the session formally
-        /// closed still counts.
-        let vehicleReference: Date
-        let entryReason: DrivingSessionEndReason
-        var evidence: ParkingEvidence
+        self.engine = engine
     }
 
     func currentSnapshot() -> RehydrationSnapshot {
@@ -173,7 +176,7 @@ actor BackgroundCoordinator {
     }
 
     var isDrivingSessionOpen: Bool {
-        drivingEvidence != nil
+        snapshot.drivingSessionStartedAt != nil
     }
 
     // MARK: - Rehydration
@@ -195,7 +198,6 @@ actor BackgroundCoordinator {
         snapshot.checkpointLoad = load
 
         let restored = load.checkpoint
-        checkpoint = restored
         snapshot.currentCheckpoint = restored
 
         switch load {
@@ -207,24 +209,35 @@ actor BackgroundCoordinator {
             )
             snapshot.lastLocationAt = loaded.lastLocationAt
         case .absent:
-            // First run on this install: give process death something to restore.
-            persist(DetectionCheckpoint.initial(at: now))
+            break
         case let .failed(failure):
-            // Deliberately does *not* seed. Overwriting here would hide the damage and
-            // make a real data-loss bug look like a fresh install.
+            // The engine is *not* seeded from a failure. Overwriting here would hide the
+            // damage and make a real data-loss bug look like a fresh install.
             AppLog.detection.error("checkpoint load failed: \(failure.diagnosticDescription, privacy: .public)")
         }
+
+        if restored?.state == .driving || restored?.state == .drivingCandidate {
+            snapshot.drivingSessionResumedFromCheckpoint = true
+            snapshot.drivingSessionStartedAt = restored?.stateEnteredAt
+        }
+        await apply(
+            engine.restore(
+                restored,
+                pendingCandidate: candidateStore?.load(),
+                // A failed load is not an absent one: seeding here would hide the damage
+                // and make a real data-loss bug look like a fresh install.
+                seedIfAbsent: {
+                    if case .failed = load { return false }
+                    return true
+                }(),
+                now: now
+            ),
+            now: now
+        )
 
         // Anchored on the *restored* checkpoint only. A checkpoint seeded a moment ago
         // would collapse the window to zero and skip the replay entirely.
         await reconstructMotionHistory(now: now, anchor: restored?.latestTimestamp)
-
-        // docs/04 §3: "Sessions must be recreated on relevant background relaunch." A
-        // checkpoint that says we were driving means the previous process owned a live
-        // session that died with it; nothing else will ever reopen it.
-        await resumeDrivingSessionIfInterrupted(now: now)
-        restoreParkingTransitionIfInterrupted(now: now)
-        await expirePendingCandidateIfDue(now: now)
         await evaluateMotionEvidence(now: now)
     }
 
@@ -257,24 +270,17 @@ actor BackgroundCoordinator {
         // bounded fix from 10s ago clears the bound while still being older than what the
         // checkpoint already holds. Writing it would walk `lastLocationAt` backwards,
         // which widens the motion replay window and ages the checkpoint on paper.
-        //
-        // Android reaches the same rule from the other side: its reliable-location
-        // selector refuses a sample that is not newer, so the value it writes alongside
-        // can never regress.
-        guard sample.timestamp > (checkpoint?.lastLocationAt ?? .distantPast) else {
+        let effects = await engine.noteSignificantChange(at: sample.timestamp)
+        guard !effects.isEmpty else {
             snapshot.supersededLocationDropCount += 1
             return
         }
 
         snapshot.lastLocationAt = sample.timestamp
         snapshot.lastLocationAccuracy = sample.horizontalAccuracy
+        await apply(effects, now: now)
 
-        var updated = checkpoint ?? DetectionCheckpoint.initial(at: now)
-        updated.lastLocationAt = sample.timestamp
-        updated.revision += 1
-        persist(updated)
-
-        await reconstructMotionHistory(now: now, anchor: checkpoint?.latestTimestamp)
+        await reconstructMotionHistory(now: now, anchor: snapshot.currentCheckpoint?.latestTimestamp)
         await evaluateMotionEvidence(now: now)
     }
 
@@ -298,54 +304,46 @@ actor BackgroundCoordinator {
 
     /// One fix from the bounded session (docs/04 §3 DRIVING).
     ///
-    /// Everything time-dependent is decided here rather than on a timer: at ~1 Hz the fix
-    /// stream is itself the clock, and the watchdog in `evaluateDrivingTimeouts()` only
-    /// has to cover the case where fixes stop arriving.
+    /// Everything time-dependent is decided by the engine's own windows rather than on a
+    /// timer: at ~1 Hz the fix stream is itself the clock, and `evaluateDrivingTimeouts()`
+    /// only has to cover the case where fixes stop arriving.
     func handleDrivingFix(_ fix: LocationFix) async {
-        guard var evidence = drivingEvidence else { return }
         let now = dateProvider.now
-
-        let accepted = evidence.record(fix: fix)
-        drivingEvidence = evidence
+        guard await engine.snapshot().driving != nil else { return }
         recordTrace { $0.record(fix: fix) }
-        snapshot.drivingFixCount = evidence.fixCount
-        snapshot.drivingMovingSampleCount = evidence.movingSampleCount
-        snapshot.drivingSpeedAvailableCount = evidence.speedAvailableCount
-        snapshot.drivingSpeedMissingCount = evidence.speedMissingCount
-        snapshot.drivingDerivedMovingSampleCount = evidence.derivedMovingSampleCount
-        snapshot.movementEvidenceRejectReason = evidence.movementEvidenceRejection
-        snapshot.drivingOutlierDropCount = evidence.outlierCount
-        snapshot.drivingDistanceMeters = evidence.distanceMeters
-        snapshot.drivingDistanceNoiseFloorRejectCount = evidence.distanceNoiseFloorRejectCount
-
-        if accepted {
-            updateReliableLocation(with: fix, now: now)
-        }
-
-        confirmDrivingIfReady(now: now)
-        await evaluateDrivingTimeouts(now: now)
+        await apply(engine.handle(.location(fix), now: now), now: now)
     }
 
     /// Watchdog entry point for the case the fix stream goes silent — a tunnel, a denied
     /// authorization, a Core Location stall. Without it a session could stay open with no
     /// fixes to close it.
     func evaluateDrivingTimeouts() async {
-        await evaluateDrivingTimeouts(now: dateProvider.now)
+        let now = dateProvider.now
+        await apply(engine.handle(.timerTick(at: now)), now: now)
+        await applySilenceBound(now: now)
     }
 
     func handleCaptureAuthorizationLost() async {
         snapshot.captureFailure = "authorization denied for live updates"
-        await endDrivingSession(reason: .authorizationLost, now: dateProvider.now)
+        await endDrivingSession(reason: .authorizationLost)
     }
 
     func handleCaptureFailure(_ description: String) async {
         snapshot.captureFailure = description
-        await endDrivingSession(reason: .captureFailed, now: dateProvider.now)
+        await endDrivingSession(reason: .captureFailed)
     }
 
     /// Smart Detection was switched off. The session must not outlive the opt-in.
     func stopDrivingSessionForOptOut() async {
-        await endDrivingSession(reason: .smartDetectionDisabled, now: dateProvider.now)
+        await endDrivingSession(reason: .smartDetectionDisabled)
+    }
+
+    private func endDrivingSession(reason: DrivingSessionEndReason) async {
+        let now = dateProvider.now
+        await apply(engine.endDrivingSession(reason: reason, now: now), now: now)
+        // A mismatch between our bookkeeping and Core Location's must always resolve
+        // towards *off*, never towards a session nobody owns.
+        await releaseCaptureIfIdle()
     }
 
     /// docs/05 §9: "smart detection을 끄면 열린 세션을 즉시 닫는다."
@@ -362,6 +360,44 @@ actor BackgroundCoordinator {
         snapshot.traceReplayDropCount = recorder.replayDropCount
     }
 
+    /// The user answered (docs/05 §3a: `CANDIDATE_PENDING → PARKED` or `→ IDLE`).
+    ///
+    /// Called from `CandidateModel` through `DetectionRuntime`, because the screen and the
+    /// lock screen are where the answer arrives and the checkpoint is what has to remember
+    /// it across process death.
+    func resolveCandidate(_ outcome: CandidateOutcome) async {
+        let now = dateProvider.now
+        let event: DetectionEvent = outcome == .confirmed
+            ? .userConfirmedParking(at: now)
+            : .userRejectedParking(at: now)
+        await apply(engine.handle(event), now: now)
+    }
+
+    // MARK: - The car link (docs/05 §3a "The car link")
+
+    /// The adapter's only entry for a car link.
+    ///
+    /// **The link is an optional signal.** Every §3a transition still stands on motion and
+    /// location alone, and this method existing changes nothing when it is never called —
+    /// which is the ordinary case on iOS, where the audio route is all that is reachable
+    /// (see `CarLinkMonitor`).
+    func handleCarLink(_ state: CarLinkObservation) async {
+        let now = dateProvider.now
+        snapshot.carLinkFailure = state.failure
+        let observed = state.connected
+        let previous = snapshot.connectedCarLinks
+        guard observed != previous else { return }
+        snapshot.connectedCarLinks = observed
+
+        for kind in observed.subtracting(previous).sorted(by: { $0.rawValue < $1.rawValue }) {
+            await apply(engine.handle(.carLinkConnected(at: now, kind: kind)), now: now)
+        }
+        for kind in previous.subtracting(observed).sorted(by: { $0.rawValue < $1.rawValue }) {
+            await apply(engine.handle(.carLinkDisconnected(at: now, kind: kind)), now: now)
+        }
+        await releaseCaptureIfIdle()
+    }
+
     #if PK_DEV
         /// Opens a bounded session without waiting for Core Motion.
         ///
@@ -375,85 +411,59 @@ actor BackgroundCoordinator {
         /// DEV configuration only: `PK_DEV` is defined in `Config/Dev.xcconfig` and in no
         /// other configuration, so nothing here is compiled into STAGING or PROD.
         func startDrivingSessionForFieldTest() async {
-            guard drivingEvidence == nil else { return }
             let now = dateProvider.now
-            await startDrivingSession(at: now, now: now)
+            guard await engine.snapshot().driving == nil else { return }
+            consumedVehicleEvidenceAt = now
+            await apply(engine.handle(.vehicleEnter(at: now, confidence: .high)), now: now)
         }
 
         func stopDrivingSessionForFieldTest() async {
-            await endDrivingSession(reason: .fieldTestStopped, now: dateProvider.now)
+            await endDrivingSession(reason: .fieldTestStopped)
         }
 
-        /// Creates a candidate from synthetic evidence, **through the real path**.
+        /// Drives the **real** state machine from `IDLE` to a candidate, in one call.
         ///
-        /// The notification and the confirmation screen cannot be exercised without a
-        /// parked car, and a car cannot be parked on demand in a simulator or in a
-        /// meeting. So this builds the evidence a drive would have produced and hands it
-        /// to `createCandidate`, which then applies §6's rule, §8's weights, §9's buckets
-        /// and the `low`-posts-nothing gate exactly as it would for a real trip. **No gate
-        /// is bypassed** — that is the whole point, and it is why `walking` is the only
-        /// parameter: it is the difference between a `medium` that notifies and a `low`
-        /// that is recorded in silence.
+        /// A car cannot be parked on demand in a simulator or in a meeting, so this feeds
+        /// the §2 events a drive would have produced — `vehicle_enter`, a promotion past
+        /// the 90 s bar, `vehicle_exit`, then the confirming signal — straight into
+        /// `ParkingDetectionEngine`. **No gate is bypassed**: §3a's table, §6's rule, §8's
+        /// weights, §9's buckets and the `low`-posts-nothing rule all apply exactly as
+        /// they do for a real trip, which is why `walking` is the only parameter — it is
+        /// the difference between a `medium` that notifies and a `low` that is recorded in
+        /// silence.
         ///
         /// DEV configuration only: `PK_DEV` is defined in `Config/Dev.xcconfig` and
         /// nowhere else, so none of this is compiled into STAGING or PROD.
         func injectCandidateForFieldTest(walking: Bool) async {
             let now = dateProvider.now
-            let transition = ParkingTransition(
-                enteredAt: now,
-                vehicleReference: now,
-                entryReason: .walkingDetected,
-                evidence: ParkingEvidence(
-                    hasMeaningfulVehicleSession: true,
-                    vehicleEnded: true,
-                    walkingAfterVehicle: walking,
-                    stationaryAfterVehicle: !walking,
-                    reliableLocationCaptured: checkpoint?.lastReliableLocation != nil,
-                    driveDuration: 15 * 60,
-                    driveDistanceMeters: 5000
-                )
-            )
-            await createCandidate(from: transition, now: now)
+            let start = now.addingTimeInterval(-15 * 60)
+            // From `IDLE`, so the injected trip is a trip of its own rather than a
+            // continuation of whatever the device happened to be doing.
+            await apply(engine.endDrivingSession(reason: .fieldTestStopped, now: start), now: start)
+            consumedVehicleEvidenceAt = now
+            consumedVehicleExitAt = now
+            await apply(engine.handle(.vehicleEnter(at: start, confidence: .high), now: start), now: start)
+            // Past §3a's 90 s bar, which is what promotes the session to `DRIVING`.
+            await apply(engine.handle(.timerTick(at: now), now: now), now: now)
+            await apply(engine.handle(.vehicleExit(at: now, confidence: .high), now: now), now: now)
+            let signal: DetectionEvent = walking
+                ? .walkingEnter(at: now, confidence: .high)
+                : .stationaryEnter(at: now, confidence: .high)
+            await apply(engine.handle(signal, now: now), now: now)
+            await releaseCaptureIfIdle()
         }
     #endif
 
-    // MARK: - Session lifecycle
+    // MARK: - Normalizing Core Motion into §2 events
 
-    private func resumeDrivingSessionIfInterrupted(now: Date) async {
-        guard drivingEvidence == nil,
-              let restored = checkpoint,
-              restored.state == .driving || restored.state == .drivingCandidate
-        else { return }
-
-        let resumed = DrivingEvidence(
-            startedAt: restored.stateEnteredAt,
-            lastVehicleEvidenceAt: restored.lastAutomotiveAt
-        )
-        // A session that would time out the instant it reopens is not worth the GPS. Let
-        // the ordinary expiry rule decide, so there is one place that defines "too old".
-        if let expiry = DrivingSessionTimeoutPolicy.expiryReason(for: resumed, now: now) {
-            closeStaleDrivingState(reason: expiry, now: now)
-            return
-        }
-
-        drivingEvidence = resumed
-        consumedVehicleEvidenceAt = restored.lastAutomotiveAt
-        snapshot.drivingSessionResumedFromCheckpoint = true
-        // Nothing to do for the trace here. §9's boundary is a property of the event
-        // stream, so the recorder picks the open session back up from disk when the next
-        // event arrives — a drive interrupted by process death is still one trip.
-        await beginCapture(startedAt: restored.stateEnteredAt, now: now)
-    }
-
-    /// Turns replayed motion history into the two decisions this milestone makes: open a
-    /// bounded session, or close one.
+    /// Turns replayed motion history into the §2 events the engine understands.
     ///
-    /// Evaluated on every wake, so the same history is seen repeatedly. Two guards keep
-    /// that idempotent: walking is only read relative to the vehicle evidence it follows,
-    /// and a vehicle sample that already opened a session never opens another.
+    /// Evaluated on every wake, so the same history is seen repeatedly. Two watermarks
+    /// keep that idempotent — one for the newest vehicle observation already sent, one for
+    /// the newest observation that ended it — because a replayed sample must not open a
+    /// second session or close the same one twice.
     private func evaluateMotionEvidence(now: Date) async {
         let samples = snapshot.motionSamples
-        let vehicle = MotionEvidenceReader.latestVehicleEvidence(in: samples)
 
         // Unconditional, and before any session decision. docs/05 §9: recording is not
         // gated on vehicle evidence — a walk, a subway ride and a stationary transition are
@@ -462,365 +472,142 @@ actor BackgroundCoordinator {
         // a session, or the one event that explains the ending would be missing.
         recordTrace { $0.record(motionSamples: samples) }
 
+        let vehicle = MotionEvidenceReader.latestVehicleEvidence(in: samples)
         if let vehicle {
             snapshot.lastVehicleEvidenceAt = vehicle.timestamp
             snapshot.lastVehicleEvidenceConfidence = vehicle.confidence
-            noteVehicleEvidence(at: vehicle.timestamp, now: now)
         }
 
-        if drivingEvidence != nil {
-            // docs/05 §3a promotes on sustained vehicle activity alone, which is a matter
-            // of elapsed time rather than of fixes arriving — so it has to be asked on
-            // every wake and not only when the bounded session produces one. A drive
-            // through an underground car park produces no fixes at all, and that is the
-            // drive this product exists for.
-            confirmDrivingIfReady(now: now)
-        }
-
-        if let evidence = drivingEvidence {
-            // Walking after the vehicle evidence is what docs/05 §3a calls the entry to
-            // `PARKING_TRANSITION`: the drive is over, and the walk is already in hand, so
-            // `endDrivingSession` hands straight on to the state that decides.
-            let reference = evidence.lastVehicleEvidenceAt ?? evidence.startedAt
-            if MotionEvidenceReader.latestWalkingEvidence(in: samples, after: reference) != nil {
-                await endDrivingSession(reason: .walkingDetected, now: now)
-            }
-            return
-        }
-
-        if parkingTransition != nil {
-            await evaluateParkingTransition(samples: samples, now: now)
-            return
-        }
-
-        guard let vehicle,
-              now.timeIntervalSince(vehicle.timestamp) <= DrivingConfirmationPolicy.vehicleEvidenceMaxAge,
-              vehicle.timestamp > (consumedVehicleEvidenceAt ?? .distantPast),
-              // Already walked away from the car: replaying that history must not reopen
-              // a session for a drive that is over.
-              MotionEvidenceReader.latestWalkingEvidence(in: samples, after: vehicle.timestamp) == nil
-        else { return }
-
-        // Confidence is deliberately not gated here. docs/05 §7 puts the rigor in the
-        // *confirmation* guard, and a session opened on a weak signal costs at most one
-        // `vehicleEvidenceTimeout` window — while a missed one costs the whole trip.
-        // Revisit once the field data in §18 exists.
-        await startDrivingSession(at: vehicle.timestamp, now: now)
-    }
-
-    private func noteVehicleEvidence(at date: Date, now: Date) {
-        guard var evidence = drivingEvidence else { return }
-        evidence.noteVehicleEvidence(at: date)
-        drivingEvidence = evidence
-
-        var updated = checkpoint ?? DetectionCheckpoint.initial(at: now)
-        if updated.lastAutomotiveAt != date {
-            updated.lastAutomotiveAt = date
-            updated.revision += 1
-            persist(updated)
-        }
-    }
-
-    private func startDrivingSession(at vehicleEvidenceAt: Date, now: Date) async {
-        // A new travel session supersedes whatever the last one was still deciding.
-        parkingTransition = nil
-        snapshot.parkingTransitionEnteredAt = nil
-        let evidence = DrivingEvidence(startedAt: now, lastVehicleEvidenceAt: vehicleEvidenceAt)
-        drivingEvidence = evidence
-        consumedVehicleEvidenceAt = vehicleEvidenceAt
-        snapshot.drivingSessionCount += 1
-
-        var updated = checkpoint ?? DetectionCheckpoint.initial(at: now)
-        updated.state = .drivingCandidate
-        updated.stateEnteredAt = now
-        updated.lastAutomotiveAt = vehicleEvidenceAt
-        updated.travelDistanceEstimate = 0
-        updated.revision += 1
-        persist(updated)
-
-        await beginCapture(startedAt: now, now: now)
-    }
-
-    private func beginCapture(startedAt: Date, now: Date) async {
-        snapshot.drivingSessionStartedAt = startedAt
-        snapshot.drivingConfirmedAt = nil
-        snapshot.drivingFixCount = 0
-        snapshot.drivingMovingSampleCount = 0
-        snapshot.drivingSpeedAvailableCount = 0
-        snapshot.drivingSpeedMissingCount = 0
-        snapshot.drivingDerivedMovingSampleCount = 0
-        snapshot.movementEvidenceRejectReason = nil
-        snapshot.drivingOutlierDropCount = 0
-        snapshot.drivingDistanceMeters = 0
-        snapshot.drivingDistanceNoiseFloorRejectCount = 0
-        snapshot.captureFailure = nil
-
-        await locationCapture?.start()
-        snapshot.isCapturingDrivingLocation = await locationCapture?.isActive() ?? false
-        AppLog.detection.notice(
-            "bounded driving session started, age=\(Int(now.timeIntervalSince(startedAt)), privacy: .public)s"
-        )
-    }
-
-    /// docs/04 §3 "Stop aggressive tracking": cancel the updates task, invalidate the
-    /// background session, return to significant-change monitoring.
-    ///
-    /// Idempotent, and it tears the capture down even when no session is open — a
-    /// mismatch between our bookkeeping and Core Location's must always resolve towards
-    /// *off*, never towards a session nobody owns.
-    private func endDrivingSession(reason: DrivingSessionEndReason, now: Date) async {
-        let hadSession = drivingEvidence != nil
-        let distance = drivingEvidence?.distanceMeters ?? 0
-        let wasConfirmed = drivingEvidence?.isConfirmed ?? false
-        let vehicleReference = drivingEvidence?.lastVehicleEvidenceAt
-        let driveDuration = drivingEvidence.map { $0.duration(now: now) }
-        let endingAccuracyBucket = drivingEvidence?.lastFix
-            .flatMap { LocationAccuracyBucket(horizontalAccuracy: $0.horizontalAccuracy) }
-        if let last = drivingEvidence?.lastVehicleEvidenceAt {
-            consumedVehicleEvidenceAt = max(consumedVehicleEvidenceAt ?? last, last)
-        }
-        drivingEvidence = nil
-
-        await locationCapture?.stop()
-        snapshot.isCapturingDrivingLocation = await locationCapture?.isActive() ?? false
-
-        guard hadSession else { return }
-        // The trace deliberately stays open: the walk away from the car is the other half
-        // of the parking transition a fixture is cut from, and §9 lets the idle gap decide
-        // when the trip is actually over.
-        snapshot.drivingSessionStartedAt = nil
-        snapshot.lastDrivingSessionEndReason = reason
-        snapshot.lastDrivingSessionEndedAt = now
-
-        // docs/05 §14: the parking transition is a checkpoint write.
-        var updated = checkpoint ?? DetectionCheckpoint.initial(at: now)
-        updated.state = entersParkingTransition(reason: reason, wasConfirmed: wasConfirmed)
-            ? .parkingTransition
-            : .idle
-        updated.stateEnteredAt = now
-        updated.travelDistanceEstimate = distance
-        updated.revision += 1
-        persist(updated)
-
-        AppLog.detection.notice("bounded driving session ended: \(reason.rawValue, privacy: .public)")
-
-        guard updated.state == .parkingTransition else { return }
-        parkingTransition = ParkingTransition(
-            enteredAt: now,
-            vehicleReference: vehicleReference ?? now,
-            entryReason: reason,
-            evidence: ParkingEvidence(
-                hasMeaningfulVehicleSession: true,
-                vehicleEnded: true,
-                // §8 "GPS quality degraded near end", and §13's underground pattern. It is
-                // supporting evidence only — §6 will not let it satisfy the rule alone.
-                gpsQualityDegraded: endingAccuracyBucket == .poor,
-                reliableLocationCaptured: updated.lastReliableLocation != nil,
-                driveDuration: driveDuration,
-                driveDistanceMeters: distance
+        if let vehicle,
+           vehicle.timestamp > (consumedVehicleEvidenceAt ?? .distantPast),
+           // Confidence is deliberately not gated. docs/05 §7 puts the rigor in the
+           // promotion bar, and a session opened on a weak signal costs at most one
+           // `drivingCandidateWindow` — while a missed one costs the whole trip.
+           now.timeIntervalSince(vehicle.timestamp) <= DrivingConfirmationPolicy.vehicleEvidenceMaxAge,
+           // Already walked away from the car: replaying that history must not reopen a
+           // session for a drive that is over.
+           MotionEvidenceReader.latestWalkingEvidence(in: samples, after: vehicle.timestamp) == nil {
+            consumedVehicleEvidenceAt = vehicle.timestamp
+            await apply(
+                engine.handle(.vehicleEnter(at: vehicle.timestamp, confidence: vehicle.confidence), now: now),
+                now: now
             )
-        )
-        snapshot.parkingTransitionEnteredAt = now
-        // The walk that ended the session is already evidence; evaluate now rather than
-        // waiting for a wake that may be minutes away.
-        await evaluateParkingTransition(samples: snapshot.motionSamples, now: now)
-    }
-
-    /// docs/05 §3a. Only a **confirmed** `DRIVING` session goes on to decide whether it
-    /// parked; `DRIVING_CANDIDATE` leaves straight for `IDLE`.
-    ///
-    /// That split is what §12's short-trip guard is made of: a three-minute ride that never
-    /// cleared §7's bar produces no candidate at all, rather than a low-confidence one the
-    /// user has to dismiss. The reasons that are *not* here — a lost authorization, a
-    /// capture failure, the opt-out, the hard duration ceiling — all describe the app
-    /// losing the drive rather than the drive ending, and none of them is evidence that a
-    /// car stopped anywhere.
-    private func entersParkingTransition(reason: DrivingSessionEndReason, wasConfirmed: Bool) -> Bool {
-        guard wasConfirmed else { return false }
-        switch reason {
-        case .walkingDetected, .vehicleEvidenceExpired, .movementIdle:
-            return true
-        case .maximumDurationReached, .authorizationLost, .captureFailed,
-             .smartDetectionDisabled, .fieldTestStopped:
-            return false
         }
+
+        // Lets the lazily-evaluated §3a windows catch up before any exit is derived: a
+        // session that cleared the 90 s bar while the process was dead has to be `DRIVING`
+        // before the walk that ended it is applied, or the drive leaves for `IDLE` instead
+        // of deciding whether it parked.
+        await apply(engine.handle(.timerTick(at: now)), now: now)
+
+        await deriveVehicleExit(samples: samples, vehicle: vehicle, now: now)
+        await applyConfirmationSignals(samples: samples, vehicle: vehicle, now: now)
+        await applySilenceBound(now: now)
+        await releaseCaptureIfIdle()
     }
 
-    /// A restored checkpoint that is already expired: close the state without pretending
-    /// a session ran in this process.
-    private func closeStaleDrivingState(reason: DrivingSessionEndReason, now: Date) {
-        snapshot.lastDrivingSessionEndReason = reason
-        snapshot.lastDrivingSessionEndedAt = now
-
-        guard var updated = checkpoint else { return }
-        updated.state = .idle
-        updated.stateEnteredAt = now
-        updated.revision += 1
-        persist(updated)
-    }
-
-    private func evaluateDrivingTimeouts(now: Date) async {
-        // Same reason as in `evaluateMotionEvidence`: promotion is a clock, and the
-        // watchdog is the only thing still ticking when the fix stream is not.
-        confirmDrivingIfReady(now: now)
-        guard let evidence = drivingEvidence,
-              let reason = DrivingSessionTimeoutPolicy.expiryReason(for: evidence, now: now)
-        else { return }
-        await endDrivingSession(reason: reason, now: now)
-    }
-
-    // MARK: - Reliable location and confirmation
-
-    private func updateReliableLocation(with fix: LocationFix, now: Date) {
-        let incumbent = checkpoint?.lastReliableLocation
-        switch ReliableLocationPolicy.evaluate(candidate: fix, incumbent: incumbent, now: now) {
-        case let .accepted(selected):
-            snapshot.reliableLocationUpdateCount += 1
-            snapshot.lastReliableLocationRejection = nil
-
-            var updated = checkpoint ?? DetectionCheckpoint.initial(at: now)
-            updated.lastReliableLocation = selected
-            updated.lastLocationAt = selected.capturedAt
-            updated.travelDistanceEstimate = drivingEvidence?.distanceMeters ?? updated.travelDistanceEstimate
-            snapshot.lastLocationAt = selected.capturedAt
-            snapshot.lastLocationAccuracy = selected.horizontalAccuracy
-
-            // docs/05 §14 writes on a *materially* better fix. Holding the improved value
-            // in memory either way means a write we skipped is never a value we lost: the
-            // session end persists whatever the last accepted fix was.
-            if ReliableLocationPolicy.isMateriallyBetter(selected, than: incumbent) {
-                updated.revision += 1
-                persist(updated)
-            } else {
-                checkpoint = updated
-                snapshot.currentCheckpoint = updated
-            }
-
-        case let .rejected(reason):
-            snapshot.reliableLocationRejectCount += 1
-            snapshot.lastReliableLocationRejection = reason
-        }
-    }
-
-    private func confirmDrivingIfReady(now: Date) {
-        guard var evidence = drivingEvidence,
-              !evidence.isConfirmed,
-              DrivingConfirmationPolicy.isConfirmed(evidence, now: now)
-        else { return }
-
-        evidence.markConfirmed(at: now)
-        drivingEvidence = evidence
-        snapshot.drivingConfirmedAt = now
-
-        // docs/05 §14: "driving confirmed" is a checkpoint write.
-        //
-        // `stateEnteredAt` moves to the confirmation instant because the contract defines
-        // it as when *this* state was entered. A session recreated after process death
-        // therefore measures its ceiling from confirmation rather than from the original
-        // start — still bounded, and duration no longer decides anything for a session
-        // that is already confirmed.
-        var updated = checkpoint ?? DetectionCheckpoint.initial(at: now)
-        updated.state = .driving
-        updated.stateEnteredAt = now
-        updated.travelDistanceEstimate = evidence.distanceMeters
-        updated.revision += 1
-        persist(updated)
-
-        AppLog.detection.notice(
-            "driving confirmed after \(Int(evidence.duration(now: now)), privacy: .public)s"
-        )
-    }
-
-    // MARK: - Parking transition and candidate (docs/05 §3a, §10a)
-
-    /// The three edges out of `PARKING_TRANSITION`, in the order the red light demands.
+    /// The `vehicle_exit` edge iOS has to invent.
     ///
-    /// **Vehicle evidence is checked first, and that ordering is the whole guard against
-    /// the false positive §3a warns about.** Core Motion reports `automotive` and
-    /// `stationary` together at a long red light, so a transition entered on
-    /// `movementIdle` will usually have a `stationary` sample sitting in it. Asking
-    /// "did the car move again?" before "did the person stop?" is what makes that a drive
-    /// rather than a parking.
-    private func evaluateParkingTransition(samples: [MotionSample], now: Date) async {
-        guard var transition = parkingTransition else { return }
+    /// Android receives IN_VEHICLE EXIT from the Transition API. Core Motion has no such
+    /// thing: it answers "what is the device doing", and the drive ends by a newer sample
+    /// saying something else. That newer sample is the exit, and the reason it carries —
+    /// `walkingDetected` — is what the field diagnostics need in order to tell a parking
+    /// transition apart from a session that merely ran out of evidence.
+    private func deriveVehicleExit(samples: [MotionSample], vehicle: MotionSample?, now: Date) async {
+        guard await engine.snapshot().isVehicleActive else { return }
+        let reference = vehicle?.timestamp ?? consumedVehicleEvidenceAt ?? .distantPast
+        guard let walk = MotionEvidenceReader.latestWalkingEvidence(in: samples, after: reference),
+              walk.timestamp > (consumedVehicleExitAt ?? .distantPast)
+        else { return }
+        consumedVehicleExitAt = walk.timestamp
+        await apply(engine.endDrivingSession(reason: .walkingDetected, now: now), now: now)
+        await apply(engine.handle(.walkingEnter(at: walk.timestamp, confidence: walk.confidence), now: now), now: now)
+    }
 
-        // 1. `PARKING_TRANSITION → DRIVING`: the vehicle came back inside the window.
-        if let resumed = MotionEvidenceReader.latestVehicleEvidence(in: samples),
-           resumed.timestamp > transition.enteredAt,
-           !ParkingTransitionPolicy.hasElapsed(enteredAt: transition.enteredAt, now: now) {
-            await resumeDrivingFromTransition(vehicleEvidenceAt: resumed.timestamp, now: now)
+    /// The §3a confirming signals, forwarded only while the engine is in
+    /// `PARKING_TRANSITION` — the one state that is waiting for them.
+    private func applyConfirmationSignals(samples: [MotionSample], vehicle: MotionSample?, now: Date) async {
+        guard await engine.state == .parkingTransition else { return }
+        let reference = vehicle?.timestamp ?? consumedVehicleEvidenceAt ?? .distantPast
+        if let walk = MotionEvidenceReader.latestWalkingEvidence(in: samples, after: reference) {
+            await apply(engine.handle(.walkingEnter(at: walk.timestamp, confidence: walk.confidence), now: now), now: now)
             return
         }
-
-        // 2. `PARKING_TRANSITION → CANDIDATE_PENDING`: a confirming signal arrived.
-        let reference = transition.vehicleReference
-        if MotionEvidenceReader.latestWalkingEvidence(in: samples, after: reference) != nil {
-            transition.evidence.walkingAfterVehicle = true
-        }
-        if MotionEvidenceReader.latestStationaryEvidence(in: samples, after: reference) != nil {
-            transition.evidence.stationaryAfterVehicle = true
-        }
-        parkingTransition = transition
-
-        // **The signal that caused the transition cannot also be the signal that ends
-        // it.** §8's "location movement stopped" is folded in when the candidate is built,
-        // not here: a transition entered *because* movement stopped would otherwise leave
-        // the same instant it arrived, and `DRIVING → PARKING_TRANSITION → DRIVING` — the
-        // red light §3a exists to describe — could never happen. What this waits for is a
-        // signal observed inside the window.
-        if transition.evidence.confirmationSignals > 0 {
-            await createCandidate(from: transition, now: now)
-            return
-        }
-
-        // 3. `PARKING_TRANSITION → IDLE`: the window closed with nothing to show.
-        if ParkingTransitionPolicy.hasElapsed(enteredAt: transition.enteredAt, now: now) {
-            closeParkingTransition(now: now)
+        if let still = MotionEvidenceReader.latestStationaryEvidence(in: samples, after: reference) {
+            await apply(
+                engine.handle(.stationaryEnter(at: still.timestamp, confidence: still.confidence), now: now),
+                now: now
+            )
         }
     }
 
-    /// docs/05 §3a `PARKING_TRANSITION → CANDIDATE_PENDING`, and §10a's posting rules.
+    /// `DrivingSessionTimeoutPolicy.silenceReason`, which is this adapter's alone.
     ///
-    /// The order is deliberate and is what the permission-denied path rests on: the
-    /// candidate is **written first**, then the checkpoint, then the notification. Denied
-    /// notifications, a notification service that throws, a process killed a millisecond
-    /// later — none of them can cost the user the candidate, which is what §10a means by
-    /// "notification permission is not required for correctness".
-    private func createCandidate(from transition: ParkingTransition, now: Date) async {
-        parkingTransition = nil
-        snapshot.parkingTransitionEnteredAt = nil
+    /// Core Motion going quiet is how iOS learns a drive is over when no walk is ever
+    /// reported — an underground car park with the phone in a bag. It is expressed as the
+    /// session end it is, and not as a `vehicle_exit`, because the reason is what the field
+    /// diagnostics read.
+    private func applySilenceBound(now: Date) async {
+        guard let evidence = await engine.snapshot().driving,
+              let reason = DrivingSessionTimeoutPolicy.silenceReason(for: evidence, now: now)
+        else { return }
+        await apply(engine.endDrivingSession(reason: reason, now: now), now: now)
+        await releaseCaptureIfIdle()
+    }
 
-        var evidence = transition.evidence
-        // §8 "location movement stopped", added now rather than at entry — see
-        // `evaluateParkingTransition`. It still earns its weight and its reason code; what
-        // it may not do is be the only thing that ended the transition.
-        evidence.locationStopped = transition.entryReason == .movementIdle
+    // MARK: - Performing the effects (docs/05 §15)
 
-        let accuracyBucket = checkpoint?.lastReliableLocation
-            .flatMap { LocationAccuracyBucket(horizontalAccuracy: $0.horizontalAccuracy) }
-        guard let candidate = ParkingCandidatePolicy.evaluate(
-            evidence,
-            id: UUID(),
-            // Stamped with when the evidence says it happened, not with the wake that
-            // noticed: expiry runs from the parking, and a lazy evaluation must not buy
-            // the user extra minutes.
-            detectedAt: now,
-            lastReliableLocation: checkpoint?.lastReliableLocation,
-            accuracyBucket: accuracyBucket
-        ) else {
+    private func apply(_ effects: [DetectionEffect], now: Date) async {
+        for effect in effects {
+            await perform(effect, now: now)
+        }
+        // Unconditional, including for an empty list: a fix the §6 gate *rejected* produces
+        // no effect at all, and the rejection reason is precisely what the field report
+        // needs in order to tell a bad GPS environment from a badly-set threshold.
+        await refreshDrivingDiagnostics()
+    }
+
+    private func perform(_ effect: DetectionEffect, now: Date) async {
+        switch effect {
+        case .startBoundedLocationCapture:
+            await beginCapture(now: now)
+
+        case .stopLocationCapture:
+            await locationCapture?.stop()
+            snapshot.isCapturingDrivingLocation = await locationCapture?.isActive() ?? false
+            snapshot.drivingSessionStartedAt = nil
+
+        case let .persistCheckpoint(checkpoint):
+            persist(checkpoint)
+
+        case let .drivingConfirmed(at):
+            snapshot.drivingConfirmedAt = at
+            AppLog.detection.notice("driving confirmed at wake")
+
+        case let .sessionEnded(reason, at):
+            snapshot.lastDrivingSessionEndReason = reason
+            snapshot.lastDrivingSessionEndedAt = at
+            AppLog.detection.notice("bounded driving session ended: \(reason.rawValue, privacy: .public)")
+
+        case let .createCandidate(candidate):
+            saveCandidate(candidate)
+
+        case let .issueCandidateNotification(candidate):
+            await candidateNotifier?.post(candidate)
+
+        case let .withdrawCandidate(id):
+            try? candidateStore?.clear()
+            await candidateNotifier?.withdraw(candidateId: id)
+
+        case .candidateRuleUnmet:
             // §6's rule was not met. An ordinary outcome, counted rather than logged as a
             // failure — but counted, because a rising number here with no candidates is
             // how a mis-tuned transition window announces itself.
             snapshot.candidateRuleUnmetCount += 1
-            closeParkingTransition(now: now)
-            return
         }
+    }
 
-        // §10a: "If a new travel session produces a candidate while an older one is still
-        // pending, the older candidate expires immediately and its notification is
-        // withdrawn. A stale prompt about a previous trip is worse than no prompt."
-        await supersedePendingCandidate()
-
+    private func saveCandidate(_ candidate: ParkingCandidate) {
         do {
             try candidateStore?.save(candidate)
             snapshot.candidateStoreFailure = nil
@@ -828,149 +615,56 @@ actor BackgroundCoordinator {
             snapshot.candidateStoreFailure = String(describing: error)
             AppLog.detection.error("candidate save failed: \(String(describing: error), privacy: .public)")
         }
-
-        var updated = checkpoint ?? DetectionCheckpoint.initial(at: now)
-        updated.state = .candidatePending
-        updated.stateEnteredAt = now
-        updated.candidateId = candidate.id
-        updated.revision += 1
-        persist(updated)
-
         snapshot.candidateCreatedCount += 1
         snapshot.lastCandidateConfidence = candidate.confidenceBucket
         // docs/17 §2. Reported for every candidate, including the `low` one nobody sees:
         // the created/rejected ratio is only readable if both halves are counted.
         analytics.record(.parkingCandidateCreated(candidate.analyticsProperties))
-
-        // §9: `low` posts nothing. The candidate above is already on disk, so the app
-        // still shows it when opened.
-        if candidate.isNotifiable {
-            await candidateNotifier?.post(candidate)
-        }
         AppLog.detection.notice(
             "candidate created, confidence=\(candidate.confidenceBucket.rawValue, privacy: .public)"
         )
     }
 
-    /// docs/05 §3a `PARKING_TRANSITION → DRIVING`. The red light is over.
-    ///
-    /// Restores `DRIVING` rather than `DRIVING_CANDIDATE`: this session was already
-    /// confirmed before it stopped, and making it re-earn confirmation would let a car in
-    /// stop-start traffic never reach a parking transition at all.
-    private func resumeDrivingFromTransition(vehicleEvidenceAt: Date, now: Date) async {
-        parkingTransition = nil
-        snapshot.parkingTransitionEnteredAt = nil
-
-        var evidence = DrivingEvidence(startedAt: now, lastVehicleEvidenceAt: vehicleEvidenceAt)
-        evidence.markConfirmed(at: now)
-        drivingEvidence = evidence
-        consumedVehicleEvidenceAt = vehicleEvidenceAt
-        snapshot.drivingSessionCount += 1
-
-        var updated = checkpoint ?? DetectionCheckpoint.initial(at: now)
-        updated.state = .driving
-        updated.stateEnteredAt = now
-        updated.lastAutomotiveAt = vehicleEvidenceAt
-        updated.revision += 1
-        persist(updated)
-
-        await beginCapture(startedAt: now, now: now)
-        snapshot.drivingConfirmedAt = now
-    }
-
-    /// `PARKING_TRANSITION → IDLE`. Silent by contract: nothing was persisted on the way
-    /// in beyond the checkpoint, and nothing was shown, so there is nothing to take back.
-    private func closeParkingTransition(now: Date) {
-        parkingTransition = nil
-        snapshot.parkingTransitionEnteredAt = nil
-
-        var updated = checkpoint ?? DetectionCheckpoint.initial(at: now)
-        guard updated.state == .parkingTransition else { return }
-        updated.state = .idle
-        updated.stateEnteredAt = now
-        updated.revision += 1
-        persist(updated)
-    }
-
-    /// Rebuilds the transition a dead process left behind.
-    ///
-    /// The evidence is thinner than the original — `driveDuration` is not a checkpoint
-    /// field and is gone — and it says so by leaving the value `nil` rather than guessing
-    /// one. An absent duration costs a reason code and an analytics bucket; a fabricated
-    /// one would cost the meaning of both.
-    private func restoreParkingTransitionIfInterrupted(now: Date) {
-        guard parkingTransition == nil,
-              let restored = checkpoint,
-              restored.state == .parkingTransition
-        else { return }
-
-        guard !ParkingTransitionPolicy.hasElapsed(enteredAt: restored.stateEnteredAt, now: now) else {
-            closeParkingTransition(now: now)
-            return
+    private func beginCapture(now: Date) async {
+        let wasOpen = snapshot.drivingSessionStartedAt != nil
+        snapshot.drivingSessionStartedAt = await engine.snapshot().driving?.startedAt ?? now
+        if !wasOpen {
+            snapshot.drivingSessionCount += 1
+            snapshot.drivingConfirmedAt = nil
+            snapshot.captureFailure = nil
         }
-        parkingTransition = ParkingTransition(
-            enteredAt: restored.stateEnteredAt,
-            vehicleReference: restored.lastAutomotiveAt ?? restored.stateEnteredAt,
-            entryReason: .vehicleEvidenceExpired,
-            evidence: ParkingEvidence(
-                hasMeaningfulVehicleSession: true,
-                vehicleEnded: true,
-                reliableLocationCaptured: restored.lastReliableLocation != nil,
-                driveDistanceMeters: restored.travelDistanceEstimate
-            )
-        )
-        snapshot.parkingTransitionEnteredAt = restored.stateEnteredAt
+        await locationCapture?.start()
+        snapshot.isCapturingDrivingLocation = await locationCapture?.isActive() ?? false
     }
 
-    /// docs/05 §10: the 45 minutes ran out with nobody answering.
-    ///
-    /// Evaluated on every wake rather than on a timer — see `CandidateModel` for why the
-    /// whole engine treats deadlines lazily. No record is created and nothing is reported:
-    /// docs/17 §2 has no event for a guess that went unanswered.
-    private func expirePendingCandidateIfDue(now: Date) async {
-        guard let store = candidateStore, let candidate = store.load() else { return }
-        guard candidate.isExpired(now: now) else { return }
-        await retirePendingCandidate(candidate, now: now)
-        AppLog.detection.notice("candidate expired unanswered")
+    /// Core Location must never be left running for a session the engine no longer has.
+    private func releaseCaptureIfIdle() async {
+        guard await engine.snapshot().driving == nil else { return }
+        await locationCapture?.stop()
+        snapshot.isCapturingDrivingLocation = await locationCapture?.isActive() ?? false
+        snapshot.drivingSessionStartedAt = nil
     }
 
-    private func supersedePendingCandidate() async {
-        guard let candidate = candidateStore?.load() else { return }
-        await retirePendingCandidate(candidate, now: dateProvider.now)
-    }
-
-    private func retirePendingCandidate(_ candidate: ParkingCandidate, now: Date) async {
-        try? candidateStore?.clear()
-        await candidateNotifier?.withdraw(candidateId: candidate.id)
-        moveCandidateStateTo(.idle, now: now)
-    }
-
-    /// The user answered (docs/05 §3a: `CANDIDATE_PENDING → PARKED` or `→ IDLE`).
-    ///
-    /// Called from `CandidateModel` through `DetectionRuntime`, because the screen and the
-    /// lock screen are where the answer arrives and the checkpoint is what has to remember
-    /// it across process death.
-    func resolveCandidate(_ outcome: CandidateOutcome) {
-        moveCandidateStateTo(outcome == .confirmed ? .parked : .idle, now: dateProvider.now)
-    }
-
-    /// Leaves `CANDIDATE_PENDING` exactly once, and always forgets the candidate.
-    ///
-    /// The two halves are guarded differently on purpose. Clearing `candidateId` is
-    /// unconditional — whatever the engine is doing now, that candidate has been answered.
-    /// Moving the *state* only happens while the state is still the candidate's: the
-    /// expiry sweep, the notification action and the screen can all reach this for the
-    /// same candidate, and a user who has already started driving again must not have that
-    /// new trip rolled back to `IDLE` by an answer to the last one.
-    private func moveCandidateStateTo(_ state: DetectionState, now: Date) {
-        guard var updated = checkpoint, updated.candidateId != nil else { return }
-        updated.candidateId = nil
-        if updated.state == .candidatePending {
-            updated.state = state
-            updated.stateEnteredAt = now
-        }
-        updated.revision += 1
-        persist(updated)
+    /// Copies the §7 counters out of the engine's evidence so the field checklist can read
+    /// them. They are diagnostics, never inputs.
+    private func refreshDrivingDiagnostics() async {
+        let state = await engine.snapshot()
+        snapshot.currentCheckpoint = state.checkpoint
+        snapshot.parkingTransitionEnteredAt = state.parkingTransitionEnteredAt
+        snapshot.connectedCarLinks = state.connectedCarLinks
+        snapshot.reliableLocationUpdateCount = state.reliableLocationUpdateCount
+        snapshot.reliableLocationRejectCount = state.reliableLocationRejectCount
+        snapshot.lastReliableLocationRejection = state.lastReliableLocationRejection
+        guard let evidence = state.driving else { return }
+        snapshot.drivingFixCount = evidence.fixCount
+        snapshot.drivingMovingSampleCount = evidence.movingSampleCount
+        snapshot.drivingSpeedAvailableCount = evidence.speedAvailableCount
+        snapshot.drivingSpeedMissingCount = evidence.speedMissingCount
+        snapshot.drivingDerivedMovingSampleCount = evidence.derivedMovingSampleCount
+        snapshot.movementEvidenceRejectReason = evidence.movementEvidenceRejection
+        snapshot.drivingOutlierDropCount = evidence.outlierCount
+        snapshot.drivingDistanceMeters = evidence.distanceMeters
+        snapshot.drivingDistanceNoiseFloorRejectCount = evidence.distanceNoiseFloorRejectCount
     }
 
     // MARK: - Shared helpers
@@ -1008,7 +702,6 @@ actor BackgroundCoordinator {
     }
 
     private func persist(_ checkpoint: DetectionCheckpoint) {
-        self.checkpoint = checkpoint
         snapshot.currentCheckpoint = checkpoint
         do {
             try checkpointStore.save(checkpoint)
