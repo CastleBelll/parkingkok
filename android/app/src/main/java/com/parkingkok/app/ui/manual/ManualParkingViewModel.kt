@@ -12,9 +12,13 @@ import com.parkingkok.app.detection.ParkingCandidateCoordinator
 import com.parkingkok.app.detection.ParkingDetectionRuntime
 import com.parkingkok.app.domain.detection.DetectionEvent
 import com.parkingkok.app.domain.parking.FloorParser
+import com.parkingkok.app.domain.parking.usecase.AttachParkingPhotoUseCase
 import com.parkingkok.app.domain.parking.usecase.ManualParkingInput
 import com.parkingkok.app.domain.parking.usecase.SaveManualParkingResult
 import com.parkingkok.app.domain.parking.usecase.SaveManualParkingUseCase
+import com.parkingkok.app.domain.photo.PhotoSource
+import com.parkingkok.app.domain.photo.PillarSuggestion
+import com.parkingkok.app.domain.photo.ReadPillarSuggestionUseCase
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -38,7 +42,45 @@ data class ManualParkingUiState(
      * was open. The screen leaves without writing anything (docs/05 §10a).
      */
     val candidateGone: Boolean = false,
+    /**
+     * True once a pillar photo actually read something and the form was filled from it
+     * (docs/02 §6a).
+     *
+     * It exists so the screen can put the cursor where the user now has to check a
+     * machine's guess. It stays false when the read found nothing, which is the ordinary
+     * case — §6a: "the form opens exactly as it does today, empty. No message, no spinner
+     * left behind, no 인식 실패 dialog".
+     */
+    val pillarSuggestionOffered: Boolean = false,
 )
+
+/**
+ * The photo `사진으로 입력` took, and the two things the form does with it
+ * (docs/10 §7a, docs/02 §6a).
+ *
+ * One object rather than three nullable constructor parameters, because they are one
+ * decision: either this form was reached through the camera, or it was not.
+ */
+class PillarPhotoEntry(
+    private val photo: PhotoSource,
+    private val readSuggestion: ReadPillarSuggestionUseCase,
+    private val attachPhoto: AttachParkingPhotoUseCase,
+) {
+
+    suspend fun read(): PillarSuggestion = readSuggestion(photo)
+
+    /**
+     * Keeps the photo on the record it just became (docs/02 §6a).
+     *
+     * Not read and thrown away: it is the pillar photo the user would otherwise have to
+     * take a second time from the detail screen. A failure here is silent for the same
+     * reason FR-007 makes a photo optional — the record is already written and is
+     * complete without one.
+     */
+    suspend fun attachTo(recordId: String) {
+        attachPhoto(recordId, photo)
+    }
+}
 
 /**
  * Drives the manual entry form.
@@ -67,11 +109,47 @@ class ManualParkingViewModel(
      * not a candidate and has no state machine to move.
      */
     private val detectionRuntime: ParkingDetectionRuntime? = null,
+    /**
+     * Set when `사진으로 입력` brought the user here; null on every other arrival.
+     *
+     * The suggestion is read here rather than on the screen that took the photo because
+     * this is where the fields it fills live — §6a is explicit that the reading produces
+     * "a suggestion, never a saved value", and a value that only exists in an editable
+     * form the user still has to submit is the strongest way to say that.
+     */
+    private val pillarPhoto: PillarPhotoEntry? = null,
     private val clock: Clock = SystemClock,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ManualParkingUiState())
     val uiState: StateFlow<ManualParkingUiState> = _uiState.asStateFlow()
+
+    init {
+        if (pillarPhoto != null) viewModelScope.launch { prefillFromPillar(pillarPhoto) }
+    }
+
+    /**
+     * Fills the blanks the pillar answered, and nothing else.
+     *
+     * Blanks only, because the read is asynchronous and the user may already have started
+     * typing: overwriting what a person wrote with what a camera guessed is the one thing
+     * §6a's "never auto-saved" is protecting against, a keystroke earlier.
+     *
+     * Nothing is reported when it reads nothing. There is no spinner to clear because
+     * none was shown, and the form the user sees is the one they would have seen anyway.
+     */
+    private suspend fun prefillFromPillar(entry: PillarPhotoEntry) {
+        val suggestion = entry.read()
+        if (suggestion.isEmpty) return
+        _uiState.update {
+            it.copy(
+                floorRaw = it.floorRaw.ifEmpty { suggestion.floorRaw.orEmpty() },
+                zone = it.zone.ifEmpty { suggestion.zone.orEmpty() },
+                spot = it.spot.ifEmpty { suggestion.spot.orEmpty() },
+                pillarSuggestionOffered = true,
+            )
+        }
+    }
 
     fun onFloorChange(value: String) = _uiState.update { it.copy(floorRaw = value) }
 
@@ -121,6 +199,7 @@ class ManualParkingViewModel(
         // the candidate exactly where it was.
         if (result is ConfirmCandidateResult.Confirmed) {
             detectionRuntime?.handleUserAnswer(DetectionEvent.UserConfirmedParking(clock.nowEpochMillis()))
+            pillarPhoto?.attachTo(result.record.id)
         }
         _uiState.update {
             when (result) {
@@ -136,7 +215,8 @@ class ManualParkingViewModel(
         }
     }
 
-    private fun applySaveResult(result: SaveManualParkingResult) {
+    private suspend fun applySaveResult(result: SaveManualParkingResult) {
+        if (result is SaveManualParkingResult.Saved) pillarPhoto?.attachTo(result.record.id)
         _uiState.update {
             when (result) {
                 is SaveManualParkingResult.Saved ->
@@ -165,6 +245,8 @@ class ManualParkingViewModel(
         fun factory(
             container: AppContainer,
             candidateId: String? = null,
+            /** True when `사진으로 입력` took a pillar photo on the way here (docs/10 §7a). */
+            fromPillarPhoto: Boolean = false,
         ): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
@@ -180,6 +262,7 @@ class ManualParkingViewModel(
                         candidateId = candidateId,
                         coordinator = container.parkingCandidateCoordinator,
                         detectionRuntime = container.parkingDetectionRuntime,
+                        pillarPhoto = if (fromPillarPhoto) container.pillarPhotoEntry() else null,
                         clock = container.clock,
                     ) as T
             }

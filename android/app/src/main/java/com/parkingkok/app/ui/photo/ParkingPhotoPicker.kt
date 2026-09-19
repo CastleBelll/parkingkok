@@ -18,8 +18,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.core.content.FileProvider
 import com.parkingkok.app.R
+import com.parkingkok.app.data.photo.CameraCaptureFile
 import com.parkingkok.app.domain.photo.PhotoSource
-import java.io.File
 import java.io.IOException
 
 /**
@@ -123,29 +123,46 @@ private fun contentPhotoSource(context: Context, uri: Uri): PhotoSource {
 }
 
 /**
- * Where the camera writes, as a URI it is allowed to write to.
+ * The camera on its own — `사진으로 입력` on the confirmation screen (docs/10 §7a).
  *
- * One fixed name in the cache directory, reused by every capture: a camera photo is
- * full-size and transient — it is downsampled into app-private storage immediately — and
- * a fixed name means the largest thing this can ever leave behind is one file the OS is
- * free to evict.
+ * No album and no dialog: the user is standing in front of the pillar, and the one thing
+ * worth doing there is photographing it. [onCaptured] runs only when a file was actually
+ * written, so a cancelled camera leaves the caller exactly where it was.
+ *
+ * Returns the launcher to call from a button.
  */
+@Composable
+fun rememberCameraCapture(
+    onCaptured: () -> Unit,
+    onCameraUnavailable: () -> Unit,
+): () -> Unit {
+    val context = LocalContext.current
+    val takePhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { written ->
+        if (written) onCaptured()
+    }
+    return {
+        val uri = captureFileUri(context)
+        if (uri == null) {
+            onCameraUnavailable()
+        } else {
+            try {
+                takePhoto.launch(uri)
+            } catch (_: ActivityNotFoundException) {
+                // No camera app. Not a failure of the app — 직접 입력 is right there.
+                onCameraUnavailable()
+            }
+        }
+    }
+}
+
+/** [CameraCaptureFile], as a URI the camera is allowed to write to. */
 private fun captureFileUri(context: Context): Uri? = try {
-    val directory = File(context.cacheDir, CAPTURE_DIRECTORY)
-    directory.mkdirs()
-    FileProvider.getUriForFile(
-        context,
-        "${context.packageName}$FILE_PROVIDER_SUFFIX",
-        File(directory, CAPTURE_FILE_NAME),
-    )
+    val file = CameraCaptureFile.of(context)
+    file.parentFile?.mkdirs()
+    FileProvider.getUriForFile(context, "${context.packageName}$FILE_PROVIDER_SUFFIX", file)
 } catch (_: IllegalArgumentException) {
     null
 }
-
-/** Must match `res/xml/file_paths.xml`. */
-private const val CAPTURE_DIRECTORY = "camera"
-
-private const val CAPTURE_FILE_NAME = "capture.jpg"
 
 /** Must match the provider authority in the manifest. */
 private const val FILE_PROVIDER_SUFFIX = ".fileprovider"

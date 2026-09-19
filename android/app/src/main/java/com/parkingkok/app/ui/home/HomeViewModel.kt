@@ -8,13 +8,17 @@ import com.parkingkok.app.core.Clock
 import com.parkingkok.app.domain.detection.ParkingCandidate
 import com.parkingkok.app.domain.parking.ParkingRecord
 import com.parkingkok.app.domain.parking.usecase.AdjustParkingFloorUseCase
+import com.parkingkok.app.domain.parking.usecase.ApplyPillarSuggestionUseCase
 import com.parkingkok.app.domain.parking.usecase.AttachParkingPhotoResult
 import com.parkingkok.app.domain.parking.usecase.AttachParkingPhotoUseCase
 import com.parkingkok.app.domain.parking.usecase.EndParkingUseCase
 import com.parkingkok.app.domain.parking.usecase.ObserveActiveParkingUseCase
 import com.parkingkok.app.domain.parking.usecase.ObserveParkingHistoryUseCase
+import com.parkingkok.app.domain.parking.usecase.SuggestFromPillarPhotoUseCase
 import com.parkingkok.app.domain.photo.PhotoSaveResult
 import com.parkingkok.app.domain.photo.PhotoSource
+import com.parkingkok.app.domain.photo.PillarSuggestion
+import com.parkingkok.app.domain.photo.ReadPillarSuggestionUseCase
 import com.parkingkok.app.map.MapOpenResult
 import com.parkingkok.app.ui.UiNotice
 import kotlinx.coroutines.delay
@@ -27,8 +31,13 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-/** The two transient bits of screen state the ViewModel owns itself. */
-private data class HomeChrome(val notice: UiNotice?, val photoBusy: Boolean)
+/** The transient bits of screen state the ViewModel owns itself. */
+private data class HomeChrome(
+    val notice: UiNotice?,
+    val photoBusy: Boolean,
+    /** What the last attached photo read, until it is applied or waved away (docs/02 §6a). */
+    val pillarSuggestion: PillarSuggestion?,
+)
 
 /** What `01-home-main.png` renders. */
 data class HomeUiState(
@@ -58,6 +67,14 @@ data class HomeUiState(
      */
     val pendingCandidateId: String? = null,
     val pendingCandidateAtMillis: Long? = null,
+    /**
+     * What a pillar photo read for the fields this record left empty, or null.
+     *
+     * docs/02 §6a: home has no floor or zone form for a suggestion to land in, so it is
+     * offered as a card and written only when the user taps it. Null is the ordinary
+     * state, including every read that found nothing.
+     */
+    val pillarSuggestion: PillarSuggestion? = null,
 ) {
     /** FR-008: with no stored coordinate there is nowhere to send a maps app. */
     val canOpenMap: Boolean get() = active?.location != null
@@ -78,11 +95,15 @@ class HomeViewModel(
     private val endParking: EndParkingUseCase,
     private val adjustParkingFloor: AdjustParkingFloorUseCase,
     private val attachPhoto: AttachParkingPhotoUseCase,
+    /** docs/02 §6a, the home and detail half: offered, never written (see [onPhotoSelected]). */
+    private val suggestFromPillarPhoto: SuggestFromPillarPhotoUseCase,
+    private val applyPillarSuggestion: ApplyPillarSuggestionUseCase,
     private val clock: Clock,
 ) : ViewModel() {
 
     private val notice = MutableStateFlow<UiNotice?>(null)
     private val photoBusy = MutableStateFlow(false)
+    private val pillarSuggestion = MutableStateFlow<PillarSuggestion?>(null)
 
     val uiState: StateFlow<HomeUiState> =
         combine(
@@ -92,7 +113,7 @@ class HomeViewModel(
             // Paired so the combine stays on the five-argument typed overload. A sixth
             // source would fall onto the `Array<*>` one, where every field becomes an
             // unchecked cast and the compiler stops catching a reordered argument.
-            combine(notice, photoBusy, ::HomeChrome),
+            combine(notice, photoBusy, pillarSuggestion, ::HomeChrome),
             observePendingCandidate(),
         ) { active, recent, nowMillis, chrome, candidate ->
             HomeUiState(
@@ -102,6 +123,7 @@ class HomeViewModel(
                 loaded = true,
                 photoBusy = chrome.photoBusy,
                 notice = chrome.notice,
+                pillarSuggestion = chrome.pillarSuggestion,
                 pendingCandidateId = candidate?.id,
                 pendingCandidateAtMillis = candidate?.parkedAtMillis,
             )
@@ -130,13 +152,32 @@ class HomeViewModel(
         val recordId = uiState.value.active?.id ?: return
         viewModelScope.launch {
             photoBusy.value = true
-            notice.value = when (val result = attachPhoto(recordId, source)) {
+            val result = attachPhoto(recordId, source)
+            notice.value = when (result) {
                 is AttachParkingPhotoResult.Failed -> result.reason.toNotice()
                 AttachParkingPhotoResult.RecordGone -> null
                 is AttachParkingPhotoResult.Attached -> null
             }
             photoBusy.value = false
+            // Only a photo that was actually kept is worth reading: §6a's whole premise
+            // is "the photo the user takes anyway".
+            if (result is AttachParkingPhotoResult.Attached) {
+                pillarSuggestion.value =
+                    suggestFromPillarPhoto(recordId, source).takeUnless { it.isEmpty }
+            }
         }
+    }
+
+    /** §6a: the record changes here and nowhere earlier. */
+    fun onApplyPillarSuggestion() {
+        val suggestion = pillarSuggestion.value ?: return
+        val recordId = uiState.value.active?.id ?: return
+        pillarSuggestion.value = null
+        viewModelScope.launch { applyPillarSuggestion(recordId, suggestion) }
+    }
+
+    fun onDismissPillarSuggestion() {
+        pillarSuggestion.value = null
     }
 
     fun onCameraUnavailable() {
@@ -196,6 +237,14 @@ class HomeViewModel(
                     attachPhoto = AttachParkingPhotoUseCase(
                         container.parkingRepository,
                         container.parkingPhotoStore,
+                        container.clock,
+                    ),
+                    suggestFromPillarPhoto = SuggestFromPillarPhotoUseCase(
+                        container.parkingRepository,
+                        ReadPillarSuggestionUseCase(container.pillarTextReader),
+                    ),
+                    applyPillarSuggestion = ApplyPillarSuggestionUseCase(
+                        container.parkingRepository,
                         container.clock,
                     ),
                     clock = container.clock,

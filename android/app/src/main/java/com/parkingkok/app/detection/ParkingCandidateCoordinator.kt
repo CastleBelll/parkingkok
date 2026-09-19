@@ -6,6 +6,8 @@ import com.parkingkok.app.analytics.DetectionProperties
 import com.parkingkok.app.analytics.DisabledAnalyticsRecorder
 import com.parkingkok.app.core.Clock
 import com.parkingkok.app.data.DetectionStateStore
+import com.parkingkok.app.domain.detection.CandidateHistoryEntry
+import com.parkingkok.app.domain.detection.CandidateOutcome
 import com.parkingkok.app.domain.detection.ParkingCandidate
 import com.parkingkok.app.domain.detection.ReliableLocation
 import com.parkingkok.app.domain.parking.ConfidenceBucket
@@ -87,6 +89,15 @@ class ParkingCandidateCoordinator(
             candidate?.takeUnless { it.isExpired(clock.nowEpochMillis()) }
         }
 
+    /**
+     * The resolved candidates the bell's screen lists, oldest first
+     * (docs/10_DESIGN_UX_SPEC.md §7b).
+     *
+     * Exposed here rather than straight off the store because this class is what decides
+     * a candidate's outcome, and the list is only ever as truthful as those decisions.
+     */
+    fun observeHistory(): Flow<List<CandidateHistoryEntry>> = store.candidateHistory
+
     /** The pending candidate with [id], or null when it is gone or expired. */
     suspend fun pending(id: String): ParkingCandidate? =
         store.readCandidateOnce()
@@ -142,7 +153,9 @@ class ParkingCandidateCoordinator(
         )
 
         var superseded: String? = null
-        store.updateCandidate { previous ->
+        // §10a: the older candidate "expires immediately" — an unanswered guess about a
+        // previous trip, which is exactly §7b's 응답 없음.
+        store.updateCandidate(resolvedAs = CandidateOutcome.EXPIRED) { previous ->
             if (previous != null && previous.id != candidate.id) superseded = previous.id
             candidate
         }
@@ -194,7 +207,7 @@ class ParkingCandidateCoordinator(
         repository.insert(record)
         // Clears the candidate and remembers what it became, so a tap that beats the
         // notification's withdrawal opens the record rather than home (§10a).
-        store.resolveCandidate(candidate.id, record.id)
+        store.resolveCandidate(candidate.id, record.id, candidate.detectedAtMillis)
         notifier.withdraw(candidate.id)
         // After the write, never before: an event for a record that failed to insert would
         // overstate the feature.
@@ -215,7 +228,11 @@ class ParkingCandidateCoordinator(
      */
     suspend fun reject(candidateId: String): Boolean {
         val stored = store.readCandidateOnce()?.takeIf { it.id == candidateId }
-        if (stored != null) clear(candidateId) else notifier.withdraw(candidateId)
+        if (stored != null) {
+            clear(candidateId, CandidateOutcome.REJECTED)
+        } else {
+            notifier.withdraw(candidateId)
+        }
         analytics.record(
             AnalyticsEvent.ParkingCandidateRejected(stored?.evidence ?: lastKnownEvidence()),
         )
@@ -234,7 +251,7 @@ class ParkingCandidateCoordinator(
     suspend fun expireIfDue(): ParkingCandidate? {
         val now = clock.nowEpochMillis()
         var expired: ParkingCandidate? = null
-        store.updateCandidate { candidate ->
+        store.updateCandidate(resolvedAs = CandidateOutcome.EXPIRED) { candidate ->
             if (candidate != null && candidate.isExpired(now)) {
                 expired = candidate
                 null
@@ -254,7 +271,9 @@ class ParkingCandidateCoordinator(
      * withdrawn before it is worth anything"), and the 45-minute expiry reached while the
      * process is alive.
      *
-     * **Deliberately silent.** [reject] reports `parking_candidate_rejected` because the
+     * **Deliberately silent in analytics, not in the history.** §7b lists a candidate
+     * nobody answered as 응답 없음 whatever took it away, so this writes that line; what it
+     * does not do is report an event. [reject] reports `parking_candidate_rejected` because the
      * user said the detector was wrong; nobody said anything here, and reporting a
      * rejection would corrupt the one distribution §10a calls the event that pays for the
      * whole feature. [expireIfDue] is the same decision arrived at from the app side.
@@ -263,12 +282,21 @@ class ParkingCandidateCoordinator(
      */
     suspend fun retire(candidateId: String): Boolean {
         val stored = store.readCandidateOnce()?.takeIf { it.id == candidateId }
-        clear(candidateId)
+        clear(candidateId, CandidateOutcome.EXPIRED)
         return stored != null
     }
 
-    private suspend fun clear(candidateId: String) {
-        store.updateCandidate { current -> current?.takeIf { it.id != candidateId } }
+    /**
+     * Drops [candidateId] from the slot, writes its [outcome] to the §7b history, and
+     * takes the notification down.
+     *
+     * The history line is written by the same edit that empties the slot, so there is no
+     * window in which a candidate is neither pending nor accounted for.
+     */
+    private suspend fun clear(candidateId: String, outcome: CandidateOutcome) {
+        store.updateCandidate(resolvedAs = outcome) { current ->
+            current?.takeIf { it.id != candidateId }
+        }
         notifier.withdraw(candidateId)
     }
 

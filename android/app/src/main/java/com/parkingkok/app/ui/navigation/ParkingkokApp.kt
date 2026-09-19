@@ -47,6 +47,9 @@ import com.parkingkok.app.ui.home.HomeScreen
 import com.parkingkok.app.ui.home.HomeViewModel
 import com.parkingkok.app.ui.manual.ManualParkingScreen
 import com.parkingkok.app.ui.manual.ManualParkingViewModel
+import com.parkingkok.app.ui.notifications.NotificationHistoryScreen
+import com.parkingkok.app.ui.notifications.NotificationHistoryViewModel
+import com.parkingkok.app.ui.photo.rememberCameraCapture
 import com.parkingkok.app.ui.settings.SettingsScreen
 import com.parkingkok.app.ui.settings.SettingsViewModel
 import kotlinx.coroutines.launch
@@ -108,6 +111,7 @@ fun ParkingkokApp(
             is ParkingkokRoute.ManualEntry -> ManualEntryRoute(
                 container = container,
                 candidateId = route.candidateId,
+                fromPillarPhoto = route.fromPillarPhoto,
                 // A confirmation reached through `직접 입력` leaves two screens behind it —
                 // the form and the confirmation screen it came from — and the user is done
                 // with both.
@@ -122,6 +126,14 @@ fun ParkingkokApp(
                 candidateId = route.candidateId,
                 onManualEntry = {
                     backStack = backStack.push(ParkingkokRoute.ManualEntry(route.candidateId))
+                },
+                // docs/10 §7a: the camera lands in the same form, already filled with
+                // what the pillar said. The photo itself is the one file the camera
+                // writes, so nothing about it travels in the route.
+                onPhotoEntry = {
+                    backStack = backStack.push(
+                        ParkingkokRoute.ManualEntry(route.candidateId, fromPillarPhoto = true),
+                    )
                 },
                 // Confirmed, rejected or gone: all three end with the user back where they
                 // were. §7a: rejecting "returns to where the user was" and never asks why.
@@ -146,6 +158,13 @@ fun ParkingkokApp(
             ParkingkokRoute.History -> HistoryRoute(
                 container = container,
                 onOpenDetail = { backStack = backStack.push(ParkingkokRoute.Detail(it)) },
+                onBack = { backStack = backStack.pop() },
+            )
+
+            ParkingkokRoute.Notifications -> NotificationsRoute(
+                container = container,
+                onOpenCandidate = { backStack = backStack.push(ParkingkokRoute.Confirm(it)) },
+                onOpenRecord = { backStack = backStack.push(ParkingkokRoute.Detail(it)) },
                 onBack = { backStack = backStack.pop() },
             )
 
@@ -212,7 +231,6 @@ private fun HomeRoute(container: AppContainer, onNavigate: (ParkingkokRoute) -> 
     val viewModel: HomeViewModel = viewModel(factory = HomeViewModel.factory(container))
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val mapOpener = rememberMapOpener()
-    val context = LocalContext.current
 
     HomeScreen(
         state = state,
@@ -220,6 +238,8 @@ private fun HomeRoute(container: AppContainer, onNavigate: (ParkingkokRoute) -> 
         onPhotoSelected = viewModel::onPhotoSelected,
         onCameraUnavailable = viewModel::onCameraUnavailable,
         onNoticeShown = viewModel::onNoticeShown,
+        onApplyPillarSuggestion = viewModel::onApplyPillarSuggestion,
+        onDismissPillarSuggestion = viewModel::onDismissPillarSuggestion,
         onStepFloor = viewModel::onStepFloor,
         onEndParking = viewModel::onEndParking,
         onSaveParking = { onNavigate(ParkingkokRoute.ManualEntry()) },
@@ -227,35 +247,27 @@ private fun HomeRoute(container: AppContainer, onNavigate: (ParkingkokRoute) -> 
         onOpenDetail = { onNavigate(ParkingkokRoute.Detail(it)) },
         onOpenHistory = { onNavigate(ParkingkokRoute.History) },
         onOpenSettings = { onNavigate(ParkingkokRoute.Settings) },
-        // The bell in the mockup's header. 주차핀 has no notification centre of its own, so
-        // it leads to the place its detection notifications are actually switched on and
-        // off — a real destination rather than a decorative icon.
-        onOpenNotificationSettings = { context.startActivity(notificationSettingsIntent(context)) },
+        // docs/10 §7b: the bell opens what the app raised, not the switches that turn it
+        // on and off. Those stay in 설정 → 알림.
+        onOpenNotifications = { onNavigate(ParkingkokRoute.Notifications) },
     )
 }
-
-/**
- * Where this app's notification channels are configured.
- *
- * `ACTION_APP_NOTIFICATION_SETTINGS` is guaranteed from API 26 and this app is minSdk 29,
- * so there is no fallback to write: the screen is always there.
- */
-private fun notificationSettingsIntent(context: Context): Intent =
-    Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-        .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
 @Composable
 private fun ManualEntryRoute(
     container: AppContainer,
     candidateId: String?,
+    fromPillarPhoto: Boolean,
     onSaved: () -> Unit,
     onBack: () -> Unit,
 ) {
     val viewModel: ManualParkingViewModel =
         viewModel(
-            key = "manual-${candidateId ?: "new"}",
-            factory = ManualParkingViewModel.factory(container, candidateId),
+            // The pillar arrival is keyed apart from the empty one: reaching the same
+            // form twice, once by 직접 입력 and once by 사진으로 입력, must not reuse the
+            // ViewModel that already decided there was no photo to read.
+            key = "manual-${candidateId ?: "new"}-$fromPillarPhoto",
+            factory = ManualParkingViewModel.factory(container, candidateId, fromPillarPhoto),
         )
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
@@ -304,6 +316,8 @@ private fun DetailRoute(container: AppContainer, recordId: String, onBack: () ->
         onRemovePhoto = viewModel::onRemovePhoto,
         onCameraUnavailable = viewModel::onCameraUnavailable,
         onNoticeShown = viewModel::onNoticeShown,
+        onApplyPillarSuggestion = viewModel::onApplyPillarSuggestion,
+        onDismissPillarSuggestion = viewModel::onDismissPillarSuggestion,
         onBack = onBack,
     )
 }
@@ -314,6 +328,7 @@ private fun ConfirmRoute(
     container: AppContainer,
     candidateId: String,
     onManualEntry: () -> Unit,
+    onPhotoEntry: () -> Unit,
     onDone: (String?) -> Unit,
 ) {
     val viewModel: ConfirmCandidateViewModel =
@@ -330,10 +345,19 @@ private fun ConfirmRoute(
         if (state.gone || state.rejected || state.confirmedRecordId != null) onDone(state.openRecordId)
     }
 
+    val takePillarPhoto = rememberCameraCapture(
+        onCaptured = onPhotoEntry,
+        // No camera app, or no file to write to. §6a makes a failed read silent, and a
+        // camera that never opened is the same thing one step earlier: the user is left
+        // on the screen with 직접 입력 beside the button they pressed.
+        onCameraUnavailable = {},
+    )
+
     ConfirmCandidateScreen(
         state = state,
         onPickFloor = viewModel::onPickFloor,
         onManualEntry = onManualEntry,
+        onPhotoEntry = takePillarPhoto,
         onReject = viewModel::onReject,
         onBack = { onDone(null) },
     )
@@ -356,6 +380,26 @@ private fun rememberMapOpener(): ExternalMapOpener {
             pinLabel = pinLabel,
         )
     }
+}
+
+/** docs/10_DESIGN_UX_SPEC.md §7b. */
+@Composable
+private fun NotificationsRoute(
+    container: AppContainer,
+    onOpenCandidate: (String) -> Unit,
+    onOpenRecord: (String) -> Unit,
+    onBack: () -> Unit,
+) {
+    val viewModel: NotificationHistoryViewModel =
+        viewModel(factory = NotificationHistoryViewModel.factory(container))
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+    NotificationHistoryScreen(
+        state = state,
+        onOpenCandidate = onOpenCandidate,
+        onOpenRecord = onOpenRecord,
+        onBack = onBack,
+    )
 }
 
 @Composable

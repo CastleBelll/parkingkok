@@ -92,6 +92,10 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.play.services.location)
+    // docs/02 §6a: reading the pillar runs on device and must work with no network, so
+    // this is the bundled Korean model rather than the Play-services one that downloads
+    // on first use. The APK cost is the price of the feature working underground.
+    implementation(libs.mlkit.text.recognition.korean)
 
     // docs/07 §2: Analytics and Auth only. No Storage — the contract forbids it — and no
     // Firestore/Functions/App Check/Remote Config until the feature that needs them lands.

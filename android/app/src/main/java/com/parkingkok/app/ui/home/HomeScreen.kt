@@ -77,6 +77,7 @@ import com.parkingkok.app.ui.motion.MotionDurations
 import com.parkingkok.app.ui.motion.pressScale
 import com.parkingkok.app.ui.UiNotice
 import com.parkingkok.app.ui.photo.ParkingPhotoPicker
+import com.parkingkok.app.ui.photo.PillarSuggestionCard
 import com.parkingkok.app.ui.format.dayText
 import com.parkingkok.app.ui.format.elapsedText
 import com.parkingkok.app.ui.format.timeOfDayText
@@ -98,12 +99,14 @@ fun HomeScreen(
     onOpenDetail: (String) -> Unit,
     onOpenHistory: () -> Unit,
     onOpenSettings: () -> Unit,
-    onOpenNotificationSettings: () -> Unit,
+    onOpenNotifications: () -> Unit,
     onOpenCandidate: (String) -> Unit,
     onDirections: () -> Unit,
     onPhotoSelected: (PhotoSource) -> Unit,
     onCameraUnavailable: () -> Unit,
     onNoticeShown: () -> Unit,
+    onApplyPillarSuggestion: () -> Unit,
+    onDismissPillarSuggestion: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var pickingPhoto by remember { mutableStateOf(false) }
@@ -113,7 +116,13 @@ fun HomeScreen(
         header = {
             BrandHeader(
                 actions = {
-                    NotificationsAction(onOpenNotificationSettings)
+                    // §7b's dot: a candidate nobody has answered yet, and the one reason
+                    // the bell's screen exists. It is the same value the row below the
+                    // hero is drawn from, so the two can never disagree.
+                    NotificationsAction(
+                        unanswered = state.pendingCandidateId != null,
+                        onClick = onOpenNotifications,
+                    )
                     SettingsAction(onOpenSettings)
                 },
             )
@@ -136,6 +145,20 @@ fun HomeScreen(
                 PendingCandidateRow(
                     parkedAtMillis = state.pendingCandidateAtMillis,
                     onClick = { onOpenCandidate(candidateId) },
+                )
+            }
+        }
+
+        // docs/02 §6a. Above the actions, because the user has just tapped 사진 추가 and
+        // this is the answer to it; below the hero, because the floor on screen still
+        // leads (docs/10 §6). It is gone the moment it is applied or waved away.
+        val suggestion = state.pillarSuggestion
+        if (active != null && suggestion != null) {
+            item("pillar-suggestion") {
+                PillarSuggestionCard(
+                    suggestion = suggestion,
+                    onApply = onApplyPillarSuggestion,
+                    onDismiss = onDismissPillarSuggestion,
                 )
             }
         }
@@ -788,10 +811,12 @@ private fun HomeParkedPreview() {
             onOpenDetail = {},
             onOpenHistory = {},
             onOpenSettings = {},
-            onOpenNotificationSettings = {},
+            onOpenNotifications = {},
             onOpenCandidate = {},
             onDirections = {},
             onPhotoSelected = {},
+            onApplyPillarSuggestion = {},
+            onDismissPillarSuggestion = {},
             onCameraUnavailable = {},
             onNoticeShown = {},
         )
@@ -810,10 +835,12 @@ private fun HomeEmptyPreview() {
             onOpenDetail = {},
             onOpenHistory = {},
             onOpenSettings = {},
-            onOpenNotificationSettings = {},
+            onOpenNotifications = {},
             onOpenCandidate = {},
             onDirections = {},
             onPhotoSelected = {},
+            onApplyPillarSuggestion = {},
+            onDismissPillarSuggestion = {},
             onCameraUnavailable = {},
             onNoticeShown = {},
         )
@@ -860,10 +887,12 @@ private fun HomeCandidatePreview() {
             onOpenDetail = {},
             onOpenHistory = {},
             onOpenSettings = {},
-            onOpenNotificationSettings = {},
+            onOpenNotifications = {},
             onOpenCandidate = {},
             onDirections = {},
             onPhotoSelected = {},
+            onApplyPillarSuggestion = {},
+            onDismissPillarSuggestion = {},
             onCameraUnavailable = {},
             onNoticeShown = {},
         )

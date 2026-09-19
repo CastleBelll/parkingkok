@@ -65,6 +65,7 @@ import com.parkingkok.app.ui.format.dayText
 import com.parkingkok.app.ui.format.elapsedText
 import com.parkingkok.app.ui.format.timeOfDayText
 import com.parkingkok.app.ui.photo.ParkingPhotoPicker
+import com.parkingkok.app.ui.photo.PillarSuggestionCard
 
 /**
  * `03-parking-detail.png`, top to bottom: the map block, the record card, the two primary
@@ -92,6 +93,8 @@ fun ParkingDetailScreen(
     onRemovePhoto: () -> Unit,
     onCameraUnavailable: () -> Unit,
     onNoticeShown: () -> Unit,
+    onApplyPillarSuggestion: () -> Unit,
+    onDismissPillarSuggestion: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -121,6 +124,19 @@ fun ParkingDetailScreen(
 
         item("map") { LocationBlock(record) }
         item("summary") { SummaryCard(record = record, nowMillis = state.nowMillis) }
+        // docs/02 §6a. Directly under the summary it is offering to fill, so the map and
+        // the text still lead the screen (docs/10 §11a).
+        val suggestion = state.pillarSuggestion
+        if (suggestion != null) {
+            item("pillar-suggestion") {
+                PillarSuggestionCard(
+                    suggestion = suggestion,
+                    onApply = onApplyPillarSuggestion,
+                    onDismiss = onDismissPillarSuggestion,
+                )
+            }
+        }
+
         item("actions") {
             PrimaryActions(
                 canOpenMap = state.canOpenMap,
@@ -691,6 +707,8 @@ private fun ParkingDetailPreview() {
             onRemovePhoto = {},
             onCameraUnavailable = {},
             onNoticeShown = {},
+            onApplyPillarSuggestion = {},
+            onDismissPillarSuggestion = {},
             onBack = {},
         )
     }
