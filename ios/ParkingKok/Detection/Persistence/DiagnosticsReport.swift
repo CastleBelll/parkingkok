@@ -17,7 +17,7 @@ import Foundation
 struct DiagnosticsReport: Sendable, Equatable, Codable {
     /// Bumped to 5 by the §7 distance-clause instrumentation; 4 was the movement-evidence
     /// counters before it.
-    static let schemaVersion = 7
+    static let schemaVersion = 8
 
     var schemaVersion: Int = DiagnosticsReport.schemaVersion
     var generatedAt: Date
@@ -48,6 +48,11 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
     var lastCandidateConfidence: String?
     var parkingTransitionEnteredAt: Date?
     var candidateStoreFailure: String?
+    /// docs/05 §3a "The car link", sorted so two runs read the same. Empty is the ordinary
+    /// answer on iOS — the audio route is the only reachable probe and most phones are not
+    /// in a car — and `carLinkFailure` is what separates that from "could not look".
+    var connectedCarLinks: [String]
+    var carLinkFailure: String?
     /// Presence and quality of the reliable fix — never where it was.
     var hasReliableLocation: Bool
     var reliableLocationCapturedAt: Date?
@@ -182,6 +187,8 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
         lastCandidateConfidence = snapshot.lastCandidateConfidence?.rawValue
         parkingTransitionEnteredAt = snapshot.parkingTransitionEnteredAt
         candidateStoreFailure = snapshot.candidateStoreFailure
+        connectedCarLinks = snapshot.connectedCarLinks.map(\.rawValue).sorted()
+        carLinkFailure = snapshot.carLinkFailure
         hasReliableLocation = checkpoint?.lastReliableLocation != nil
         reliableLocationCapturedAt = checkpoint?.lastReliableLocation?.capturedAt
         reliableLocationAccuracy = checkpoint?.lastReliableLocation?.horizontalAccuracy

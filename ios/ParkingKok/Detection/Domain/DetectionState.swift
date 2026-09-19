@@ -5,8 +5,8 @@ import Foundation
 ///
 /// Raw values are the contract strings so a checkpoint written by this build stays
 /// readable — and comparable against the Android implementation — without a mapping
-/// table. The transition rules that move between these states are M0A-2; this
-/// milestone only needs to persist and restore the value.
+/// table. The rules that move between these states are `ParkingDetectionEngine`; this
+/// type only names them.
 ///
 /// `PARKING_TRANSITION` and `CANDIDATE_PENDING` are separate states because they behave
 /// differently: the first waits for a confirmation signal with nothing shown to the user,
