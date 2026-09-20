@@ -60,6 +60,7 @@ import com.parkingkok.app.trace.FileTraceStore
 import com.parkingkok.app.trace.NotificationLabelPromptDelivery
 import com.parkingkok.app.trace.TraceLabelPrompter
 import com.parkingkok.app.trace.TraceRecorder
+import android.os.PowerManager
 import com.parkingkok.app.widget.CompositeWidgetProjectionStore
 import com.parkingkok.app.widget.GlanceWidgetProjectionStore
 import com.parkingkok.app.widget.LockScreenParkingNotice
@@ -214,6 +215,19 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
      * Glance code has to ask.
      */
     val isWidgetStepperEntitled: Boolean get() = isWidgetStepperEntitled(isDebuggable)
+
+    /**
+     * Whether the OS will let `DrivingLocationService` be raised from a broadcast
+     * (docs/04_ANDROID §4b).
+     *
+     * Android 12+ refuses a background foreground-service start unless the app qualifies,
+     * and battery-optimisation exemption is the route available here. Without it the drive
+     * capture is throttled to roughly nothing — measured 2026-09-20 — so this is not a
+     * nice-to-have, it is the difference between the product working and not.
+     */
+    fun isIgnoringBatteryOptimizations(): Boolean =
+        appContext.getSystemService(PowerManager::class.java)
+            ?.isIgnoringBatteryOptimizations(appContext.packageName) == true
 
     /**
      * Keeps the home-screen widgets equal to Room (docs/06 §4, §7).

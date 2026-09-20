@@ -57,6 +57,7 @@ fun SettingsScreen(
     onLockScreenNoticeChange: (Boolean) -> Unit,
     onAnalyticsConsentChange: (Boolean) -> Unit,
     onOpenSystemSettings: () -> Unit,
+    onOpenBatterySettings: () -> Unit,
     onDeleteHistory: () -> Unit,
     onOpenDiagnostics: () -> Unit,
     onBack: () -> Unit,
@@ -178,6 +179,17 @@ fun SettingsScreen(
                     supporting = stringResource(R.string.settings_permission_background_caption),
                     granted = state.backgroundLocationGranted,
                     onClick = onOpenSystemSettings,
+                )
+                SettingsDivider()
+                // docs/04_ANDROID §4b. Not a runtime permission, but it belongs here
+                // because it fails the same way the others do: without it the drive
+                // capture cannot be raised in the background and the app detects nothing.
+                PermissionRow(
+                    iconRes = R.drawable.ic_shield,
+                    title = stringResource(R.string.settings_permission_battery),
+                    supporting = stringResource(R.string.settings_permission_battery_caption),
+                    granted = state.batteryUnrestricted,
+                    onClick = onOpenBatterySettings,
                 )
                 SettingsDivider()
                 PermissionRow(
@@ -438,6 +450,7 @@ private fun SettingsPreview() {
             onLockScreenNoticeChange = {},
             onAnalyticsConsentChange = {},
             onOpenSystemSettings = {},
+            onOpenBatterySettings = {},
             onDeleteHistory = {},
             onOpenDiagnostics = {},
             onBack = {},

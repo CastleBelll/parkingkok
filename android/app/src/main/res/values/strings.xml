@@ -287,6 +287,11 @@
     <string name="settings_permission_location_caption">주차 위치를 기록하려면 필요해요</string>
     <string name="settings_permission_background">위치 항상 허용</string>
     <string name="settings_permission_background_caption">앱이 꺼져 있을 때도 감지하려면 필요해요</string>
+    <!-- docs/04_ANDROID §4b. Not a runtime permission — it opens the system list. The
+         direct ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS prompt is one tap fewer but is
+         Play-policy sensitive, and this app has not been through review yet. -->
+    <string name="settings_permission_battery">배터리 사용량 제한 해제</string>
+    <string name="settings_permission_battery_caption">주행 중 위치를 놓치지 않으려면 필요해요. 제한이 걸려 있으면 주차를 감지하지 못해요</string>
     <string name="settings_permission_activity">신체 활동</string>
     <string name="settings_permission_activity_caption">운전과 걷기를 구분하려면 필요해요</string>
     <string name="settings_permission_notification">알림 권한</string>

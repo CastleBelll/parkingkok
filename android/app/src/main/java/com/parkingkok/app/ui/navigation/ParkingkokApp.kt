@@ -458,6 +458,20 @@ private fun SettingsRoute(
         onDetectionEnabledChange = viewModel::onDetectionEnabledChange,
         onLockScreenNoticeChange = viewModel::onLockScreenNoticeChange,
         onAnalyticsConsentChange = viewModel::onAnalyticsConsentChange,
+        onOpenBatterySettings = {
+            // The system list rather than ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS:
+            // the direct prompt is one tap fewer and is Play-policy sensitive
+            // (docs/13_PLAY_STORE_REVIEW_CHECKLIST.md), and this build has not been
+            // through review. Falls back to the app's own settings page on a device with
+            // no such screen.
+            val list = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            val fallback = Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.fromParts("package", context.packageName, null),
+            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            runCatching { context.startActivity(list) }.onFailure { context.startActivity(fallback) }
+        },
         onOpenSystemSettings = {
             // Background location in particular cannot be granted from an in-app prompt on
             // modern Android (docs/10_DESIGN_UX_SPEC.md §8), so every permission row leads

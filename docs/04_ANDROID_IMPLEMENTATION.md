@@ -104,6 +104,17 @@ to lift the throttle, but to be allowed to raise the service that does. `start` 
 best-effort and silent on refusal: a throttled session beats none, and that is what the app
 had before.
 
+Settings therefore carries it as a fifth permission row, `배터리 사용량 제한 해제`, beside the
+four real runtime permissions. It is not one of those, and it is listed with them anyway
+because it fails in exactly the same way: without it the app detects nothing, and a user
+debugging "왜 감지가 안 되지" has to be able to see it in the same place as the rest.
+
+The row opens `ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS` — the system list — rather than
+`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, which is one tap fewer and Play-policy
+sensitive (docs/13_PLAY_STORE_REVIEW_CHECKLIST.md). A location-tracking core function is
+the kind of thing the policy contemplates, so the direct prompt is available later with a
+declaration; it is not worth the review risk before the app has been reviewed once.
+
 ## 5. Event Pipeline
 ```text
 PendingIntent transition event

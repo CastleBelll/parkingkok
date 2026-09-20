@@ -30,6 +30,8 @@ data class SettingsUiState(
     val foregroundLocationGranted: Boolean = false,
     val backgroundLocationGranted: Boolean = false,
     val notificationsEnabled: Boolean = false,
+    /** docs/04_ANDROID §4b: without it the drive capture cannot be raised in the background. */
+    val batteryUnrestricted: Boolean = false,
     /**
      * docs/07 "동의". Read from the store rather than assumed, so the row cannot claim a
      * consent that was never persisted — and `false` until it is.
@@ -116,6 +118,7 @@ class SettingsViewModel(
         backgroundLocationGranted =
             container.locationSessionController.hasBackgroundLocationPermission(),
         notificationsEnabled = container.hasNotificationPermission(),
+        batteryUnrestricted = container.isIgnoringBatteryOptimizations(),
     )
 
     companion object {
