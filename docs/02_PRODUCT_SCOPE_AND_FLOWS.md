@@ -3,6 +3,32 @@
 ## 1. Navigation
 No mandatory bottom tab bar. Home-centered.
 
+### 1a. When the app does get a bottom bar (2026-09-20)
+
+Raised by the product owner: 가족 공유 is coming, and having no navigation at all feels
+thin. The answer today is still no, and the condition for changing it is written here so
+that it is a decision rather than an omission.
+
+**Today there is one destination.** Home is what the app is opened for. History, the
+notification log and Settings are places you visit occasionally and leave, and all three are
+one tap from Home — the `전체보기` link, the bell and the gear. A bar with three tabs would
+carry two nobody presses, and it would push the hero floor down on every screen, which is
+the one thing docs/10's harness says must not happen.
+
+**가족 공유 as currently specced does not change that.** docs/01 §5 lists family live car
+sharing as an MVP non-goal, and docs/10 places 가족 공유 as a *Settings section* and a Plus
+paywall bullet. A settings section adds no destination.
+
+**The trigger.** The bar goes in when a second screen becomes a *peer of Home* — something
+opened as often as Home and returned to, rather than visited and left. "See where the family
+parked" is exactly that, if it is built as a screen rather than a setting. At that point the
+count is Home · 기록 · 가족, which is what a bottom bar is for.
+
+**There is no structural debt in waiting.** Both platforms navigate a single rooted stack
+(`NavBackStack` on Android, `path: [AppRoute]` on iOS). Adding a bar means giving each tab
+its own stack and wrapping the existing shell; no screen changes. Building it early would
+cost the hero now and save nothing later.
+
 ```text
 App
 ├ Onboarding
