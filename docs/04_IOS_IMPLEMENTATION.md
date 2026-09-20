@@ -62,6 +62,50 @@ As soon as parking candidate reaches terminal state or driving times out:
 - invalidate background session
 - return to significant-change monitoring
 
+## 3a. OPEN: the bounded capture ran 42 minutes late on a real drive (2026-09-20)
+
+Measured on an iPhone 14 Pro Max, two real drives in one day, **zero candidates created**.
+
+Drive 2, fixes bucketed by ten minutes (`vehicle_enter` at 16:09):
+
+```text
+16:10   2 fixes   median accuracy   136 m
+16:20   2 fixes   median accuracy  1414 m
+16:30   2 fixes   median accuracy  1000 m
+16:40   2 fixes   median accuracy  1075 m
+16:50   2 fixes   median accuracy   200 m
+17:00  17 fixes   median accuracy    20 m   ← the walk after parking
+17:10  29 fixes   median accuracy    20 m
+```
+
+Two fixes per ten minutes at kilometre accuracy is significant-change grade, not
+`liveUpdates(.automotiveNavigation)`. The dense, accurate run only begins at 17:00 — after
+the car had stopped — and `drivingSessionCount` is 1 with
+`lastDrivingSessionEndReason: vehicleEvidenceExpired` at 17:15.
+
+Everything downstream follows from it: `distanceNoiseFloorRejectCount: 352` of 378 fixes,
+`drivingDistanceMeters: 169.6` for two hours of driving, and
+`movementEvidenceRejectReason: accuracyTooCoarse`. §7's clauses cannot be met from
+kilometre-accuracy fixes, so no candidate is ever justified.
+
+**What does not add up, and is the thing to investigate.** `drivingConfirmedAt` is 16:18 —
+nine minutes into the drive — so the engine did decide it was driving and should have
+emitted `startBoundedLocationCapture` then. `LiveDrivingLocationCapture` holds a
+`CLServiceSession(authorization: .always)` and a `CLBackgroundActivitySession` precisely so
+delivery survives backgrounding. Either the capture was never started at 16:18, or it was
+started and produced nothing until the app came to the foreground. The diagnostics as they
+stand cannot tell those apart.
+
+Before the next instrumented drive, add to the diagnostics report: when
+`startBoundedLocationCapture` was last emitted, when `LiveDrivingLocationCapture.start()`
+last ran, and whether either session object is currently non-nil. Without those three the
+next drive produces the same ambiguity.
+
+Android failed the same gate for a different reason and it is fixed there — see
+docs/04_ANDROID_IMPLEMENTATION.md §4a/§4b. The Android answer (a drive-scoped foreground
+service) has no iOS equivalent; the session objects above are already meant to be it.
+
+
 ## 4. Permission Design
 
 Info.plist:
