@@ -39,6 +39,7 @@ struct CandidateConfirmationView: View {
     /// `PillarReading.none` are the same screen — §6a's "the form opens exactly as it does
     /// today, empty".
     @State private var pillarSuggestion: PillarReading?
+    @State private var pillarPhotoData: Data?
 
     init(
         candidate: ParkingCandidate,
@@ -69,7 +70,8 @@ struct CandidateConfirmationView: View {
                 model: parking,
                 confirming: candidate,
                 candidates: candidates,
-                suggestion: pillarSuggestion
+                suggestion: pillarSuggestion,
+                pillarPhoto: pillarPhotoData
             )
         }
         .task { readPillarFixtureIfRequested() }
@@ -122,14 +124,17 @@ struct CandidateConfirmationView: View {
                 }
             }
             HStack(spacing: PKSpacing.m) {
-                Button(Self.manualEntryTitle) { openManualEntry(with: nil) }
-                    // The same weight as a quick pick. §7a ranks it after them, and rank
-                    // here is order and label, not a second colour — the design harness
-                    // allows one accent per screen and the picks already spend it.
-                    .buttonStyle(PKSoftButtonStyle())
+                // Photo first (docs/10 §7a): it is the faster of the two and typing less
+                // is the point. It drops out entirely where there is no camera, and
+                // 직접 입력 takes the width on its own.
                 if ParkingPhotoSource.available.contains(.camera) {
                     pillarButton
                 }
+                Button(Self.manualEntryTitle) { openManualEntry(with: nil) }
+                    // The same weight as a quick pick. §7a ranks these after them, and rank
+                    // here is order and label, not a second colour — the design harness
+                    // allows one accent per screen and the picks already spend it.
+                    .buttonStyle(PKSoftButtonStyle())
             }
         }
     }
@@ -137,9 +142,10 @@ struct CandidateConfirmationView: View {
     /// docs/02 §6a: "The most valuable place to offer it is the confirmation screen: the
     /// user is standing at the pillar when the prompt arrives."
     ///
-    /// `사진으로 입력`, not `사진 추가` — the photo is read and discarded, never stored.
-    /// FR-007's one saved photo belongs to a record, and there is no record here yet;
-    /// promising storage in the label and not delivering it would be the worse mistake.
+    /// The photo is kept, not read and thrown away (docs/02 §6a): it is the pillar photo
+    /// the user would otherwise have to take a second time from the detail screen. There
+    /// is no record to attach it to yet, so it rides along to the sheet and is attached by
+    /// the confirmation that creates one.
     ///
     /// Hidden entirely where there is no camera (the simulator, or camera access turned
     /// off), because §7a's screen has no room for a control that cannot work.
@@ -168,6 +174,7 @@ struct CandidateConfirmationView: View {
     /// opens the same form.
     private func readPillar(_ imageData: Data) {
         isReadingPillar = true
+        pillarPhotoData = imageData
         Task {
             let reading = await pillarReader.read(imageData)
             isReadingPillar = false
@@ -238,6 +245,7 @@ struct CandidateConfirmationView: View {
         // The read is spent either way: cancelled, it must not reappear behind the next
         // 직접 입력, and saved, it is already in the record.
         pillarSuggestion = nil
+        pillarPhotoData = nil
         guard candidates.pending?.id != candidate.id else { return }
         dismiss()
     }

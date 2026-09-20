@@ -149,10 +149,23 @@ final class CandidateModel {
     ///
     /// @return whether the record was written. `false` leaves the candidate pending, so a
     /// store failure costs the user nothing but a second tap.
+    ///
+    /// `pillarPhoto` is the shot taken on the way here, if there was one. It is attached
+    /// after the write rather than discarded (docs/02 §6a): it is the pillar photo the
+    /// user would otherwise have to take a second time from the detail screen. Attaching
+    /// is best-effort and silent — a confirmation that saved is not undone because a photo
+    /// did not.
     @discardableResult
-    func confirm(_ candidate: ParkingCandidate, draft: ManualParkingDraft) -> Bool {
+    func confirm(
+        _ candidate: ParkingCandidate,
+        draft: ManualParkingDraft,
+        pillarPhoto: Data? = nil
+    ) -> Bool {
         guard let recordId = parking.saveDetectedParking(from: candidate, draft: draft) else {
             return false
+        }
+        if let pillarPhoto {
+            Task { await parking.attachPhoto(pillarPhoto, to: recordId) }
         }
         // The event goes out after the write, never before: a confirmation that failed to
         // save would otherwise be counted as precision the detector does not have.

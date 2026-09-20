@@ -1,6 +1,10 @@
 package com.parkingkok.app.ui.confirm
 
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.annotation.DrawableRes
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -8,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -20,6 +25,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.parkingkok.app.R
 import com.parkingkok.app.domain.detection.ParkingCandidateNotice
@@ -182,6 +188,7 @@ private fun FloorChoices(
                 enabled = enabled,
                 onClick = onPhotoEntry,
                 modifier = Modifier.weight(1f),
+                iconRes = R.drawable.ic_photo,
             )
             Escape(
                 label = stringResource(R.string.candidate_confirm_manual),
@@ -200,6 +207,7 @@ private fun Escape(
     enabled: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    @DrawableRes iconRes: Int? = null,
 ) {
     OutlinedButton(
         onClick = onClick,
@@ -207,9 +215,23 @@ private fun Escape(
         shape = MaterialTheme.shapes.small,
         modifier = modifier.heightIn(min = FLOOR_PICK_HEIGHT),
     ) {
+        if (iconRes != null) {
+            // The one glyph on this screen, and it carries meaning: it says the button
+            // opens a camera rather than a keyboard, which the two labels alone leave to
+            // reading. iOS shows the same.
+            Icon(
+                painter = painterResource(iconRes),
+                contentDescription = null,
+                modifier = Modifier.size(ESCAPE_ICON_SIZE),
+            )
+            Spacer(Modifier.width(MaterialTheme.spacing.small))
+        }
         Text(text = label, style = MaterialTheme.typography.titleMedium)
     }
 }
+
+/** Sized against the label beside it, not against a touch target. */
+private val ESCAPE_ICON_SIZE = 20.dp
 
 /** §7a 주차 아님: a text button, never a destructive-looking one. It is an ordinary answer. */
 @Composable

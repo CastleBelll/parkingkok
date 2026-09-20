@@ -25,6 +25,10 @@ struct ManualParkingSheet: View {
     /// already looking at and goes no further until they press 저장.
     private let suggestion: PillarReading?
 
+    /// The shot the pillar reading came from, kept so confirming attaches it to the record
+    /// it creates (docs/02 §6a). Nil for every path that did not come from a camera.
+    private let pillarPhoto: Data?
+
     @Environment(\.dismiss) private var dismiss
     @State private var draft = ManualParkingDraft()
     @State private var isSaving = false
@@ -38,6 +42,7 @@ struct ManualParkingSheet: View {
     }
 
     init(model: ParkingModel, editing: ParkingSession? = nil, suggestion: PillarReading? = nil) {
+        self.pillarPhoto = nil
         self.model = model
         self.editing = editing
         self.suggestion = suggestion
@@ -49,8 +54,10 @@ struct ManualParkingSheet: View {
         model: ParkingModel,
         confirming candidate: ParkingCandidate,
         candidates: CandidateModel,
-        suggestion: PillarReading? = nil
+        suggestion: PillarReading? = nil,
+        pillarPhoto: Data? = nil
     ) {
+        self.pillarPhoto = pillarPhoto
         self.model = model
         editing = nil
         self.suggestion = suggestion
@@ -160,7 +167,13 @@ struct ManualParkingSheet: View {
         if let confirmation {
             // §7a: saving here *is* the confirmation. One path, so the record a quick pick
             // writes and the record this writes differ only in what the user typed.
-            finish(succeeded: confirmation.candidates.confirm(confirmation.candidate, draft: draft))
+            finish(
+                succeeded: confirmation.candidates.confirm(
+                    confirmation.candidate,
+                    draft: draft,
+                    pillarPhoto: pillarPhoto
+                )
+            )
             return
         }
         if var editing {
