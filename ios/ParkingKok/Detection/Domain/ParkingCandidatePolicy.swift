@@ -79,6 +79,16 @@ enum ParkingCandidatePolicy {
     /// docs/05 §10. The lifetime a candidate is given when it is created.
     static let expiry: TimeInterval = 45 * 60
 
+    /// docs/05 §5 `staleLocationWindow`, 600 s. **unvalidated.**
+    ///
+    /// How old `lastReliableLocation` may be at the moment a candidate is created. The
+    /// budget it has to cover: the descent into a garage where the sky is lost (0–5 min),
+    /// the stop and the walk that confirms it (1–3 min), and the platform's own transition
+    /// delivery delay — 17 s on the Android device whose 2026-09-20 trace produced this
+    /// rule. Tune it from field data: too tight costs `위치 없음` on a parking that had a
+    /// usable fix, too loose reproduces the 17:32 candidate that carried a 12:00 one.
+    static let staleLocationWindow: TimeInterval = 600
+
     /// The candidate this evidence justifies, or `nil` when §6's rule is not met.
     ///
     /// `nil` is not a failure and is not reported: it is the ordinary outcome of a

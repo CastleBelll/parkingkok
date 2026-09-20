@@ -652,6 +652,28 @@ actor ParkingDetectionEngine {
     /// candidate is written first, then the checkpoint, then the notification. Denied
     /// notifications, a notification service that throws, a process killed a millisecond
     /// later — none of them can cost the user the candidate, which is what §10a means by
+    /// §5 "The fix a candidate inherits must belong to the drive that just ended".
+    ///
+    /// Both conditions, because they catch different things. The session bound refuses a
+    /// fix from a previous trip or from the origin of this one — the origin is not the
+    /// destination. The age bound refuses a long drive's only good fix when it came near
+    /// the start, because being on the motorway at minute two says nothing about where the
+    /// car stopped at minute ninety.
+    ///
+    /// Measured on Android on 2026-09-20: without this, a candidate created at 17:32
+    /// carried a fix from 12:00, and the confirmation screen would have drawn it on a map
+    /// with its accuracy printed beside it. A wrong coordinate is worse than none, and
+    /// `위치 없음` is a state that screen already renders properly.
+    private func inheritableLocation(for drive: DrivingEvidence?, now: Date) -> LastReliableLocation? {
+        guard let fix = checkpoint.lastReliableLocation else { return nil }
+        guard now.timeIntervalSince(fix.capturedAt) <= ParkingCandidatePolicy.staleLocationWindow
+        else { return nil }
+        // No drive on the transition means nothing to bound it against; the age check above
+        // is then the whole guard.
+        guard let drive else { return fix }
+        return fix.capturedAt >= drive.startedAt ? fix : nil
+    }
+
     /// "notification permission is not required for correctness".
     private func createCandidate(from transition: ParkingTransition, now: Date) -> [DetectionEffect] {
         var evidence = transition.evidence
@@ -668,13 +690,14 @@ actor ParkingDetectionEngine {
         // `IDLE` first.
         guard !hasProducedCandidateInSession else { return [] }
 
-        let accuracyBucket = checkpoint.lastReliableLocation
+        let inherited = inheritableLocation(for: transition.drive, now: now)
+        let accuracyBucket = inherited
             .flatMap { LocationAccuracyBucket(horizontalAccuracy: $0.horizontalAccuracy) }
         guard let candidate = ParkingCandidatePolicy.evaluate(
             evidence,
             id: makeCandidateId(),
             detectedAt: now,
-            lastReliableLocation: checkpoint.lastReliableLocation,
+            lastReliableLocation: inherited,
             accuracyBucket: accuracyBucket
         ) else {
             self.transition = nil

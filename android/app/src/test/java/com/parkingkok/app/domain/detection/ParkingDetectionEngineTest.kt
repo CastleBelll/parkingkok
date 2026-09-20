@@ -487,6 +487,89 @@ class ParkingDetectionEngineTest {
 
     // ── helpers ─────────────────────────────────────────────────────────────────────
 
+    // ── §5: the fix a candidate inherits ────────────────────────────────────────────
+
+    @Test
+    fun `a candidate refuses a fix older than the drive that produced it`() {
+        // Arrange — the 2026-09-20 Android trace, in miniature. The last fix good enough to
+        // be admitted came at noon; the car was driven and parked five hours later, and
+        // nothing underground was ever good enough to replace it.
+        val noonFix = ReliableLocation(
+            latitude = ORIGIN_LATITUDE,
+            longitude = ORIGIN_LONGITUDE,
+            horizontalAccuracyM = 17.7f,
+            capturedAtMillis = T0,
+        )
+        val driveStart = T0 + 5 * 60 * 60 * 1000L
+        val transition = idle()
+            .copy(lastReliableLocation = noonFix)
+            .handle(DetectionEvent.VehicleEnter(driveStart))
+            .handle(DetectionEvent.StationaryExit(driveStart + SUSTAIN))
+            .handle(DetectionEvent.VehicleExit(driveStart + 20 * 60_000L))
+
+        // Act
+        val step = engine.handle(transition, DetectionEvent.WalkingEnter(driveStart + 20 * 60_000L + 30_000L))
+
+        // Assert — a candidate, and no coordinate on it. A wrong one is worse than none:
+        // the confirmation screen would have drawn it on a map with its accuracy beside it.
+        assertEquals(DetectionState.CANDIDATE_PENDING, step.state.state)
+        assertNull(
+            "the fix predates the drive, so it is the origin at best and noise at worst",
+            createCandidate(step.effects).lastReliableLocation,
+        )
+        // The running value is untouched: only what the candidate *inherits* is bounded.
+        assertEquals(noonFix, step.state.lastReliableLocation)
+    }
+
+    @Test
+    fun `a fix taken during the drive is inherited`() {
+        // The control for the test above: same shape, fix taken after the wheels turned.
+        val driveStart = T0
+        val duringDrive = ReliableLocation(
+            latitude = ORIGIN_LATITUDE,
+            longitude = ORIGIN_LONGITUDE,
+            horizontalAccuracyM = 12f,
+            capturedAtMillis = driveStart + 19 * 60_000L,
+        )
+        val transition = idle()
+            .handle(DetectionEvent.VehicleEnter(driveStart))
+            .handle(DetectionEvent.StationaryExit(driveStart + SUSTAIN))
+            .copy(lastReliableLocation = duringDrive)
+            .handle(DetectionEvent.VehicleExit(driveStart + 20 * 60_000L))
+
+        val step = engine.handle(transition, DetectionEvent.WalkingEnter(driveStart + 20 * 60_000L + 30_000L))
+
+        assertEquals(DetectionState.CANDIDATE_PENDING, step.state.state)
+        assertEquals(duringDrive, createCandidate(step.effects).lastReliableLocation)
+    }
+
+    @Test
+    fun `a fix from inside the drive but older than the window is refused`() {
+        // A ninety-minute motorway run whose only good fix came at minute two. Being on the
+        // motorway then says nothing about where the car stopped at minute ninety.
+        val driveStart = T0
+        val early = ReliableLocation(
+            latitude = ORIGIN_LATITUDE,
+            longitude = ORIGIN_LONGITUDE,
+            horizontalAccuracyM = 9f,
+            capturedAtMillis = driveStart + 2 * 60_000L,
+        )
+        val endedAt = driveStart + 90 * 60_000L
+        val transition = idle()
+            .handle(DetectionEvent.VehicleEnter(driveStart))
+            .handle(DetectionEvent.StationaryExit(driveStart + SUSTAIN))
+            .copy(lastReliableLocation = early)
+            .handle(DetectionEvent.VehicleExit(endedAt))
+
+        val step = engine.handle(transition, DetectionEvent.WalkingEnter(endedAt + 30_000L))
+
+        assertEquals(DetectionState.CANDIDATE_PENDING, step.state.state)
+        assertNull(createCandidate(step.effects).lastReliableLocation)
+    }
+
+    private fun createCandidate(effects: List<DetectionEffect>): DetectionEffect.CreateCandidate =
+        effects.filterIsInstance<DetectionEffect.CreateCandidate>().single()
+
     private fun idle() = DetectionEngineState.startingIn(DetectionState.IDLE, T0)
 
     private fun driving() = DetectionEngineState.startingIn(DetectionState.DRIVING, T0)

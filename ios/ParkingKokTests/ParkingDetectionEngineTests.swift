@@ -32,6 +32,17 @@ struct ParkingDetectionEngineTests {
         }
     }
 
+    /// A fix at the fixture origin. Coordinates never leave this file.
+    private func fix(at date: Date, accuracy: Double) -> LocationFix {
+        LocationFix(
+            timestamp: date,
+            latitude: 37.5,
+            longitude: 127.0,
+            horizontalAccuracy: accuracy,
+            speed: nil
+        )
+    }
+
     private func candidates(_ effects: [DetectionEffect]) -> [ParkingCandidate] {
         effects.compactMap {
             if case let .createCandidate(candidate) = $0 { return candidate }
@@ -166,6 +177,72 @@ struct ParkingDetectionEngineTests {
     }
 
     // MARK: - Rows out of PARKING_TRANSITION
+
+    // MARK: - §5: the fix a candidate inherits
+
+    /// The 2026-09-20 Android trace, replayed against this engine: the last fix good enough
+    /// to be admitted came at noon, the car was driven and parked five hours later, and
+    /// nothing underground was ever good enough to replace it.
+    @Test("A candidate refuses the fix left behind by an earlier drive")
+    func candidateRefusesAFixFromBeforeTheDrive() async throws {
+        // Arrange — drive one, above ground, leaves a good fix on the state.
+        let engine = await drivingEngine()
+        _ = await engine.handle(.location(fix(at: at(600), accuracy: 17.7)))
+        _ = await engine.handle(.vehicleExit(at: at(900)))
+        let first = try #require(candidates(await engine.handle(.walkingEnter(at: at(930)))).first)
+        #expect(first.lastReliableLocation != nil, "the control: drive one did keep its fix")
+        _ = await engine.handle(.userRejectedParking(at: at(960)))
+
+        // Drive two, an hour later and entirely underground: not one fix arrives.
+        let second = at(3600 + 960)
+        _ = await engine.handle(.vehicleEnter(at: second))
+        _ = await engine.handle(
+            .timerTick(at: second.addingTimeInterval(DrivingConfirmationPolicy.minimumVehicleDuration))
+        )
+        _ = await engine.handle(.vehicleExit(at: second.addingTimeInterval(1200)))
+
+        // Act
+        let effects = await engine.handle(.walkingEnter(at: second.addingTimeInterval(1230)))
+
+        // Assert — a candidate, and no coordinate on it. Drive one's fix is where the car
+        // was an hour ago; a wrong coordinate is worse than none, because the confirmation
+        // screen draws it on a map with its accuracy printed beside it.
+        let candidate = try #require(candidates(effects).first)
+        #expect(candidate.lastReliableLocation == nil)
+    }
+
+    /// A ninety-minute motorway run whose only good fix came at minute two. Being on the
+    /// motorway then says nothing about where the car stopped at minute ninety.
+    @Test("A fix from inside the drive but older than the window is refused")
+    func candidateRefusesAFixOlderThanTheWindow() async throws {
+        // Arrange
+        let engine = await drivingEngine()
+        _ = await engine.handle(.location(fix(at: at(120), accuracy: 9)))
+        _ = await engine.handle(.vehicleExit(at: at(90 * 60)))
+
+        // Act
+        let effects = await engine.handle(.walkingEnter(at: at(90 * 60 + 30)))
+
+        // Assert
+        let candidate = try #require(candidates(effects).first)
+        #expect(candidate.lastReliableLocation == nil)
+    }
+
+    @Test("A fix taken during the drive is inherited")
+    func candidateInheritsAFixFromTheDrive() async throws {
+        // Arrange — the control: same shape, fix taken after the wheels turned and inside
+        // the window.
+        let engine = await drivingEngine()
+        _ = await engine.handle(.location(fix(at: at(1140), accuracy: 12)))
+        _ = await engine.handle(.vehicleExit(at: at(1200)))
+
+        // Act
+        let effects = await engine.handle(.walkingEnter(at: at(1230)))
+
+        // Assert
+        let candidate = try #require(candidates(effects).first)
+        #expect(candidate.lastReliableLocation?.horizontalAccuracy == 12)
+    }
 
     @Test("PARKING_TRANSITION → CANDIDATE_PENDING on walking_enter inside the window")
     func walkingConfirmsCandidate() async throws {

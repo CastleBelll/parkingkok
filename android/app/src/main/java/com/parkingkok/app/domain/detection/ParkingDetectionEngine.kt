@@ -711,6 +711,7 @@ class ParkingDetectionEngine(
             distanceMeters = session.evidence.travelDistanceMeters,
         )
         val confidence = ParkingConfidencePolicy.bucketOf(score)
+        val inheritedLocation = lastReliableLocation?.takeIf { it.belongsToDrive(session, atMillis) }
         val id = newCandidateId()
         val snapshot = CandidateSnapshot(
             id = id,
@@ -735,7 +736,7 @@ class ParkingDetectionEngine(
                     confidence = confidence,
                     score = score,
                     reasons = session.reasons,
-                    lastReliableLocation = lastReliableLocation,
+                    lastReliableLocation = inheritedLocation,
                     vehicleSessionDurationMillis = durationMillis,
                     travelDistanceMeters = session.evidence.travelDistanceMeters,
                     walkingEvidence = EvidenceReasonCode.WALKING_AFTER_VEHICLE in session.reasons,
@@ -757,6 +758,23 @@ class ParkingDetectionEngine(
      */
     private fun DetectionEngineState.checkpointEffect(): DetectionEffect =
         DetectionEffect.PersistCheckpoint(toCheckpoint())
+
+    /**
+     * §5 "The fix a candidate inherits must belong to the drive that just ended".
+     *
+     * Both conditions, because they catch different things. The session bound refuses a fix
+     * from a previous trip or from the origin of this one — the origin is not the
+     * destination. The age bound refuses a long drive's only good fix when it came near the
+     * start, because being on the motorway at minute two says nothing about minute ninety.
+     *
+     * Measured on 2026-09-20: without this, a candidate created at 17:32 carried a fix from
+     * 12:00, and the confirmation screen would have drawn it on a map with its accuracy
+     * printed beside it. A wrong coordinate is worse than none; `위치 없음` is a state that
+     * screen already renders properly.
+     */
+    private fun ReliableLocation.belongsToDrive(session: TravelSession, atMillis: Long): Boolean =
+        capturedAtMillis >= session.vehicleActivityStartedAtMillis &&
+            atMillis - capturedAtMillis <= STALE_LOCATION_WINDOW_MILLIS
 
     private fun TravelSession.hasSustainedVehicleActivity(atMillis: Long): Boolean {
         val since = vehicleActiveSinceMillis ?: return false
@@ -783,6 +801,15 @@ class ParkingDetectionEngine(
          * direction cannot be laxer than the other".
          */
         const val MINIMUM_VEHICLE_DURATION_MILLIS: Long = 90_000L
+
+        /**
+         * §5 `staleLocationWindow`, 600 s. **unvalidated.**
+         *
+         * The budget: the descent into a garage where the sky is lost (0–5 min), the stop
+         * and the walk that confirms it (1–3 min), and the platform's transition delivery
+         * delay — 17 s on the device that produced the trace this rule came from.
+         */
+        const val STALE_LOCATION_WINDOW_MILLIS: Long = 600_000L
 
         /**
          * §3a constant `drivingCandidateWindow`, 300 s.

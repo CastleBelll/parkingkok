@@ -350,6 +350,38 @@ OS는 위치 모니터링을 시작하는 순간 **캐시된 마지막 fix를 �
 정확도만으로는 잡을 수 없다. 캐시된 fix는 대체로 *좋은* fix이고, 단지 현재가 아닐 뿐이다.
 따라서 **타임스탬프 기반 freshness 가드를 반드시 둔다.**
 
+### The fix a candidate inherits must belong to the drive that just ended
+
+Measured on Android on 2026-09-20: a candidate created at 17:32 carried a fix captured at
+**12:00** — five and a half hours and an unknown number of kilometres earlier. It was the
+last fix good enough to be admitted all day, and nothing aged it out.
+
+The guards above bound **admission**. Nothing bounded **use**. `lastReliableLocation` is a
+running value on the state, and `openCandidateOrEndSession` attached whatever it held.
+
+A candidate with a wrong coordinate is worse than a candidate with none. The confirmation
+screen draws that coordinate on a map and prints its accuracy beside it (docs/10 §7a), so a
+stale fix is not a blank — it is a confident lie, and `위치 없음` is a state the screen
+already renders properly.
+
+**Two conditions, both required, or the candidate is created with no location:**
+
+| condition | what it catches |
+|---|---|
+| `capturedAt >= session.vehicleActivityStartedAt` | a fix from a *previous* trip, or from the origin before this one began. The origin is not the destination |
+| `now - capturedAt <= staleLocationWindow` | a long drive whose only good fix came near the start. Being on the motorway at minute two says nothing about where the car stopped at minute ninety |
+
+`staleLocationWindow` = **600s**, **unvalidated**, in the same spirit as §3a's other
+constants. The budget it has to cover is: the descent into a garage where the sky is lost
+(0–5 min), the stop and the walk that confirms it (1–3 min), and the platform's own
+transition delivery delay — 17s on the Android device that produced this trace. Tune it from
+field data; the cost of it being too tight is `위치 없음` on a parking that had a usable fix,
+and the cost of it being too loose is the 17:32 candidate above.
+
+A candidate that loses its fix this way keeps everything else. It is still a candidate, it
+still notifies, and it still becomes a record — one saved without a location, which FR-001
+already calls an ordinary outcome.
+
 - 기본값: 수신 시점 기준 **300초** 초과 시 live evidence에서 제외
 - 시계 오차 허용: 미래 방향 5초까지
 - §6의 20초 기준은 **bounded driving session 전용**이며 이 경로에 재사용하지 않는다.
