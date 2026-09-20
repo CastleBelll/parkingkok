@@ -15,19 +15,58 @@ one tap from Home — the `전체보기` link, the bell and the gear. A bar with
 carry two nobody presses, and it would push the hero floor down on every screen, which is
 the one thing docs/10's harness says must not happen.
 
-**가족 공유 as currently specced does not change that.** docs/01 §5 lists family live car
-sharing as an MVP non-goal, and docs/10 places 가족 공유 as a *Settings section* and a Plus
-paywall bullet. A settings section adds no destination.
+**가족 공유 does not change that, and the reason is stronger than it first looked.** This
+section was first written against the wrong reading — "see where each family member's car
+is", which would have been a new screen and a peer of Home. The product owner corrected it:
+it is **one car, several people.** Everyone sees the same parking.
 
-**The trigger.** The bar goes in when a second screen becomes a *peer of Home* — something
-opened as often as Home and returned to, rather than visited and left. "See where the family
-parked" is exactly that, if it is built as a screen rather than a setting. At that point the
-count is Home · 기록 · 가족, which is what a bottom bar is for.
+That is not a new destination. It is the existing Home screen with a shared record behind
+it: 우리 차 어디 있지, asked by three people instead of one. Nothing moves in the navigation
+tree — `docs/10` keeps the invite and the membership controls as a Settings section, which
+is where account-shaped things belong.
+
+**The trigger, restated.** The bar goes in when a second screen becomes a *peer of Home* —
+opened as often as Home and returned to, rather than visited and left. Nothing on the
+roadmap is that today, family sharing included. If something ever is, the count becomes
+three and the bar is right.
+
+**Where the difficulty actually lives** is §1b, not here.
 
 **There is no structural debt in waiting.** Both platforms navigate a single rooted stack
 (`NavBackStack` on Android, `path: [AppRoute]` on iOS). Adding a bar means giving each tab
 its own stack and wrapping the existing shell; no screen changes. Building it early would
 cost the hero now and save nothing later.
+
+### 1b. OPEN: one car, several people breaks two standing rules
+
+Shared parking is a small UI change and a large everything-else change. Named here so the
+size is visible before anyone starts.
+
+**It requires the parking record to leave the device.** CLAUDE.md's Hard Constraints say
+위치 좌표/주차 사진/층/구역/spot memo are never stored in Firebase, and docs/01 §5 lists
+cloud parking-history sync as an MVP non-goal. A record two phones can both see is exactly
+that sync. Three ways out, and they are materially different products:
+
+- **End-to-end encrypted sync.** The server holds ciphertext and a key it never sees, so the
+  letter and the spirit of the rule survive. The most work by far: key exchange between
+  family members, key rotation when someone leaves, and recovery when the last device with
+  the key is lost.
+- **Relax the rule for shared records only.** Cheapest, and it turns a rule the product was
+  designed around into one with an exception. Whatever is decided, the Data Safety and
+  privacy-label copy changes with it.
+- **One-off share instead of a shared record.** 주차 위치를 가족에게 보낸다 — a share sheet,
+  no sync, no account link, no rule broken. Much smaller, and it is not the same feature: it
+  answers "tell them where I parked", not "we all see where the car is".
+
+**It breaks one-candidate-per-parking.** Detection runs on every phone. A family driving
+together means three phones all seeing `vehicle_enter` and all reaching `CANDIDATE_PENDING`
+for one car — three notifications, and up to three records for one parking. §12's "one
+candidate per travel session" is per *device*, and shared parking needs it per *car*.
+Whoever was driving is not knowable from motion alone; the passenger's phone sees the same
+trip. This needs an answer before the feature is built, not after.
+
+**It needs real accounts.** Today identity is Firebase anonymous auth (docs/07). Sharing
+needs a durable account and an invite flow, which docs/14 M5 has and nothing has started.
 
 ```text
 App
