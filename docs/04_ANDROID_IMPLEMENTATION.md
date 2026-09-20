@@ -58,6 +58,52 @@ Starting a location FGS from background may require ACCESS_BACKGROUND_LOCATION.
 
 P0 must test whether Activity Transition events + bounded location capture work adequately without persistent FGS.
 
+### 4a. The P0 test above was run on 2026-09-20. It fails without an FGS.
+
+A full day of real driving on a Galaxy S21 (Android 15, One UI 7) produced **three location
+fixes**, all between 12:32 and 12:42, all 56–100 m. Three bounded sessions started and three
+stopped; `deliveryCount` was **0**. Activity transitions were fine throughout —
+`transitionEventCount: 20` — so it is location alone that fails.
+
+Then measured directly, one `DRIVING` session at a 15-second interval:
+
+| condition | deliveries in 3 minutes | expected |
+|---|---|---|
+| app in the foreground | 3 in the first 25 s | ~12 |
+| backgrounded, screen off | **0** | ~12 |
+| backgrounded, screen off, exempt from battery optimisation | **1** | ~12 |
+| backgrounded, screen off, **`location` foreground service** | **45** | ~12 |
+
+The third row is the one that decided the design: **a doze exemption does not lift the
+throttle.** Android's background location limit applies to an app with no foreground
+service however the subscription was made, and the PendingIntent form — which does survive
+process death, as §2 says — does not exempt it.
+
+The consequence was not subtle. With no fix newer than noon, the candidate created at 17:32
+inherited the noon one; the home screen read `오후 12:00 · 확인해 주세요` and the confirmation
+screen drew a map with `약 17m 이내` beside it. (That second bug is fixed separately, in
+docs/05 §5 — but it only ever fired because this one starved it.)
+
+### 4b. `DrivingLocationService`, and why it is not the permanent FGS §4 forbids
+
+One `location` foreground service, started by `FusedLocationSessionRegistrar.request` and
+stopped by `remove`. Its lifetime is therefore exactly one bounded Fused Location request's,
+which `LocationSessionPlanner` already caps. A parked phone runs no service; an idle one
+runs no service. What §4 forbids is a service that stands whether or not anything is
+happening, and this is the opposite — if it is ever seen alive while `sessionMode` is
+`IDLE`, that is a leak to fix, not the design.
+
+It is `START_NOT_STICKY`: a system restart with no session behind it would be exactly that
+leak. Verified on the device: stopping the capture leaves `sessionMode: IDLE`,
+`lastSessionStopReason: DESIRED_IDLE` and **no** `ServiceRecord` for it.
+
+**Starting it from the background still needs the exemption.** Android 12+ refuses a
+background foreground-service start unless the app qualifies, and battery-optimisation
+exemption is the qualifying route available here. So the exemption is still required — not
+to lift the throttle, but to be allowed to raise the service that does. `start` is
+best-effort and silent on refusal: a throttled session beats none, and that is what the app
+had before.
+
 ## 5. Event Pipeline
 ```text
 PendingIntent transition event

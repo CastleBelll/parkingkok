@@ -297,6 +297,14 @@
     <string name="settings_section_plus">주차핀 Plus</string>
     <string name="settings_plus_title">아직 준비 중이에요</string>
     <string name="settings_plus_caption">구독 기능은 이 버전에 없습니다</string>
+    <!-- The drive-scoped location foreground service (docs/04_ANDROID §2a). Mandatory
+         notification, so it says something worth its space. Never a sound, never a
+         coordinate. -->
+    <string name="driving_capture_channel_name">주행 중 위치 기록</string>
+    <string name="driving_capture_channel_description">주행 중에만 위치를 기록하기 위해 표시됩니다. 주차가 끝나면 사라지고, 소리는 나지 않습니다.</string>
+    <string name="driving_capture_title">주행 중 위치를 기록하고 있어요</string>
+    <string name="driving_capture_body">주차하면 자동으로 멈춰요</string>
+
     <!-- Lock screen (docs/06 §7b). A readout, never an alert: the channel is LOW and the
          copy carries only a floor, a zone and an elapsed time. -->
     <string name="lock_screen_channel_name">주차 위치 표시</string>

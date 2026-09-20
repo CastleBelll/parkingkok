@@ -54,15 +54,26 @@ class FusedLocationSessionRegistrar(private val context: Context) : LocationSess
 
     override suspend fun request(config: LocationSessionConfig): String? {
         if (!hasForegroundLocationPermission()) return "location permission not granted"
+        // Raised *before* the request, so the process is already foreground when Play
+        // services decides what rate this subscription is entitled to. See
+        // `DrivingLocationService` for the measurement that put it here — a PendingIntent
+        // survives process death but is still throttled to nothing without this.
+        DrivingLocationService.start(context)
         return failureReasonOf {
             LocationServices.getFusedLocationProviderClient(context)
                 .requestLocationUpdates(config.toLocationRequest(), pendingIntent())
-        }
+        }.also { failure -> if (failure != null) DrivingLocationService.stop(context) }
     }
 
-    override suspend fun remove(): String? = failureReasonOf {
-        LocationServices.getFusedLocationProviderClient(context)
-            .removeLocationUpdates(pendingIntent())
+    override suspend fun remove(): String? {
+        // Lowered first and unconditionally. A removal that fails still must not leave the
+        // service standing: its whole justification is a live capture, and CLAUDE.md's rule
+        // is about a service that outlives one.
+        DrivingLocationService.stop(context)
+        return failureReasonOf {
+            LocationServices.getFusedLocationProviderClient(context)
+                .removeLocationUpdates(pendingIntent())
+        }
     }
 
     private fun isGranted(permission: String): Boolean =

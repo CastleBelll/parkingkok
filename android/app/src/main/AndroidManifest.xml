@@ -23,6 +23,13 @@
          launch, and denial is not an app failure. -->
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
 
+    <!-- docs/04_ANDROID §2a: the drive-scoped capture service. Measured on 2026-09-20 —
+         without a foreground service, background location is throttled to roughly nothing
+         (0 deliveries in 3 minutes against ~12 expected), and a doze exemption alone does
+         not lift it. The service lives only while one bounded Fused Location request does. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+
     <!-- The car link (docs/05 §3a "The car link"). From Android 12 this grant is what
          makes the system deliver ACL_CONNECTED/ACL_DISCONNECTED at all; without it the
          app simply never hears about a car, which costs accuracy and nothing else. It is
@@ -108,6 +115,15 @@
         <receiver
             android:name=".detection.ActivityTransitionReceiver"
             android:exported="false" />
+
+        <!-- docs/04_ANDROID §2a. Started by `FusedLocationSessionRegistrar.request` and
+             stopped by `remove`, so its lifetime is exactly one bounded capture's. Never
+             permanent: a parked phone runs no service, which is what CLAUDE.md's rule
+             against a standing foreground service actually forbids. -->
+        <service
+            android:name=".detection.DrivingLocationService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
 
         <!-- Target of the Fused Location PendingIntent. Not exported, for the same
              reason as the transition receiver. -->
