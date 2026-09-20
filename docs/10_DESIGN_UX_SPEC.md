@@ -156,8 +156,19 @@ voice would each invent a layout.
 
 ### Hierarchy
 The uncertainty comes first and is the largest thing on the screen. Then when it happened,
-then the floor choice, then the way out. No map, no coordinate, no address: the engine does
-not know the floor and §9 of docs/09 keeps location out of this surface.
+then **where**, then the floor choice, then the way out.
+
+An earlier draft of this section said "no map, no coordinate, no address" and cited
+docs/09 §9. That citation was wrong — §9 is about Google RTDN and says nothing about
+location — and the rule it invented made the screen claim "마지막 위치를 저장했어요" while
+refusing to say which. FR-008 is the section that actually governs: a map is allowed, its
+label is **`마지막으로 확인된 위치`**, and what is forbidden is wording that asserts the
+exact car position when underground confidence is poor.
+
+So the screen shows the same thumbnail the home hero does, with the accuracy circle, under
+that label. With no reliable fix it says `위치 없음` in the same place rather than hiding
+the row — "we saved a location" and "we have no location" are both answers, and silence is
+not.
 
 ### The floor choices
 Three quick picks and 직접 입력. The picks come from **the floors this user has saved
@@ -180,9 +191,14 @@ Neither adds a field to this screen. §7a's shape is deliberate, and an inline t
 would make the quick picks compete with a keyboard.
 
 ### 주차 아님
-A text button, full width, under the choices — reachable without a scroll on the smallest
-supported screen, and never hidden behind a menu or an X in a corner. It is the honest
-answer to a guess, and the detector learns more from it than from any confirmation.
+Directly under the choices, separated from them by a divider, and **not pinned to the
+bottom of the screen** — a control floating alone in empty space does not read as a
+control at all. Full width, reachable without a scroll on the smallest supported screen,
+never behind a menu or an X in a corner.
+
+It is the honest answer to a guess, and the detector learns more from it than from any
+confirmation, so it is legible as a button while staying quieter than the picks: the same
+tonal treatment, not a filled one, and not a colour that reads as danger.
 
 Rejecting returns to where the user was. It never asks why.
 
