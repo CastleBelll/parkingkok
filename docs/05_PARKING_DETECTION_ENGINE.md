@@ -210,29 +210,42 @@ a tick before every event:
 | `tunnel_no_parking` | `DRIVING`, 0 | `DRIVING`, 0 |
 | `vehicle_then_walk` | `CANDIDATE_PENDING`, 1 | `CANDIDATE_PENDING`, 1 |
 
-The paragraph above predicted exactly this. What it does not say is that **a properly
-scheduled tick has the same effect**: the gap after `vehicle_enter` at `t=6404` is 303s and
-`drivingCandidateWindow` is 300s, so the window genuinely expires — at its own deadline,
-four seconds before the next event. Arrival-time evaluation is not what retires that
-session; the session really did time out.
+The path it takes, traced event by event:
 
-So `subway_commute_underground`'s `expected` block is only reachable when **no mechanism
-fires timeouts at all**. It encodes a property of today's runner, not of the product.
+```text
+t=6404  vehicle_enter   IDLE               -> DRIVING_CANDIDATE
+t=6707  timer_tick      DRIVING_CANDIDATE  -> PARKING_TRANSITION
+t=7719  timer_tick      PARKING_TRANSITION -> IDLE
+```
 
-**The question, which is the owner's and not an implementation detail:** when a session in
-`DRIVING_CANDIDATE` goes quiet past `drivingCandidateWindow` and *then* reports more vehicle
-activity, is that one journey or two? Three answers, and they are materially different
-products:
+**It is not `drivingCandidateWindow`.** That row sits below the promotion check, exactly as
+`fromDrivingCandidate`'s comment says, so the 303-second silence promotes the session
+rather than retiring it. What happens at `t=6707` is that the promotion re-reads the same
+tick in `DRIVING`, and there `movementIdleWindow` — 180s — has already elapsed. Then
+`transitionWindow` — 300s — expires at `t=7719`, 1392 seconds before the walk at `t=9111`
+that would have answered it.
 
-- **The fixture is wrong.** A 5-minute silence ends a journey; the subway ride should end in
-  `IDLE`. Then Android schedules real ticks and the fixture's `expected` changes. Cost: a
-  car that loses signal for five minutes underground — the app's main setting — loses the
-  trip.
-- **The window is wrong.** `drivingCandidateWindow` is 300s and **unvalidated** (§3a
-  constants). If a gap alone must not retire a session, the row needs a longer window or a
-  condition that is not silence.
-- **The row is wrong.** `DRIVING_CANDIDATE → IDLE` on elapsed time may not belong at all
-  once `minimumVehicleDuration` already gates promotion.
+**The real problem is that underground there is no movement evidence to have.**
+`lastMovementEvidenceAtMillis` only advances on a location fix that clears §7's bar. In a
+tunnel, a subway or an underground car park there are no fixes at all, so the moment
+anything ticks, `movementIdleWindow` fires — not because the car stopped, but because the
+sky is gone. §3a already states the matching rule one section up, for promotion: "Movement
+evidence does not gate promotion." The idle window is the same claim in reverse and carries
+no such caveat.
+
+**The question, which is the owner's and not an implementation detail:** does an absent
+location fix count as absent movement? Three answers, materially different products:
+
+- **No — and this is the recommendation.** `movementIdleWindow` should not fire while
+  location is unavailable or degraded, because "no fixes" and "not moving" are the same
+  observation only above ground. It is the one answer that does not punish the app's main
+  setting, and it matches §3a's existing rule for promotion.
+- **Yes, but the windows are too short.** Keep the row and widen `transitionWindow`, which
+  is **unvalidated**, so a walk detected late still answers the transition. This trace
+  needed 1392s.
+- **Yes, as written.** Then `subway_commute_underground`'s `expected` becomes `IDLE` with no
+  candidate, Android schedules real ticks, and every underground drive is retired eight
+  minutes after the last fix unless a walk is detected first.
 
 Until this is answered, Android stays without a production tick and iOS keeps its per-wake
 one. That is a known divergence, recorded here rather than papered over.

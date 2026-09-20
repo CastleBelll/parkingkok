@@ -94,13 +94,17 @@ class ParkingDetectionRuntime(
      * is the one row that is covered from the app side, by
      * [ParkingCandidateCoordinator.expireIfDue] and the notification's own `setTimeoutAfter`.
      *
-     * The obvious fix — open every batch with a tick at the incoming event's time — was
-     * tried on 2026-09-20 and **measured to be wrong**: replaying the committed fixtures
-     * that way flips `subway_commute_underground` from `CANDIDATE_PENDING` with a candidate
-     * to `IDLE` with none, because its 303-second gap trips a 300-second window. §3a names
-     * that exact trace when it forbids evaluating elapsed time "whenever any event happens
-     * to arrive". A real deadline-scheduled tick has the same effect on that trace, so the
-     * question is a contract one, not an implementation one, and it is open.
+     * The obvious fix — open every batch with a tick — was tried on 2026-09-20 and
+     * **measured to be wrong**: it flips `subway_commute_underground` from
+     * `CANDIDATE_PENDING` with a candidate to `IDLE` with none. Not through
+     * `drivingCandidateWindow`, which sits below the promotion check, but because
+     * `movementIdleWindow` fires the instant anything ticks underground — there are no
+     * location fixes there, so there is no movement evidence to advance, and "no sky" reads
+     * as "not moving". `transitionWindow` then retires it 300s later.
+     *
+     * A deadline-scheduled tick does exactly the same thing, so the question is a contract
+     * one and not an implementation one: see docs/05 §3a "OPEN: nothing on Android produces
+     * one, and firing them breaks the subway trace".
      */
     private suspend fun handle(events: List<DetectionEvent>): List<DetectionEffect> {
         if (events.isEmpty()) return emptyList()
