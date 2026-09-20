@@ -84,6 +84,8 @@ targets:
       - path: ParkingKokWidget
       # The projection, its shared mutation helper, and the entitlement gate.
       - path: ParkingKok/Widget
+      # The one place Plus is decided, which that gate reads (docs/08 §3).
+      - path: ParkingKok/Entitlement/PlusEntitlement.swift
       # The shared floor domain and the elapsed-time formatter.
       - path: ParkingKok/Parking/Domain/FloorValue.swift
       - path: ParkingKok/Parking/Domain/ParkingElapsed.swift

@@ -66,6 +66,12 @@ Glance/callbacks
 - Node22 functions
 - referral pending
 
+## Milestones 6A–8 — deferred past v1 (2026-09-20)
+Billing, referral and ads are **not in the first release**: v1 ships free and monetisation
+follows real usage (docs/08 §1a). The milestones below stand unchanged for when that lands.
+What exists now is one entitlement plug-in point per platform — `PlusEntitlementSource`
+(iOS) and `plusEntitlement` (Android) — and nothing else.
+
 ## Milestone 6A — Apple Billing
 - StoreKit 2
 - restore
