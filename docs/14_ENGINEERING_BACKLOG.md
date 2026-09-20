@@ -66,6 +66,26 @@ Glance/callbacks
 - Node22 functions
 - referral pending
 
+## Milestone 5a — Shared Parking (2026-09-20)
+`docs/20_SHARED_PARKING.md` is the plan. Ordered so that each step is useful on its own and
+the expensive parts come after the cheap ones have proved the shape.
+
+1. **durable accounts + invite** — M5's floor, plus `cars/{carId}` and membership. No
+   parking data yet; the screen says who is in the car and nothing else
+2. **key exchange** — X25519 per member, car key wrapped per member, platform keystore both
+   platforms. Still no parking data: the test is that two devices derive the same key
+3. **the encrypted active parking** — one document, written after the local write, deleted
+   when the parking ends
+4. **candidate reconciliation** — §20 §5. The transaction that makes one confirmation
+   supersede the others' pending candidates, reusing §10a's existing path
+5. **early capture shutdown** — §20 §5's bonus: a phone that learns the car is parked stops
+   its bounded location session instead of waiting for the timeout
+6. **member removal + key rotation**, and the UI that says plainly what removal does and does
+   not undo
+
+Blocked on: **§20 §4 (위치정보법)** before shipping, and on the detector producing a candidate
+on a real drive before starting — measured 2026-09-20, it has never done so.
+
 ## Milestones 6A–8 — deferred past v1 (2026-09-20)
 Billing, referral and ads are **not in the first release**: v1 ships free and monetisation
 follows real usage (docs/08 §1a). The milestones below stand unchanged for when that lands.

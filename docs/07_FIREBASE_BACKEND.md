@@ -90,6 +90,20 @@ storeEntitlements/{accountId}/platforms/google
 Backend computes account-level Plus summary from verified store state + valid promo/reward application state.
 
 ## 6. Collections
+
+### cars/{carId}  — 2026-09-20, see `docs/20_SHARED_PARKING.md`
+The one place parking data reaches Firebase, and it reaches it as ciphertext.
+
+- `members/{accountId}`: `publicKey` (X25519), `wrappedCarKey`, `role`, `joinedAt`
+- `active`: `ciphertext`, `nonce`, `keyVersion`, `updatedAt`, `updatedBy`
+  — the encrypted floor/zone/spot/memo/coordinate/startedAt of **one open parking**
+
+Deleted when the parking ends. Absent for a car that is not parked. No history, no photos,
+no traces — §20 §1 fixes that list and this is the whole of it.
+
+The server never holds the car key. It cannot open `active`, and a Cloud Function must not
+be written that pretends it can.
+
 ### referralCodes/{code}
 server generated mapping
 

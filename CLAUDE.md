@@ -24,7 +24,12 @@
 
 ## Hard Constraints
 - 위치 좌표/주차 사진/층/구역/spot memo를 Firebase에 저장하지 않는다.
-- Firebase는 account/subscription/referral/reward/config/aggregate analytics만 담당한다.
+  **예외 하나, 2026-09-20:** 공유 주차(`docs/20_SHARED_PARKING.md`). **진행 중인 주차 한
+  건**에 한해, **종단간 암호화된 상태로만** 올라간다. 키는 Firestore에 절대 저장하지 않으므로
+  서버는 끝까지 읽지 못한다. 기록(history)·사진·트레이스는 여전히 올라가지 않으며, 주차가
+  끝나면 서버 문서는 삭제된다. 평문 저장은 이 예외에 포함되지 않는다.
+- Firebase는 account/subscription/referral/reward/config/aggregate analytics를 담당하고,
+  여기에 위 예외의 **암호문 한 건**이 더해진다.
 - 24시간 continuous high accuracy location 금지.
 - 자동 감지 알고리즘은 플랫폼별 `ParkingDetectionEngine` 하나에 집중한다.
 - Android에서 WorkManager를 실시간 주차 감지 엔진 대용으로 사용하지 않는다.
