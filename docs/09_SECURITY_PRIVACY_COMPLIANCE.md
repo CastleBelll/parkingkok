@@ -33,21 +33,6 @@ Do staged enforcement after monitoring valid production/test traffic.
 Parking coordinates/photos remain in OS app sandbox.
 Do not add custom crypto unless a specific threat justifies secure key lifecycle complexity.
 
-**Shared parking is that specific threat (2026-09-20, `docs/20_SHARED_PARKING.md`).** One
-open parking per car leaves the sandbox so other members can see it. It leaves encrypted:
-AES-GCM-256 with a per-car key that is never written to Firestore, wrapped to each member's
-X25519 public key. Everything else — history, photos, traces — stays local.
-
-The justification the sentence above asks for: what leaves is not where someone went last
-week, it is where this family's car is right now, and the same Firestore rules mistake
-against plaintext exposes present whereabouts while against ciphertext it exposes a blob.
-The key lifecycle is affordable only because the document is ephemeral — a lost key costs
-the current parking and nothing else. Do not reuse this reasoning for durable data.
-
-Encryption buys no compliance relief. The app still collects and transmits location, the
-Data Safety form and the privacy label still say so, and **§20 §4's 위치정보법 question is
-open and must be answered before this ships.**
-
 ## 6. Secure Identifiers
 - iOS: Keychain for durable account link hints
 - Android: use platform-secure storage strategy for durable sensitive identifiers; avoid placing secrets in plain DataStore/SharedPreferences
