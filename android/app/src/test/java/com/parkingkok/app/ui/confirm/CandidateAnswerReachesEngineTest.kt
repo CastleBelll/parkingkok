@@ -16,7 +16,6 @@ import com.parkingkok.app.domain.detection.MotionDomainEvent
 import com.parkingkok.app.domain.detection.MotionEventKind
 import com.parkingkok.app.domain.detection.ParkingDetectionEngine
 import com.parkingkok.app.domain.parking.FloorParser
-import com.parkingkok.app.domain.parking.usecase.RecentFloorPicksUseCase
 import com.parkingkok.app.domain.parking.usecase.SaveManualParkingUseCase
 import com.parkingkok.app.ui.manual.ManualParkingViewModel
 import kotlinx.coroutines.Dispatchers
@@ -39,7 +38,8 @@ import java.util.UUID
  *
  * docs/10_DESIGN_UX_SPEC.md §7a gives the confirmation screen two ways to say yes — a
  * one-tap recent floor on [ConfirmCandidateViewModel], and `직접 입력` handing over to
- * [ManualParkingViewModel] — and `주차 아님` on either. An answer that writes the record but
+ * [ManualParkingViewModel], which is now the only thing that confirms — and `주차 아님` on
+ * the confirmation screen. An answer that writes the record but
  * never tells the engine leaves it in `CANDIDATE_PENDING` for the full 45 minutes, and §12's
  * one-candidate-per-session rule then keeps the *next* trip silent for that whole time. It
  * is invisible on the screen that did it, which is why it is pinned here rather than left
@@ -86,26 +86,6 @@ class CandidateAnswerReachesEngineTest {
     }
 
     @Test
-    fun `a one-tap floor on the confirmation screen parks the machine`() = runTest {
-        val candidateId = detectParking()
-
-        val viewModel = ConfirmCandidateViewModel(
-            candidateId = candidateId,
-            coordinator = coordinator,
-            recentFloorPicks = RecentFloorPicksUseCase(repository),
-            detectionRuntime = runtime,
-            clock = clock,
-        )
-        viewModel.uiState.first { it.loaded }
-        viewModel.onPickFloor(checkNotNull(FloorParser.parse("B3")))
-        val settled = viewModel.uiState.first { it.confirmedRecordId != null || it.gone || it.alreadyActive }
-
-        assertNotNull(settled.confirmedRecordId)
-        assertEquals(DetectionState.PARKED, runtime.restore().state)
-        assertNull(store.readCandidateOnce())
-    }
-
-    @Test
     fun `직접 입력 parks the machine too`() = runTest {
         val candidateId = detectParking()
 
@@ -142,7 +122,6 @@ class CandidateAnswerReachesEngineTest {
         val viewModel = ConfirmCandidateViewModel(
             candidateId = candidateId,
             coordinator = coordinator,
-            recentFloorPicks = RecentFloorPicksUseCase(repository),
             detectionRuntime = runtime,
             clock = clock,
         )

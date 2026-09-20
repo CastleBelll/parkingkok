@@ -4,15 +4,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.parkingkok.app.AppContainer
-import com.parkingkok.app.detection.ConfirmCandidateResult
-import com.parkingkok.app.detection.ConfirmedCandidateDetails
 import com.parkingkok.app.core.Clock
 import com.parkingkok.app.core.SystemClock
 import com.parkingkok.app.detection.ParkingCandidateCoordinator
 import com.parkingkok.app.detection.ParkingDetectionRuntime
 import com.parkingkok.app.domain.detection.DetectionEvent
-import com.parkingkok.app.domain.parking.Floor
-import com.parkingkok.app.domain.parking.usecase.RecentFloorPicksUseCase
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -45,8 +41,6 @@ data class ConfirmCandidateUiState(
      * says `위치 없음` in that same place rather than dropping the row.
      */
     val location: ConfirmLocation? = null,
-    /** §7a: from the user's own history, newest first. Empty on a first-ever run. */
-    val floorPicks: List<Floor> = emptyList(),
     /** False until the candidate has been looked up; the screen shows nothing before then. */
     val loaded: Boolean = false,
     /**
@@ -59,10 +53,6 @@ data class ConfirmCandidateUiState(
      * the record it became" rather than on home.
      */
     val openRecordId: String? = null,
-    /** A parking session was already open, so the confirmation could not be written. */
-    val alreadyActive: Boolean = false,
-    /** Set once the record exists; the shell navigates on it. */
-    val confirmedRecordId: String? = null,
     /** Set once the candidate has been discarded; the shell goes back. */
     val rejected: Boolean = false,
     val working: Boolean = false,
@@ -74,11 +64,16 @@ data class ConfirmCandidateUiState(
  * It owns no rule about what a candidate is — [ParkingCandidateCoordinator] does — and it
  * deliberately never confirms by itself. docs/05 §9 forbids auto-confirmation, so every
  * path out of this ViewModel starts with something the user pressed.
+ *
+ * **It no longer confirms at all.** The one-tap floor picks were removed on 2026-09-20
+ * (docs/10 §7a), and with them the only confirmation this screen could perform. Both ways
+ * forward now open the manual entry form, and `ManualParkingViewModel` writes the record
+ * and reports the answer to the §3a machine. What is left here is: load the candidate,
+ * notice it is gone, and reject.
  */
 class ConfirmCandidateViewModel(
     private val candidateId: String,
     private val coordinator: ParkingCandidateCoordinator,
-    private val recentFloorPicks: RecentFloorPicksUseCase,
     /**
      * Where the answer goes back to the §3a state machine.
      *
@@ -101,7 +96,6 @@ class ConfirmCandidateViewModel(
                 _uiState.update { it.copy(loaded = true, gone = true, openRecordId = became) }
                 return@launch
             }
-            val picks = recentFloorPicks()
             _uiState.update {
                 it.copy(
                     loaded = true,
@@ -109,15 +103,9 @@ class ConfirmCandidateViewModel(
                     location = candidate.lastReliableLocation?.let { fix ->
                         ConfirmLocation(accuracyM = fix.horizontalAccuracyM.takeIf { m -> m > 0f }?.toInt())
                     },
-                    floorPicks = picks,
                 )
             }
         }
-    }
-
-    /** §7a: "choosing a floor confirms in one tap". */
-    fun onPickFloor(floor: Floor) {
-        confirm(ConfirmedCandidateDetails(floor = floor))
     }
 
     fun onReject() {
@@ -134,33 +122,6 @@ class ConfirmCandidateViewModel(
         }
     }
 
-    private fun confirm(details: ConfirmedCandidateDetails) {
-        // Guarding on the flag rather than on the button's enabled state: two taps can land
-        // before a recomposition, and each would try to open a session.
-        if (_uiState.value.working) return
-        _uiState.update { it.copy(working = true, alreadyActive = false) }
-        viewModelScope.launch {
-            val result = coordinator.confirm(candidateId, details)
-            // Only a write that happened moves the machine: `Gone` and `AlreadyActive`
-            // left the candidate exactly where it was.
-            if (result is ConfirmCandidateResult.Confirmed) {
-                detectionRuntime?.handleUserAnswer(
-                    DetectionEvent.UserConfirmedParking(clock.nowEpochMillis()),
-                )
-            }
-            _uiState.update {
-                when (result) {
-                    is ConfirmCandidateResult.Confirmed ->
-                        it.copy(working = false, confirmedRecordId = result.record.id)
-                    is ConfirmCandidateResult.Gone ->
-                        it.copy(working = false, gone = true, openRecordId = result.alreadyBecame)
-                    is ConfirmCandidateResult.AlreadyActive ->
-                        it.copy(working = false, alreadyActive = true)
-                }
-            }
-        }
-    }
-
     companion object {
         fun factory(container: AppContainer, candidateId: String): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
@@ -169,7 +130,6 @@ class ConfirmCandidateViewModel(
                     ConfirmCandidateViewModel(
                         candidateId = candidateId,
                         coordinator = container.parkingCandidateCoordinator,
-                        recentFloorPicks = RecentFloorPicksUseCase(container.parkingRepository),
                         detectionRuntime = container.parkingDetectionRuntime,
                         clock = container.clock,
                     ) as T

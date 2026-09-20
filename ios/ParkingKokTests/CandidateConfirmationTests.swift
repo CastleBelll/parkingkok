@@ -96,7 +96,7 @@ struct CandidateConfirmationTests {
         // Act
         let confirmed = harness.candidates.confirm(
             candidate,
-            floor: FloorValue.stored(raw: "B3", kind: .basement, number: 3)
+            draft: ManualParkingDraft(floorText: "B3")
         )
 
         // Assert
@@ -299,65 +299,5 @@ struct CandidateConfirmationTests {
 
         // Assert
         #expect(harness.candidates.pending?.id == candidate.id)
-    }
-
-    // MARK: - docs/10 §7a: the floor quick picks
-
-    @Test("A first-ever run offers no quick picks")
-    func noHistoryOffersNoPicks() throws {
-        // Arrange
-        let harness = try harness(pending: TestCandidate.make())
-
-        // Act & Assert
-        #expect(harness.candidates.floorPicks.isEmpty)
-    }
-
-    @Test("One saved floor offers one quick pick")
-    func oneFloorOffersOnePick() throws {
-        // Arrange
-        let harness = try harness(
-            pending: TestCandidate.make(),
-            history: [completed(floor: "B3", startedAt: Self.now.addingTimeInterval(-86400))]
-        )
-
-        // Act & Assert
-        #expect(harness.candidates.floorPicks.map(\.displayText) == ["B3"])
-    }
-
-    /// §7a: "Three quick picks… most recent first", distinct, capped at three however much
-    /// history there is.
-    @Test("Quick picks are the three most recent distinct floors, newest first")
-    func threePicksAreTheMostRecentDistinctFloors() throws {
-        // Arrange — five records, one floor repeated.
-        let harness = try harness(
-            pending: TestCandidate.make(),
-            history: [
-                completed(floor: "1F", startedAt: Self.now.addingTimeInterval(-500_000)),
-                completed(floor: "B2", startedAt: Self.now.addingTimeInterval(-400_000)),
-                completed(floor: "B1", startedAt: Self.now.addingTimeInterval(-300_000)),
-                completed(floor: "B3", startedAt: Self.now.addingTimeInterval(-200_000)),
-                completed(floor: "B1", startedAt: Self.now.addingTimeInterval(-100_000))
-            ]
-        )
-
-        // Act & Assert — newest first, `B1` once, `1F` cut by the limit.
-        #expect(harness.candidates.floorPicks.map(\.displayText) == ["B1", "B3", "B2"])
-    }
-
-    /// The picks come from records, so a record with no floor contributes nothing — a
-    /// parking saved without one must not turn into a blank chip.
-    @Test("Records saved without a floor contribute no pick")
-    func floorlessRecordsContributeNothing() throws {
-        // Arrange
-        let harness = try harness(
-            pending: TestCandidate.make(),
-            history: [
-                completed(floor: "", startedAt: Self.now.addingTimeInterval(-200_000)),
-                completed(floor: "B4", startedAt: Self.now.addingTimeInterval(-100_000))
-            ]
-        )
-
-        // Act & Assert
-        #expect(harness.candidates.floorPicks.map(\.displayText) == ["B4"])
     }
 }

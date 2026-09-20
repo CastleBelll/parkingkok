@@ -360,8 +360,8 @@ private fun ConfirmRoute(
     // The screen closes itself on every terminal outcome, so the shell holds no rule about
     // what a candidate is. `gone` covers §10a's expired notification: the user lands on
     // home, and nothing apologises.
-    LaunchedEffect(state.gone, state.rejected, state.confirmedRecordId) {
-        if (state.gone || state.rejected || state.confirmedRecordId != null) onDone(state.openRecordId)
+    LaunchedEffect(state.gone, state.rejected) {
+        if (state.gone || state.rejected) onDone(state.openRecordId)
     }
 
     val takePillarPhoto = rememberCameraCapture(
@@ -374,7 +374,6 @@ private fun ConfirmRoute(
 
     ConfirmCandidateScreen(
         state = state,
-        onPickFloor = viewModel::onPickFloor,
         onManualEntry = onManualEntry,
         onPhotoEntry = takePillarPhoto,
         onReject = viewModel::onReject,

@@ -1,6 +1,5 @@
 package com.parkingkok.app.ui.confirm
 
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
@@ -12,18 +11,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
@@ -31,19 +27,16 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.parkingkok.app.R
 import com.parkingkok.app.domain.detection.ParkingCandidateNotice
-import com.parkingkok.app.domain.parking.Floor
-import com.parkingkok.app.domain.parking.FloorKind
 import com.parkingkok.app.theme.ParkingkokTheme
 import com.parkingkok.app.theme.spacing
 import com.parkingkok.app.ui.components.DetailHeader
 import com.parkingkok.app.ui.components.ParkingkokScreen
 import com.parkingkok.app.ui.components.StaticLocationArtwork
 import com.parkingkok.app.ui.format.timeOfDayText
-import com.parkingkok.app.ui.motion.pressScale
 
 /**
  * The confirmation screen — `docs/10_DESIGN_UX_SPEC.md` §7a, in the order §7a fixes:
- * the uncertainty, then when it happened, then the floor choice, then the way out.
+ * the uncertainty, then when it happened, then where, then the way in, then the way out.
  *
  * **What is deliberately absent.** No address and no guessed floor. §7a rules both out —
  * the engine does not know which floor you are on, and an address is a claim this app is
@@ -64,7 +57,6 @@ import com.parkingkok.app.ui.motion.pressScale
 @Composable
 fun ConfirmCandidateScreen(
     state: ConfirmCandidateUiState,
-    onPickFloor: (Floor) -> Unit,
     onManualEntry: () -> Unit,
     onPhotoEntry: () -> Unit,
     onReject: () -> Unit,
@@ -117,24 +109,12 @@ fun ConfirmCandidateScreen(
             LastKnownLocation(location = state.location)
         }
 
-        item("floors") {
-            FloorChoices(
-                picks = state.floorPicks,
+        item("entry") {
+            EntryChoices(
                 enabled = !state.working,
-                onPickFloor = onPickFloor,
                 onManualEntry = onManualEntry,
                 onPhotoEntry = onPhotoEntry,
             )
-        }
-
-        if (state.alreadyActive) {
-            item("already-active") {
-                Text(
-                    text = stringResource(R.string.candidate_confirm_already_active),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.error,
-                )
-            }
         }
 
         item("reject") {
@@ -195,72 +175,38 @@ private fun LastKnownLocation(location: ConfirmLocation?) {
 private val LOCATION_PREVIEW_SIDE = 112.dp
 
 /**
- * §7a "The floor choices": up to three picks from the user's own history, then the two
- * escapes.
+ * §7a's two ways into the form.
  *
- * The picks are the screen's one emphasised action — choosing a floor *is* confirming —
- * so they carry the primary fill and everything else on the screen is secondary or text
- * (CLAUDE.md design harness). They share a row at equal width; the escapes take their own
- * line rather than squeezing into a fourth column, because Korean labels at a large font
- * scale stop being readable before they stop fitting. With no history the picks row is
- * empty and the escapes are the whole choice, which is exactly §7a's first-ever run.
+ * There used to be up to three one-tap floor picks above these, read from the user's own
+ * history. The product owner removed them on 2026-09-20; §7a records the trade. What is
+ * left is the two escapes, which share a row at equal width — a third and fourth column
+ * were never possible, because Korean labels at a large font scale stop being readable
+ * before they stop fitting.
  *
  * `사진으로 입력` comes first because it is the faster of the two and typing less is the
  * point (§7a). Both land in the same manual entry form; the photo one arrives with what
  * the pillar said already filled in.
  */
 @Composable
-private fun FloorChoices(
-    picks: List<Floor>,
+private fun EntryChoices(
     enabled: Boolean,
-    onPickFloor: (Floor) -> Unit,
     onManualEntry: () -> Unit,
     onPhotoEntry: () -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small)) {
-        if (picks.isNotEmpty()) {
-            Row(horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small)) {
-                for (floor in picks) {
-                    val interaction = remember(floor.displayLabel) { MutableInteractionSource() }
-                    // Tonal, not filled. Three filled blue buttons are three primary CTAs
-                    // shouting at once, which CLAUDE.md's harness allows one of — and they
-                    // are peers, so none of them may look like the answer.
-                    FilledTonalButton(
-                        onClick = { onPickFloor(floor) },
-                        enabled = enabled,
-                        shape = MaterialTheme.shapes.small,
-                        interactionSource = interaction,
-                        modifier = Modifier
-                            .weight(1f)
-                            .heightIn(min = FLOOR_PICK_HEIGHT)
-                            .pressScale(interaction)
-                            // `B3` is read out letter by letter otherwise
-                            // (docs/10 §12).
-                            .semantics { contentDescription = floor.spokenLabel },
-                    ) {
-                        Text(
-                            text = floor.displayLabel,
-                            style = MaterialTheme.typography.titleLarge,
-                        )
-                    }
-                }
-            }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small)) {
-            Escape(
-                label = stringResource(R.string.candidate_confirm_photo),
-                enabled = enabled,
-                onClick = onPhotoEntry,
-                modifier = Modifier.weight(1f),
-                iconRes = R.drawable.ic_camera,
-            )
-            Escape(
-                label = stringResource(R.string.candidate_confirm_manual),
-                enabled = enabled,
-                onClick = onManualEntry,
-                modifier = Modifier.weight(1f),
-            )
-        }
+    Row(horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small)) {
+        Escape(
+            label = stringResource(R.string.candidate_confirm_photo),
+            enabled = enabled,
+            onClick = onPhotoEntry,
+            modifier = Modifier.weight(1f),
+            iconRes = R.drawable.ic_camera,
+        )
+        Escape(
+            label = stringResource(R.string.candidate_confirm_manual),
+            enabled = enabled,
+            onClick = onManualEntry,
+            modifier = Modifier.weight(1f),
+        )
     }
 }
 
@@ -277,7 +223,7 @@ private fun Escape(
         onClick = onClick,
         enabled = enabled,
         shape = MaterialTheme.shapes.small,
-        modifier = modifier.heightIn(min = FLOOR_PICK_HEIGHT),
+        modifier = modifier.heightIn(min = CHOICE_HEIGHT),
     ) {
         if (iconRes != null) {
             // The one glyph on this screen, and it carries meaning: it says the button
@@ -298,15 +244,15 @@ private fun Escape(
 private val ESCAPE_ICON_SIZE = 20.dp
 
 /**
- * §7a 주차 아님: an ordinary answer, never a destructive-looking one.
+ * §7a 주차 아님.
  *
- * Outlined rather than filled or red — dressing the honest answer as a warning pushes
- * people towards confirming something that did not happen, which is the one outcome the
- * detector learns nothing from. It was a bare `TextButton` in the scaffold's footer, which
- * on a short screen left a stray line of blue floating in empty space and reading as
- * nothing at all. The border is what makes it a control; the neutral content colour is what
- * keeps it quieter than the two escapes above it, which are outlined in the accent. iOS
- * draws the identical pair.
+ * Outlined, with the danger colour on the **label only** — never a red fill, which would
+ * make the quietest answer on the screen the loudest thing on it. §7a records why the
+ * colour is a product decision rather than a design one.
+ *
+ * It was a bare `TextButton` in the scaffold's footer, which on a short screen left a stray
+ * line of blue floating in empty space and reading as nothing at all. The border is what
+ * makes it a control. iOS draws the identical pair.
  */
 @Composable
 private fun RejectButton(enabled: Boolean, onReject: () -> Unit) {
@@ -317,11 +263,11 @@ private fun RejectButton(enabled: Boolean, onReject: () -> Unit) {
             enabled = enabled,
             shape = MaterialTheme.shapes.small,
             colors = ButtonDefaults.outlinedButtonColors(
-                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                contentColor = MaterialTheme.colorScheme.error,
             ),
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = FLOOR_PICK_HEIGHT),
+                .heightIn(min = CHOICE_HEIGHT),
         ) {
             Text(
                 text = ParkingCandidateNotice.ACTION_REJECT,
@@ -331,10 +277,10 @@ private fun RejectButton(enabled: Boolean, onReject: () -> Unit) {
     }
 }
 
-/** Room for a floor label at a large font scale without the row growing a second line. */
-private val FLOOR_PICK_HEIGHT = 56.dp
+/** Room for a Korean label at a large font scale without the row growing a second line. */
+private val CHOICE_HEIGHT = 56.dp
 
-@Preview(name = "Confirm — three picks", showBackground = true)
+@Preview(name = "Confirm — with a fix", showBackground = true)
 @Composable
 private fun ConfirmCandidatePreview() {
     ParkingkokTheme {
@@ -342,14 +288,8 @@ private fun ConfirmCandidatePreview() {
             state = ConfirmCandidateUiState(
                 loaded = true,
                 parkedAtMillis = 1_700_000_000_000L,
-                location = ConfirmLocation(accuracyM = 18),
-                floorPicks = listOf(
-                    Floor("B3", FloorKind.BASEMENT, 3),
-                    Floor("B1", FloorKind.BASEMENT, 1),
-                    Floor("2F", FloorKind.GROUND, 2),
-                ),
+                location = ConfirmLocation(accuracyM = 24),
             ),
-            onPickFloor = {},
             onManualEntry = {},
             onPhotoEntry = {},
             onReject = {},
@@ -358,13 +298,12 @@ private fun ConfirmCandidatePreview() {
     }
 }
 
-@Preview(name = "Confirm — first run", showBackground = true)
+@Preview(name = "Confirm — no fix", showBackground = true)
 @Composable
-private fun ConfirmCandidateFirstRunPreview() {
+private fun ConfirmCandidateNoLocationPreview() {
     ParkingkokTheme {
         ConfirmCandidateScreen(
             state = ConfirmCandidateUiState(loaded = true, parkedAtMillis = 1_700_000_000_000L),
-            onPickFloor = {},
             onManualEntry = {},
             onPhotoEntry = {},
             onReject = {},

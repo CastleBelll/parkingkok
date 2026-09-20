@@ -328,7 +328,6 @@
     <string name="candidate_confirm_where">마지막으로 확인된 위치</string>
     <string name="candidate_confirm_manual">직접 입력</string>
     <string name="candidate_confirm_photo">사진으로 입력</string>
-    <string name="candidate_confirm_already_active">이미 주차 중인 기록이 있어요. 먼저 주차를 종료해 주세요.</string>
     <!-- %1$s is a time of day, never a place. -->
     <string name="home_candidate_supporting">%1$s · 확인해 주세요</string>
 

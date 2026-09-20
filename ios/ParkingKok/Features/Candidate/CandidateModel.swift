@@ -79,11 +79,6 @@ final class CandidateModel {
         self.resolver = resolver
     }
 
-    /// §7a's three quick picks, from what this user has saved before.
-    var floorPicks: [FloorValue] {
-        CandidateFloorPicks.picks(from: allSessions)
-    }
-
     /// docs/10 §7b: "The bell carries a small dot while a candidate is unanswered, and
     /// only then." A dot, not a count — §12 allows at most one candidate, so there is
     /// never a number to show.
@@ -137,12 +132,6 @@ final class CandidateModel {
         refresh()
         guard let pending, pending.id == id else { return nil }
         return pending
-    }
-
-    /// One tap on a quick pick (docs/10 §7a: "Choosing a floor confirms in one tap").
-    @discardableResult
-    func confirm(_ candidate: ParkingCandidate, floor: FloorValue) -> Bool {
-        confirm(candidate, draft: ManualParkingDraft(floorText: floor.raw))
     }
 
     /// docs/05 §10a: writes the parking record and reports the confirmation.

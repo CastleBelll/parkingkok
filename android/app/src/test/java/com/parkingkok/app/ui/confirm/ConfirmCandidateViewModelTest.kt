@@ -9,15 +9,12 @@ import com.parkingkok.app.data.parking.RoomParkingRepository
 import com.parkingkok.app.data.parking.createTestParkingDatabase
 import com.parkingkok.app.detection.FakeCandidateNotifier
 import com.parkingkok.app.detection.MutableTestClock
+import com.parkingkok.app.detection.ConfirmCandidateResult
+import com.parkingkok.app.detection.ConfirmedCandidateDetails
 import com.parkingkok.app.detection.ParkingCandidateCoordinator
 import com.parkingkok.app.domain.detection.ParkingCandidate
 import com.parkingkok.app.domain.parking.ConfidenceBucket
 import com.parkingkok.app.domain.parking.FloorParser
-import com.parkingkok.app.domain.parking.ParkingSource
-import com.parkingkok.app.domain.parking.usecase.EndParkingUseCase
-import com.parkingkok.app.domain.parking.usecase.ManualParkingInput
-import com.parkingkok.app.domain.parking.usecase.RecentFloorPicksUseCase
-import com.parkingkok.app.domain.parking.usecase.SaveManualParkingUseCase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
@@ -74,40 +71,24 @@ class ConfirmCandidateViewModelTest {
     }
 
     @Test
-    fun `the screen shows when the car was left and the floors this user has saved`() = runTest {
-        saveAndEnd("B3")
-        saveAndEnd("2F")
+    fun `the screen shows when the car was left`() = runTest {
         val candidate = newCandidate()
 
         val state = viewModelFor(candidate).uiState.value
 
         assertEquals(candidate.parkedAtMillis, state.parkedAtMillis)
-        assertEquals(listOf("2F", "B3"), state.floorPicks.map { it.displayLabel })
         assertTrue(state.loaded)
     }
 
     @Test
-    fun `a first-ever run offers no picks and leaves only 직접 입력`() = runTest {
+    fun `a drive that kept no fix says so rather than leaving the row out`() = runTest {
         val candidate = newCandidate()
 
         val state = viewModelFor(candidate).uiState.value
 
-        assertEquals(emptyList<String>(), state.floorPicks.map { it.displayLabel })
-    }
-
-    @Test
-    fun `picking a floor confirms in one tap`() = runTest {
-        saveAndEnd("B3")
-        val candidate = newCandidate()
-        val viewModel = viewModelFor(candidate)
-
-        viewModel.onPickFloor(FloorParser.parse("B3")!!)
-        val settled = viewModel.awaitSettled()
-
-        val record = repository.findActive()
-        assertEquals(ParkingSource.DETECTED, record?.source)
-        assertEquals("B3", record?.floor?.displayLabel)
-        assertEquals(record?.id, settled.confirmedRecordId)
+        // §7a "where": null is the ordinary underground outcome, and the screen renders
+        // 위치 없음 from it. The row itself is never conditional.
+        assertNull(state.location)
     }
 
     @Test
@@ -143,30 +124,20 @@ class ConfirmCandidateViewModelTest {
     fun `reopening a candidate that was already confirmed points at the record it became`() =
         runTest {
             val candidate = newCandidate()
-            val first = viewModelFor(candidate)
-            first.onPickFloor(FloorParser.parse("B3")!!)
-            val recordId = first.awaitSettled().confirmedRecordId
+            // The manual entry form is the only thing that confirms now, and this is the
+            // call it makes. Driving it directly keeps this test about the screen's
+            // reaction rather than about the form.
+            val result = coordinator.confirm(
+                candidate.id,
+                ConfirmedCandidateDetails(floor = FloorParser.parse("B3")),
+            )
+            val recordId = (result as ConfirmCandidateResult.Confirmed).record.id
 
             // A second tap on the same notification, before the shade caught up.
             val state = viewModelFor(candidate).uiState.value
 
             assertTrue(state.gone)
             assertEquals(recordId, state.openRecordId)
-        }
-
-    @Test
-    fun `confirming while a session is already open explains instead of writing a second one`() =
-        runTest {
-            saveAndEnd("B1", end = false)
-            val candidate = newCandidate()
-            val viewModel = viewModelFor(candidate)
-
-            viewModel.onPickFloor(FloorParser.parse("B3")!!)
-            val settled = viewModel.awaitSettled()
-
-            assertTrue(settled.alreadyActive)
-            assertNull(settled.confirmedRecordId)
-            assertEquals("B1", repository.findActive()?.floor?.displayLabel)
         }
 
     /**
@@ -180,7 +151,6 @@ class ConfirmCandidateViewModelTest {
         val viewModel = ConfirmCandidateViewModel(
             candidateId = candidate.id,
             coordinator = coordinator,
-            recentFloorPicks = RecentFloorPicksUseCase(repository),
         )
         viewModel.uiState.first { it.loaded }
         return viewModel
@@ -188,7 +158,7 @@ class ConfirmCandidateViewModelTest {
 
     /** Waits for the one state change a press produces, for the same reason. */
     private suspend fun ConfirmCandidateViewModel.awaitSettled(): ConfirmCandidateUiState =
-        uiState.first { it.confirmedRecordId != null || it.alreadyActive || it.gone || it.rejected }
+        uiState.first { it.gone || it.rejected }
 
     private suspend fun newCandidate(): ParkingCandidate = coordinator.create(
         evidence = DetectionProperties(
@@ -199,18 +169,4 @@ class ConfirmCandidateViewModelTest {
         ),
         lastReliableLocation = null,
     )
-
-    private suspend fun saveAndEnd(floorRaw: String, end: Boolean = true) {
-        SaveManualParkingUseCase(
-            repository = repository,
-            locationProvider = { null },
-            clock = clock,
-            idGenerator = { "record-${nextId++}" },
-        )(ManualParkingInput(floorRaw = floorRaw))
-        clock.epochMillis += 60_000L
-        if (end) {
-            EndParkingUseCase(repository, clock)()
-            clock.epochMillis += 60_000L
-        }
-    }
 }

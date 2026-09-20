@@ -52,15 +52,6 @@ interface ParkingRepository {
      */
     suspend fun photoPaths(): Set<String>
 
-    /**
-     * The `floorRaw` of the most recent [limit] records that have one, newest first.
-     *
-     * Feeds [RecentFloorPicks]. Raw strings rather than [Floor] values because the
-     * de-duplication that turns them into buttons is a product rule, and a repository is
-     * not where product rules live.
-     */
-    suspend fun recentFloorRaws(limit: Int): List<String>
-
     /** Clears completed history. The active record, if any, survives. */
     suspend fun deleteCompleted()
 }

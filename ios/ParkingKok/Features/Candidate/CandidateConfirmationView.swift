@@ -12,7 +12,6 @@ import SwiftUI
 /// 마지막으로 확인된 위치
 /// [ map ]  약 18m 이내
 ///
-/// [ B1 ]  [ B2 ]  [ B3 ]
 /// [ 사진으로 입력 ]  [ 직접 입력 ]
 /// ─────────────────────────
 /// 주차 아님
@@ -153,24 +152,13 @@ struct CandidateConfirmationView: View {
         candidate.lastReliableLocation.flatMap(ParkingMapPoint.init)
     }
 
-    /// §7a: three quick picks and `직접 입력`.
+    /// §7a's two ways into the form.
     ///
-    /// The mock draws all four on one line. They are split across two here because four
-    /// touch targets do not fit the smallest supported screen at a legible size, and §7a's
-    /// own rule — `주차 아님` reachable without a scroll — is the one that has to win. The
-    /// ranking the mock fixes is unchanged: picks first, `직접 입력` after them.
+    /// There used to be up to three one-tap floor picks above these, read from the user's
+    /// own history — the mock draws them. The product owner removed them on 2026-09-20;
+    /// §7a records the trade.
     private var floorChoices: some View {
         VStack(spacing: PKSpacing.m) {
-            let picks = candidates.floorPicks
-            if !picks.isEmpty {
-                HStack(spacing: PKSpacing.m) {
-                    ForEach(picks, id: \.self) { floor in
-                        Button(floor.displayText) { confirm(floor: floor) }
-                            .buttonStyle(PKSoftButtonStyle())
-                            .accessibilityLabel(floor.accessibilityText)
-                    }
-                }
-            }
             HStack(spacing: PKSpacing.m) {
                 // Photo first (docs/10 §7a): it is the faster of the two and typing less
                 // is the point. It drops out entirely where there is no camera, and
@@ -263,22 +251,17 @@ struct CandidateConfirmationView: View {
     /// to the bottom of the screen — a control floating alone in empty space does not read
     /// as a control at all."
     ///
-    /// Plain text rather than a filled or red button. It is the honest answer to a guess,
-    /// not a destructive act, and dressing it as a warning would push people towards
-    /// confirming something that did not happen — which is the one outcome the detector
-    /// learns nothing from. Android draws the identical pair.
+    /// Outlined with the danger colour on the label only — never a red fill. §7a records
+    /// why the colour is a product decision rather than a design one: it makes 주차 아님
+    /// impossible to miss, at the cost of reading as destructive on a screen where it is
+    /// the ordinary answer. Android draws the identical pair.
     private var rejection: some View {
         VStack(spacing: PKSpacing.m) {
             Divider()
                 .overlay(PKColor.divider)
             Button(CandidateNotificationCopy.notParkingTitle) { reject() }
-                .buttonStyle(PKOutlineButtonStyle(tint: PKColor.textSecondary))
+                .buttonStyle(PKOutlineButtonStyle(tint: PKColor.danger))
         }
-    }
-
-    private func confirm(floor: FloorValue) {
-        guard candidates.confirm(candidate, floor: floor) else { return }
-        dismiss()
     }
 
     private func reject() {

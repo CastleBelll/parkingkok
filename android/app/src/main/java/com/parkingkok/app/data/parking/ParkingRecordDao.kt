@@ -53,26 +53,6 @@ abstract class ParkingRecordDao {
     @Query("SELECT photoRelativePath FROM parking_record WHERE photoRelativePath IS NOT NULL")
     abstract suspend fun photoPaths(): List<String>
 
-    /**
-     * The floors this user has saved, newest first, for the confirmation screen's quick
-     * picks (docs/10_DESIGN_UX_SPEC.md §7a).
-     *
-     * Both active and completed records count: the last floor typed is the best pick
-     * whether or not that car has been collected yet.
-     *
-     * A projection of one column, not `observeCompleted`, for the reason
-     * [ParkingRepository.photoPaths] gives — the caller wants floors, and loading every
-     * memo and coordinate to throw them away would be the N+1 of reads. De-duplication is
-     * [com.parkingkok.app.domain.parking.RecentFloorPicks]'s, because `B3` and `b3` are
-     * one floor to a reader and two to SQL; [limit] is therefore a row cap, deliberately
-     * larger than the three buttons.
-     */
-    @Query(
-        "SELECT floorRaw FROM parking_record WHERE floorRaw IS NOT NULL " +
-            "ORDER BY startedAt DESC LIMIT :limit",
-    )
-    abstract suspend fun recentFloorRaws(limit: Int): List<String>
-
     @Query("DELETE FROM parking_record WHERE id = :id")
     abstract suspend fun delete(id: String)
 
