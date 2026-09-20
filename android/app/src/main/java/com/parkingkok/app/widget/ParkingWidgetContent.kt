@@ -111,7 +111,7 @@ private fun NotParkedLine() {
     )
 }
 
-/** Floor, then `zone · spot` on the wide size only, then elapsed. */
+/** Floor, then `zone · spot`, then elapsed — on every size (§7a). */
 @Composable
 private fun ParkingSummary(
     projection: ParkingWidgetProjection,
@@ -143,10 +143,11 @@ private fun ParkingSummary(
         },
     )
 
-    // §7a: `zone · spot` belongs to the medium/4x2 size. The 2x2 shows the floor and the
-    // elapsed duration only, and squeezing a third line in would cost the floor its size.
+    // §7a (2026-09-20): every size carries `zone · spot`. It costs the 2x2 hero a few
+    // points, and it is worth them — a floor without the zone still leaves the user
+    // searching the level.
     val zoneSpot = projection.zoneSpot
-    if (wide && zoneSpot != null) {
+    if (zoneSpot != null) {
         Spacer(GlanceModifier.height(TIGHT_GAP))
         Text(
             text = zoneSpot,
@@ -170,6 +171,10 @@ private fun ParkingSummary(
  * element that has to read at a glance — nothing else on the card comes near it, and
  * there is no brand mark or ornament competing for the same attention. The 4x2 has the
  * room to go further than the 2x2 and does.
+ *
+ * The 2x2 gave up 4sp when `zone · spot` joined it (§7a, 2026-09-20): four lines in a
+ * 2x2 cell need the room, and a slightly smaller floor that tells you the zone beats a
+ * slightly larger one that does not.
  *
  * A free-text floor can be a whole phrase, so it drops a step rather than truncating —
  * the same concession the home hero makes. A floor the user cannot read is worse than one
@@ -275,7 +280,7 @@ private val KEY_HEIGHT: Dp = 40.dp
 private val KEY_RADIUS: Dp = 12.dp
 
 private val LABEL_SIZE = 12.sp
-private val HERO_SIZE = 34.sp
+private val HERO_SIZE = 30.sp
 private val HERO_WIDE_SIZE = 40.sp
 private val HERO_SMALL_SIZE = 20.sp
 private val SUPPORT_SIZE = 15.sp

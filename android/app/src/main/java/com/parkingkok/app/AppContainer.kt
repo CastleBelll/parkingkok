@@ -60,7 +60,9 @@ import com.parkingkok.app.trace.FileTraceStore
 import com.parkingkok.app.trace.NotificationLabelPromptDelivery
 import com.parkingkok.app.trace.TraceLabelPrompter
 import com.parkingkok.app.trace.TraceRecorder
+import com.parkingkok.app.widget.CompositeWidgetProjectionStore
 import com.parkingkok.app.widget.GlanceWidgetProjectionStore
+import com.parkingkok.app.widget.LockScreenParkingNotice
 import com.parkingkok.app.widget.anyParkingWidgetPlaced
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -222,9 +224,41 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
     val parkingWidgetSync: ParkingWidgetSync by lazy {
         ParkingWidgetSync(
             repository = parkingRepository,
-            store = GlanceWidgetProjectionStore(appContext),
+            // docs/06 §7b: the lock-screen notice is a second rendering of the same
+            // projection, not a second source. Composing the stores is what keeps §7's
+            // "exactly one place where a session becomes a snapshot" true.
+            store = CompositeWidgetProjectionStore(
+                listOf(
+                    GlanceWidgetProjectionStore(appContext),
+                    LockScreenParkingNotice(
+                        context = appContext,
+                        enabled = { lockScreenNoticeEnabled.get() },
+                        clock = clock,
+                    ),
+                ),
+            ),
             stepperEntitled = isWidgetStepperEntitled,
         )
+    }
+
+    /**
+     * The §7b switch, cached so the projection write stays synchronous.
+     *
+     * Seeded from DataStore on first use and updated by the settings screen through
+     * [setLockScreenNoticeEnabled], because a `WidgetProjectionStore.write` is not the place
+     * to block on a preference read.
+     */
+    private val lockScreenNoticeEnabled = AtomicBoolean(false)
+
+    suspend fun refreshLockScreenNoticePreference() {
+        lockScreenNoticeEnabled.set(detectionStateStore.readLockScreenNoticeEnabledOnce())
+    }
+
+    suspend fun setLockScreenNoticeEnabled(enabled: Boolean) {
+        detectionStateStore.setLockScreenNoticeEnabled(enabled)
+        lockScreenNoticeEnabled.set(enabled)
+        // The switch has to take effect now, not at the next parking.
+        parkingWidgetSync.refresh()
     }
 
     private val parkingWidgetSyncStarted = AtomicBoolean(false)
@@ -243,14 +277,22 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
      * what Room actually holds.
      */
     fun syncParkingWidgets() {
-        if (!anyParkingWidgetPlaced(appContext)) return
-        applicationScope.launch { parkingWidgetSync.refresh() }
-        // The collector is what saves every mutating use case from having to remember the
-        // widget exists. One per process, hence the flag.
-        if (parkingWidgetSyncStarted.compareAndSet(false, true)) {
-            applicationScope.launch { parkingWidgetSync.keepInSync() }
+        // The lock-screen notice (docs/06 §7b) rides the same projection, so the guard can
+        // no longer be "is a widget on screen": a user with no home-screen widget and the
+        // notice switched on still needs the write. The preference is read here, off the
+        // write path, and the early return still protects the lazy database for a process
+        // that has neither.
+        applicationScope.launch {
+            refreshLockScreenNoticePreference()
+            if (!anyParkingWidgetPlaced(appContext) && !lockScreenNoticeEnabled.get()) return@launch
+            parkingWidgetSync.refresh()
+            if (parkingWidgetSyncStarted.compareAndSet(false, true)) {
+                parkingWidgetSync.keepInSync()
+            }
         }
     }
+
+
 
     /**
      * The candidate prompt and everything that answers it

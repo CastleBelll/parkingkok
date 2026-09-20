@@ -22,13 +22,106 @@ struct ActiveParkingWidgetView: View {
 
     var body: some View {
         Group {
-            if let snapshot = entry.snapshot {
+            if family.isAccessory {
+                lockScreen
+            } else if let snapshot = entry.snapshot {
                 activeParking(snapshot)
             } else {
                 emptyState
             }
         }
-        .padding(PKSpacing.l)
+        // The accessory families are laid out inside a system-sized slot; the tile's own
+        // generous padding would eat most of one.
+        .padding(family.isAccessory ? 0 : PKSpacing.l)
+        // §7b: the system tints accessory families itself, and a surface colour behind one
+        // reads as a grey slab on the wallpaper. The home-screen tile keeps its card.
+        .containerBackground(for: .widget) {
+            if family.isAccessory { Color.clear } else { PKColor.surface }
+        }
+    }
+
+    // ── Lock Screen (docs/06 §7b) ───────────────────────────────────────────
+
+    /// Three renderings of the one projection. No stepper on any of them: §7b keeps the
+    /// Lock Screen read-only, because the keys are a Plus feature behind a sub-fingertip
+    /// target on a surface reached without authenticating.
+    ///
+    /// No colour either. The system tints accessory widgets itself, so hierarchy here is
+    /// size and weight alone — which is what docs/10's harness asks for regardless.
+    @ViewBuilder
+    private var lockScreen: some View {
+        switch family {
+        case .accessoryRectangular: lockScreenRectangular
+        case .accessoryCircular: lockScreenCircular
+        default: lockScreenInline
+        }
+    }
+
+    /// The family the ask is about: floor, `zone · spot`, elapsed — the same three facts
+    /// the medium tile carries, in the same order.
+    private var lockScreenRectangular: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            if let snapshot = entry.snapshot {
+                Text(snapshot.floorValue?.displayText ?? "층 미입력")
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
+                    .widgetAccentable()
+                if let place = snapshot.placeText {
+                    Text(place)
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+                Text(ParkingElapsed.describeActive(from: snapshot.startedAt, to: entry.date))
+                    .font(.system(size: 12))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            } else {
+                Text(Self.emptyLine)
+                    .font(.system(size: 13))
+                    .lineLimit(2)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(lockScreenAccessibilityLabel(includingPlace: true))
+    }
+
+    /// A circle has room for the floor and nothing else, so it shows the floor and nothing
+    /// else rather than an abbreviation nobody can read.
+    private var lockScreenCircular: some View {
+        ZStack {
+            AccessoryWidgetBackground()
+            Text(entry.snapshot?.floorValue?.displayText ?? "—")
+                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .minimumScaleFactor(0.5)
+                .lineLimit(1)
+                .padding(2)
+                .widgetAccentable()
+        }
+        .accessibilityLabel(lockScreenAccessibilityLabel(includingPlace: false))
+    }
+
+    /// One line, above the clock. `B3 · A구역` — the floor and the zone, which is the
+    /// whole point of the family.
+    private var lockScreenInline: some View {
+        Text(inlineText)
+            .accessibilityLabel(lockScreenAccessibilityLabel(includingPlace: true))
+    }
+
+    private var inlineText: String {
+        guard let snapshot = entry.snapshot else { return Self.emptyLine }
+        let floor = snapshot.floorValue?.displayText ?? "층 미입력"
+        guard let place = snapshot.placeText else { return floor }
+        return "\(floor) · \(place)"
+    }
+
+    /// docs/10 §12, and the same shape as the tile's: the caption is spoken because
+    /// VoiceOver reads the widget out of its context and would otherwise say a bare "B3".
+    private func lockScreenAccessibilityLabel(includingPlace: Bool) -> String {
+        guard let snapshot = entry.snapshot else { return Self.emptyLine }
+        var parts = ["현재 주차 위치", snapshot.floorValue?.accessibilityText ?? "층 미입력"]
+        if includingPlace, let place = snapshot.placeText { parts.append(place) }
+        return parts.joined(separator: ", ")
     }
 
     // ── Active ──────────────────────────────────────────────────────────────
@@ -50,7 +143,8 @@ struct ActiveParkingWidgetView: View {
     private func facts(_ snapshot: ActiveParkingSnapshot) -> some View {
         VStack(alignment: .leading, spacing: PKSpacing.xs) {
             PKHeroFloorText(snapshot.floorValue?.displayText ?? "층 미입력", size: heroSize)
-            if isMedium, let place = snapshot.placeText {
+            // §7a (2026-09-20): every size carries `zone · spot`, not just the medium one.
+            if let place = snapshot.placeText {
                 Text(place)
                     .font(PKTypography.heroSupport)
                     .foregroundStyle(PKColor.textPrimary)
@@ -102,7 +196,7 @@ struct ActiveParkingWidgetView: View {
     private func accessibilityLabel(_ snapshot: ActiveParkingSnapshot) -> String {
         var parts = ["현재 주차 위치"]
         parts.append(snapshot.floorValue?.accessibilityText ?? "층 미입력")
-        if isMedium, let place = snapshot.placeText {
+        if let place = snapshot.placeText {
             parts.append(place)
         }
         parts.append(ParkingElapsed.describeActive(from: snapshot.startedAt, to: entry.date))
@@ -115,7 +209,7 @@ struct ActiveParkingWidgetView: View {
     /// a `StaticConfiguration` widget opens it, so the line is the whole affordance — no
     /// illustration, no icon standing in for one.
     private var emptyState: some View {
-        Text("앱을 열어 주차 위치를 저장해 보세요")
+        Text(Self.emptyLine)
             .font(PKTypography.row)
             .foregroundStyle(PKColor.textSecondary)
             .multilineTextAlignment(.center)
@@ -128,10 +222,25 @@ struct ActiveParkingWidgetView: View {
         family == .systemMedium
     }
 
-    /// The floor is the largest thing on either tile by a wide margin. Small can take the
-    /// screen's full 64pt hero because it carries one line under it; medium gives up a
-    /// little to fit the `zone · spot` line beside the stepper.
+    /// The floor is the largest thing on either tile by a wide margin, and both tiles now
+    /// carry three lines under it (§7a, 2026-09-20). Small gives up more than medium
+    /// because it has the same three lines in half the width.
     private var heroSize: CGFloat {
-        isMedium ? 56 : PKHeroFloorText.screenSize
+        isMedium ? 56 : 48
+    }
+
+    /// docs/06 §7a's "single line inviting the user to open the app", shared by every
+    /// family so the empty state cannot drift between them.
+    static let emptyLine = "앱을 열어 주차 위치를 저장해 보세요"
+}
+
+extension WidgetFamily {
+    /// The Lock Screen families (docs/06 §7b), which are laid out, tinted and sized by the
+    /// system rather than by this app.
+    var isAccessory: Bool {
+        switch self {
+        case .accessoryRectangular, .accessoryCircular, .accessoryInline: true
+        default: false
+        }
     }
 }

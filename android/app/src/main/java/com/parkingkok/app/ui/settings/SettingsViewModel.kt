@@ -24,6 +24,8 @@ import kotlinx.coroutines.launch
  */
 data class SettingsUiState(
     val detectionEnabled: Boolean = false,
+    /** docs/06 §7b: the ongoing shade readout. Off by default — the widget is the answer. */
+    val lockScreenNoticeEnabled: Boolean = false,
     val activityRecognitionGranted: Boolean = false,
     val foregroundLocationGranted: Boolean = false,
     val backgroundLocationGranted: Boolean = false,
@@ -48,11 +50,13 @@ class SettingsViewModel(
     val uiState: StateFlow<SettingsUiState> =
         combine(
             container.detectionStateStore.desiredEnabled,
+            container.detectionStateStore.lockScreenNoticeEnabled,
             analyticsConsentStore.granted,
             permissions,
-        ) { detectionEnabled, analyticsConsent, granted ->
+        ) { detectionEnabled, lockScreenNotice, analyticsConsent, granted ->
             granted.copy(
                 detectionEnabled = detectionEnabled,
+                lockScreenNoticeEnabled = lockScreenNotice,
                 analyticsConsentGranted = analyticsConsent,
             )
         }.stateIn(
@@ -79,6 +83,14 @@ class SettingsViewModel(
             analytics.record(AnalyticsEvent.SmartDetectionEnabled(enabled))
             refresh()
         }
+    }
+
+    /**
+     * docs/06 §7b. Takes effect immediately in both directions — the container re-writes
+     * the projection, which posts or cancels the notification on the spot.
+     */
+    fun onLockScreenNoticeChange(enabled: Boolean) {
+        viewModelScope.launch { container.setLockScreenNoticeEnabled(enabled) }
     }
 
     /**

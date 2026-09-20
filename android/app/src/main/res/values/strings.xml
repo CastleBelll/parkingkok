@@ -297,6 +297,12 @@
     <string name="settings_section_plus">주차핀 Plus</string>
     <string name="settings_plus_title">아직 준비 중이에요</string>
     <string name="settings_plus_caption">구독 기능은 이 버전에 없습니다</string>
+    <!-- Lock screen (docs/06 §7b). A readout, never an alert: the channel is LOW and the
+         copy carries only a floor, a zone and an elapsed time. -->
+    <string name="lock_screen_channel_name">주차 위치 표시</string>
+    <string name="lock_screen_channel_description">주차 중일 때 잠금 화면과 알림창에 층과 구역을 표시합니다. 소리는 나지 않습니다.</string>
+    <string name="settings_lock_screen">알림창에도 표시</string>
+    <string name="settings_lock_screen_caption">주차 중일 때 알림창에 층과 구역을 띄워요. 잠금 화면 위젯을 쓸 수 없는 기기를 위한 보조 표시입니다</string>
     <string name="settings_section_data">데이터</string>
     <string name="settings_data_export">주차 기록 내보내기</string>
     <string name="settings_data_export_caption">준비 중인 기능이에요</string>

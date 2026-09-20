@@ -100,6 +100,23 @@ class DetectionStateStore(
         dataStore.edit { it[KEY_DESIRED_ENABLED] = enabled }
     }
 
+    /**
+     * docs/06 §7b: whether the ongoing notice is shown in the shade while parked.
+     *
+     * **Off by default.** The lock screen is served by the keyguard widget; this is the
+     * fallback for a host that has no lock-screen slot, and a persistent notification
+     * nobody asked for is why people uninstall utilities.
+     */
+    val lockScreenNoticeEnabled: Flow<Boolean> =
+        dataStore.data.map { it[KEY_LOCK_SCREEN_NOTICE] ?: false }
+
+    suspend fun readLockScreenNoticeEnabledOnce(): Boolean =
+        dataStore.data.first()[KEY_LOCK_SCREEN_NOTICE] ?: false
+
+    suspend fun setLockScreenNoticeEnabled(enabled: Boolean) {
+        dataStore.edit { it[KEY_LOCK_SCREEN_NOTICE] = enabled }
+    }
+
     suspend fun recordRegistered(specVersion: Int, atMillis: Long) {
         dataStore.edit {
             it[KEY_REGISTERED_SPEC_VERSION] = specVersion
@@ -420,6 +437,7 @@ class DetectionStateStore(
         val KEY_CONFIRMED_RECORD = stringPreferencesKey("parking_candidate_confirmed_record")
         val KEY_EVENT_LOG = stringPreferencesKey("event_log")
         val KEY_DESIRED_ENABLED = booleanPreferencesKey("registration_desired_enabled")
+        val KEY_LOCK_SCREEN_NOTICE = booleanPreferencesKey("lock_screen_notice_enabled")
         val KEY_REGISTERED_SPEC_VERSION = intPreferencesKey("registration_spec_version")
         val KEY_REGISTERED_AT = longPreferencesKey("registration_registered_at")
         val KEY_LOCATION_SESSION = stringPreferencesKey("location_session")

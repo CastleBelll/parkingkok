@@ -54,6 +54,7 @@ import com.parkingkok.app.ui.components.StatusBadge
 fun SettingsScreen(
     state: SettingsUiState,
     onDetectionEnabledChange: (Boolean) -> Unit,
+    onLockScreenNoticeChange: (Boolean) -> Unit,
     onAnalyticsConsentChange: (Boolean) -> Unit,
     onOpenSystemSettings: () -> Unit,
     onDeleteHistory: () -> Unit,
@@ -105,6 +106,17 @@ fun SettingsScreen(
                     iconRes = R.drawable.ic_car,
                     checked = state.detectionEnabled,
                     onCheckedChange = onDetectionEnabledChange,
+                )
+                SettingsDivider()
+                // docs/06 §7b: the lock-screen readout. Its own switch, because a
+                // persistent notification nobody can turn off is why people uninstall
+                // utilities — and it is on by default because it was asked for by name.
+                SwitchRow(
+                    title = stringResource(R.string.settings_lock_screen),
+                    supporting = stringResource(R.string.settings_lock_screen_caption),
+                    iconRes = R.drawable.ic_place,
+                    checked = state.lockScreenNoticeEnabled,
+                    onCheckedChange = onLockScreenNoticeChange,
                 )
                 SettingsDivider()
                 // docs/07 "동의": off until the user turns it on, and turning it off stops
@@ -423,6 +435,7 @@ private fun SettingsPreview() {
                 analyticsConsentGranted = false,
             ),
             onDetectionEnabledChange = {},
+            onLockScreenNoticeChange = {},
             onAnalyticsConsentChange = {},
             onOpenSystemSettings = {},
             onDeleteHistory = {},

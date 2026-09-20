@@ -456,6 +456,7 @@ private fun SettingsRoute(
     SettingsScreen(
         state = state,
         onDetectionEnabledChange = viewModel::onDetectionEnabledChange,
+        onLockScreenNoticeChange = viewModel::onLockScreenNoticeChange,
         onAnalyticsConsentChange = viewModel::onAnalyticsConsentChange,
         onOpenSystemSettings = {
             // Background location in particular cannot be granted from an in-app prompt on

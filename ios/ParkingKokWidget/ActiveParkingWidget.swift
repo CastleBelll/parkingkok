@@ -71,21 +71,29 @@ struct ActiveParkingTimelineProvider: TimelineProvider {
     }
 }
 
-/// docs/06 §7a: `systemSmall` and `systemMedium`. No Lock Screen or StandBy family in v1.
+/// docs/06 §7a and §7b: the two home-screen families and the three Lock Screen accessory
+/// ones, all from the same projection and the same timeline.
 struct ActiveParkingWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(
             kind: ActiveParkingSnapshot.widgetKind,
             provider: ActiveParkingTimelineProvider()
         ) { entry in
+            // The background is applied inside the view, where `widgetFamily` is readable:
+            // §7b wants the card behind a home-screen tile and nothing behind an accessory
+            // one, and only the view knows which it is.
             ActiveParkingWidgetView(entry: entry)
-                .containerBackground(PKColor.surface, for: .widget)
         }
         // The brand is 주차핀. Only the gallery sees this string; the tile itself
         // shows no brand mark, because nothing may compete with the floor.
         .configurationDisplayName("주차핀")
-        .description("주차한 층과 경과 시간을 홈 화면에서 바로 확인해요.")
-        .supportedFamilies([.systemSmall, .systemMedium])
+        .description("주차한 층과 구역을 홈 화면과 잠금 화면에서 바로 확인해요.")
+        .supportedFamilies([
+            .systemSmall, .systemMedium,
+            // §7b. `accessoryRectangular` is the one the ask is about — it is the only
+            // family with room for the zone.
+            .accessoryRectangular, .accessoryCircular, .accessoryInline
+        ])
         // The tile draws its own padding, and the floor needs every point of the face.
         .contentMarginsDisabled()
     }
