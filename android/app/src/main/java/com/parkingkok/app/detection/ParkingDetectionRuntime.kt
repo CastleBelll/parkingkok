@@ -84,18 +84,24 @@ class ParkingDetectionRuntime(
     /**
      * A timeout moment.
      *
-     * §3a's four timeout rows fire from here and nowhere else — see
-     * [DetectionEvent.TimerTick] for why an ordinary event must not stand in for one.
-     * **No alarm schedules these yet**: the paths the product actually depends on
-     * (`vehicle_exit`, a car-link disconnect) are event driven, and the 45-minute expiry is
-     * already covered from the app side by
-     * [ParkingCandidateCoordinator.expireIfDue] together with the notification's own
-     * `setTimeoutAfter`. Wiring a wakeup for the remaining rows is a battery decision
-     * (§19), not a correctness one, and it is deliberately left out of this step.
+     * §3a's four timeout rows fire from here and nowhere else — see [DetectionEvent.TimerTick]
+     * for why an ordinary event must not stand in for one.
+     *
+     * **Nothing in the shipped app calls this, and that is an open defect, not a design.**
+     * `drivingCandidateWindow`, `movementIdleWindow` and `transitionWindow` are therefore
+     * dead in production on this platform: a drive that ends underground with no
+     * `vehicle_exit` stays in `DRIVING` for ever and the trip is lost. The 45-minute expiry
+     * is the one row that is covered from the app side, by
+     * [ParkingCandidateCoordinator.expireIfDue] and the notification's own `setTimeoutAfter`.
+     *
+     * The obvious fix — open every batch with a tick at the incoming event's time — was
+     * tried on 2026-09-20 and **measured to be wrong**: replaying the committed fixtures
+     * that way flips `subway_commute_underground` from `CANDIDATE_PENDING` with a candidate
+     * to `IDLE` with none, because its 303-second gap trips a 300-second window. §3a names
+     * that exact trace when it forbids evaluating elapsed time "whenever any event happens
+     * to arrive". A real deadline-scheduled tick has the same effect on that trace, so the
+     * question is a contract one, not an implementation one, and it is open.
      */
-    suspend fun handleTick(atMillis: Long): List<DetectionEffect> =
-        handle(listOf(DetectionEvent.TimerTick(atMillis)))
-
     private suspend fun handle(events: List<DetectionEvent>): List<DetectionEffect> {
         if (events.isEmpty()) return emptyList()
         return mutex.withLock {

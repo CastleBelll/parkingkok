@@ -131,18 +131,21 @@ class ParityFixtureTest {
         )
 
         "location_quality_degraded" -> DetectionEvent.LocationQualityDegraded(atMillis)
-        // Both spellings of the §2 wire vocabulary, so a fixture written against either
-        // half of the contract replays. No committed fixture uses one yet — §3a forbids a
-        // fixture from depending on a link event being present.
-        "projection_connected", "bluetooth_car_connected", "car_projection_connected" ->
+        // §2's four link spellings and no others. Android's engine does not distinguish
+        // projection from Bluetooth — §3a treats them as one signal — but the *names* are
+        // the contract, and accepting a fifth here would let a fixture pass on this
+        // platform and throw on iOS, which is the one thing a parity gate must not do.
+        // This used to also take `car_projection_connected`/`_disconnected` and
+        // `user_confirmed_parking`/`user_rejected_parking`; neither is in §2.
+        "projection_connected", "bluetooth_car_connected" ->
             DetectionEvent.CarLinkConnected(atMillis)
 
-        "projection_disconnected", "bluetooth_car_disconnected", "car_projection_disconnected" ->
+        "projection_disconnected", "bluetooth_car_disconnected" ->
             DetectionEvent.CarLinkDisconnected(atMillis)
 
         "timer_tick" -> DetectionEvent.TimerTick(atMillis)
-        "user_confirmed", "user_confirmed_parking" -> DetectionEvent.UserConfirmedParking(atMillis)
-        "user_rejected", "user_rejected_parking" -> DetectionEvent.UserRejectedParking(atMillis)
+        "user_confirmed" -> DetectionEvent.UserConfirmedParking(atMillis)
+        "user_rejected" -> DetectionEvent.UserRejectedParking(atMillis)
         else -> error("unknown fixture event type '$type' — the §2 vocabulary is the contract")
     }
 

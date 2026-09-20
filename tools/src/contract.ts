@@ -65,8 +65,8 @@ export const EVENT_TYPES = [
   'bluetooth_car_connected',
   'bluetooth_car_disconnected',
   'timer_tick',
-  'user_confirmed_parking',
-  'user_rejected_parking',
+  'user_confirmed',
+  'user_rejected',
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

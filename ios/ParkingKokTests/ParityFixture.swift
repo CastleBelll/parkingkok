@@ -166,6 +166,10 @@ enum ParityFixtureRunner {
         case "projection_disconnected": return .carLinkDisconnected(at: date, kind: .projection)
         case "bluetooth_car_connected": return .carLinkConnected(at: date, kind: .bluetoothAudio)
         case "bluetooth_car_disconnected": return .carLinkDisconnected(at: date, kind: .bluetoothAudio)
+        // §3a: the four timeout rows fire on this and nothing else, so a fixture that
+        // expects elapsed time to change the state has to say so. Its absence here is why
+        // none of the committed fixtures could.
+        case "timer_tick": return .timerTick(at: date)
         case "user_confirmed": return .userConfirmedParking(at: date)
         case "user_rejected": return .userRejectedParking(at: date)
         default:

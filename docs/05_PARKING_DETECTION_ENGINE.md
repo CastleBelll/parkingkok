@@ -187,6 +187,56 @@ under arrival-time evaluation it ends in `IDLE` instead of `CANDIDATE_PENDING`.
 one, which is the same statement from the other direction: a fixture that wants a timeout
 to fire says so.
 
+#### OPEN: nothing on Android produces one, and firing them breaks the subway trace
+
+Two facts, both measured on 2026-09-20, that this section does not currently reconcile.
+
+**1. Android never ticks in production.** `ParkingDetectionRuntime.handleTick` has test
+callers only. `drivingCandidateWindow`, `movementIdleWindow` and `transitionWindow` are
+therefore dead in the shipped Android app — a drive that ends underground with no
+`vehicle_exit` stays in `DRIVING` for ever, which is the 14:26 real trace. iOS ticks at
+`now` on every motion wake, so the two platforms produce different products from the same
+engine, and no fixture can see it: fixtures replay against the engine, and the engine is
+not where the difference is.
+
+**2. Making them fire retires the subway trip.** Replaying the five committed fixtures with
+a tick before every event:
+
+| fixture | no tick | tick before each event |
+|---|---|---|
+| `bus_repeated_stops_no_storm` | `DRIVING`, 0 | `DRIVING`, 0 |
+| `red_light_no_candidate` | `DRIVING`, 0 | `DRIVING`, 0 |
+| `subway_commute_underground` | `CANDIDATE_PENDING`, 1 | **`IDLE`, 0** |
+| `tunnel_no_parking` | `DRIVING`, 0 | `DRIVING`, 0 |
+| `vehicle_then_walk` | `CANDIDATE_PENDING`, 1 | `CANDIDATE_PENDING`, 1 |
+
+The paragraph above predicted exactly this. What it does not say is that **a properly
+scheduled tick has the same effect**: the gap after `vehicle_enter` at `t=6404` is 303s and
+`drivingCandidateWindow` is 300s, so the window genuinely expires — at its own deadline,
+four seconds before the next event. Arrival-time evaluation is not what retires that
+session; the session really did time out.
+
+So `subway_commute_underground`'s `expected` block is only reachable when **no mechanism
+fires timeouts at all**. It encodes a property of today's runner, not of the product.
+
+**The question, which is the owner's and not an implementation detail:** when a session in
+`DRIVING_CANDIDATE` goes quiet past `drivingCandidateWindow` and *then* reports more vehicle
+activity, is that one journey or two? Three answers, and they are materially different
+products:
+
+- **The fixture is wrong.** A 5-minute silence ends a journey; the subway ride should end in
+  `IDLE`. Then Android schedules real ticks and the fixture's `expected` changes. Cost: a
+  car that loses signal for five minutes underground — the app's main setting — loses the
+  trip.
+- **The window is wrong.** `drivingCandidateWindow` is 300s and **unvalidated** (§3a
+  constants). If a gap alone must not retire a session, the row needs a longer window or a
+  condition that is not silence.
+- **The row is wrong.** `DRIVING_CANDIDATE → IDLE` on elapsed time may not belong at all
+  once `minimumVehicleDuration` already gates promotion.
+
+Until this is answered, Android stays without a production tick and iOS keeps its per-wake
+one. That is a known divergence, recorded here rather than papered over.
+
 ### Leaving a pending candidate behind
 
 `CANDIDATE_PENDING → DRIVING_CANDIDATE` on `vehicle_enter` exists because a candidate can
