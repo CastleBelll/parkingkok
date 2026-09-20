@@ -10,7 +10,18 @@
 > fixture를 **만드는** 변환기와 **검사하는** 검증기를 제공한다.
 >
 > 타임아웃 행은 `timer_tick` 이벤트에서만 발화한다(docs/05 §3a). 경과 시간으로 상태가
-> 바뀌기를 기대하는 fixture는 tick을 명시해야 하고, 그래서 아래 5개 중 어느 것도 tick이 없다.
+> 바뀌기를 기대하는 fixture는 tick을 명시해야 한다. 2026-09-20 에 iOS 러너에 `timer_tick`
+> 이 빠져 있던 것을 고치기 전까지는 **어떤 fixture도 tick 을 쓸 수 없었다** — 그래서 §3a 의
+> 타임아웃 행 네 개에 fixture 가 하나도 없었다. 지금은
+> `quiet_transition_expires_no_candidate` 가 `transitionWindow` 를 고정한다.
+>
+> 차량 링크에 의존하는 fixture 는 만들지 않는다(§3a: "No fixture may depend on a link event
+> being present"). iOS 는 클래식 블루투스 엣지를 관측할 수 없어서, 링크가 있어야만 성립하는
+> fixture 는 한쪽이 만들 수 없는 여정을 계약이라고 부르는 셈이 된다. 링크 규칙은 양 플랫폼
+> **엔진 단위 테스트**에 각각 고정한다.
+>
+> 이벤트 이름은 `docs/05_CROSS_PLATFORM_DOMAIN_CONTRACT.md` §2 표가 정본이고 그것뿐이다.
+> 러너가 표에 없는 철자를 받아주면 한쪽에서만 통과하는 fixture 가 생긴다.
 
 ## 1. trace와 fixture는 다른 것이다
 

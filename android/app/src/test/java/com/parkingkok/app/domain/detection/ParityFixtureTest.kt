@@ -52,6 +52,7 @@ class ParityFixtureTest {
             "the whole committed suite must run — a renamed fixture must fail loudly, not vanish",
             setOf(
                 "bus_repeated_stops_no_storm.json",
+                "quiet_transition_expires_no_candidate.json",
                 "red_light_no_candidate.json",
                 "subway_commute_underground.json",
                 "tunnel_no_parking.json",

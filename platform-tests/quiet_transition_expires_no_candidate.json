@@ -1,0 +1,14 @@
+{
+  "name": "quiet_transition_expires_no_candidate",
+  "initialState": "IDLE",
+  "events": [
+    {"type":"vehicle_enter","t":0,"confidence":"high"},
+    {"type":"timer_tick","t":95},
+    {"type":"vehicle_exit","t":600,"confidence":"high"},
+    {"type":"timer_tick","t":901}
+  ],
+  "expected": {
+    "candidate": false,
+    "finalState": "IDLE"
+  }
+}

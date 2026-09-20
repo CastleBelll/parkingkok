@@ -102,7 +102,11 @@ class ParkingDetectionRuntimeTest {
 
     @Test
     fun `a car link reconnect withdraws the notification without reporting a rejection`() = runTest {
+        // The link opens the session, but §3a does not let it promote on its own — people
+        // sit in parked cars — so the drive that makes the disconnect mean something is
+        // motion's to report.
         runtime.handleCarLink(DetectionEvent.CarLinkConnected(START))
+        runtime.handleMotion(motion(MotionEventKind.ENTERED_VEHICLE, START))
         runtime.handleCarLink(DetectionEvent.CarLinkDisconnected(START + DRIVE_MILLIS))
         val candidate = assertNotNull(store.readCandidateOnce())
 

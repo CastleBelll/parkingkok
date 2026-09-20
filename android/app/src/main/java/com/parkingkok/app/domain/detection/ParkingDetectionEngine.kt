@@ -38,6 +38,31 @@ data class TravelSession(
     /** Last moment a fix cleared §7's movement bar. Feeds `movementIdleWindow`. */
     val lastMovementEvidenceAtMillis: Long,
     /**
+     * §3a "DECIDED 2026-09-20: a connected car link suppresses every timeout row".
+     *
+     * True between a `projection_connected`/`bluetooth_car_connected` and the matching
+     * disconnect. While it holds, no elapsed-time row may end or downgrade this session: a
+     * phone still attached to the car's audio during a 180-second gap is at a red light, in
+     * a tunnel or on a ramp, not in a car that has been left.
+     *
+     * **It must not outlive the link.** The engine is pure and cannot poll, so §3a makes it
+     * the adapter's obligation to re-assert the real state on process start and feed a
+     * disconnect when the link is gone. A latch stuck at `true` would suppress timeouts for
+     * ever and kill detection outright.
+     */
+    val carLinkConnected: Boolean = false,
+    /**
+     * When motion last said this device is *in a vehicle*, or null if it has not said so.
+     *
+     * Separate from [vehicleActivityStartedAtMillis] because a car link opens a session
+     * too, and §3a is explicit that it must not buy the promotion bar: "Connecting does
+     * **not** promote straight to `DRIVING`: people sit in parked cars." Without this,
+     * 90 seconds of Bluetooth in a stationary car promoted the session, and the disconnect
+     * on getting back out produced a candidate for a drive that never happened. iOS has
+     * always had it as `vehicleActiveSince`; this is the Android half of that pair.
+     */
+    val vehicleActiveSinceMillis: Long? = null,
+    /**
      * §12 / §3a "One candidate per travel session".
      *
      * Cleared again when a candidate is *retired* rather than answered — §3a's reconnect
@@ -260,9 +285,14 @@ class ParkingDetectionEngine(
 
     private fun fold(state: DetectionEngineState, event: DetectionEvent): DetectionEngineState {
         return when (event) {
-            is DetectionEvent.VehicleEnter ->
-                state.copy(session = openOrExtendSession(state.session, event.atMillis))
-            is DetectionEvent.VehicleExit -> state.copy(session = endVehicleActivity(state.session, event.atMillis))
+            is DetectionEvent.VehicleEnter -> state.copy(
+                session = openOrExtendSession(state.session, event.atMillis).let {
+                    it.copy(vehicleActiveSinceMillis = it.vehicleActiveSinceMillis ?: event.atMillis)
+                },
+            )
+            is DetectionEvent.VehicleExit -> state.copy(
+                session = endVehicleActivity(state.session, event.atMillis)?.copy(vehicleActiveSinceMillis = null),
+            )
             is DetectionEvent.WalkingEnter -> state.copy(
                 session = state.session?.takeIf { it.isShortlyAfterVehicleEnd(event.atMillis) }
                     ?.plusReason(EvidenceReasonCode.WALKING_AFTER_VEHICLE)
@@ -281,13 +311,19 @@ class ParkingDetectionEngine(
                 session = state.session?.plusReason(EvidenceReasonCode.LOCATION_QUALITY_DEGRADED),
             )
 
+            // §3a: opens a session, but does **not** arm the promotion bar. People sit in
+            // parked cars, and 90 s of Bluetooth in a stationary one used to promote the
+            // session here — so getting back out produced a candidate for a drive that
+            // never happened.
             is DetectionEvent.CarLinkConnected -> state.copy(
-                session = openOrExtendSession(state.session, event.atMillis),
+                session = openOrExtendSession(state.session, event.atMillis)
+                    .copy(carLinkConnected = true),
             )
 
             is DetectionEvent.CarLinkDisconnected -> state.copy(
                 session = endVehicleActivity(state.session, event.atMillis)
-                    ?.plusReason(EvidenceReasonCode.CAR_PROJECTION_DISCONNECTED),
+                    ?.plusReason(EvidenceReasonCode.CAR_PROJECTION_DISCONNECTED)
+                    ?.copy(carLinkConnected = false, vehicleActiveSinceMillis = null),
             )
 
             is DetectionEvent.TimerTick,
@@ -471,6 +507,8 @@ class ParkingDetectionEngine(
             session.hasSustainedVehicleActivity(event.atMillis) ->
                 state.moveTo(DetectionState.DRIVING, event.atMillis)
 
+            // Not gated on the link: a link connected with no drive is someone sitting in
+            // a parked car with the radio on, which is exactly what this row is for.
             event is DetectionEvent.TimerTick &&
                 event.atMillis - state.stateEnteredAtMillis >= DRIVING_CANDIDATE_WINDOW_MILLIS ->
                 state.endSession(event.atMillis)
@@ -489,7 +527,13 @@ class ParkingDetectionEngine(
 
             event is DetectionEvent.VehicleExit -> state.moveTo(DetectionState.PARKING_TRANSITION, event.atMillis)
 
+            // §3a: suppressed while the phone is still attached to the car, and this is
+            // the only row that is. Without it the row fires on every underground drive the
+            // moment anything ticks, because `lastMovementEvidenceAtMillis` only advances on
+            // a location fix and there are none down there — "no sky" would read as "not
+            // moving".
             event is DetectionEvent.TimerTick &&
+                !session.carLinkConnected &&
                 event.atMillis - session.lastMovementEvidenceAtMillis >= MOVEMENT_IDLE_WINDOW_MILLIS ->
                 state.moveTo(DetectionState.PARKING_TRANSITION, event.atMillis)
 
@@ -714,9 +758,10 @@ class ParkingDetectionEngine(
     private fun DetectionEngineState.checkpointEffect(): DetectionEffect =
         DetectionEffect.PersistCheckpoint(toCheckpoint())
 
-    private fun TravelSession.hasSustainedVehicleActivity(atMillis: Long): Boolean =
-        vehicleEndedAtMillis == null &&
-            atMillis - vehicleActivityStartedAtMillis >= MINIMUM_VEHICLE_DURATION_MILLIS
+    private fun TravelSession.hasSustainedVehicleActivity(atMillis: Long): Boolean {
+        val since = vehicleActiveSinceMillis ?: return false
+        return vehicleEndedAtMillis == null && atMillis - since >= MINIMUM_VEHICLE_DURATION_MILLIS
+    }
 
     private fun TravelSession.isShortlyAfterVehicleEnd(atMillis: Long): Boolean {
         val endedAt = vehicleEndedAtMillis ?: return false

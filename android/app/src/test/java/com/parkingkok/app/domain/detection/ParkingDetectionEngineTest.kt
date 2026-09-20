@@ -247,9 +247,64 @@ class ParkingDetectionEngineTest {
             connected.state,
         )
 
-        val sustained = connected.handle(DetectionEvent.StationaryExit(T0 + SUSTAIN))
+        // Ninety seconds of Bluetooth is not ninety seconds of driving. Sitting there with
+        // the radio on reaches the bar in elapsed time and must still produce nothing —
+        // otherwise getting back out disconnects into a candidate for a drive that never
+        // happened. iOS has always drawn the line here; Android did not until 2026-09-20.
+        val stillSitting = connected.handle(DetectionEvent.StationaryExit(T0 + SUSTAIN))
 
-        assertEquals(DetectionState.DRIVING, sustained.state)
+        assertEquals(DetectionState.DRIVING_CANDIDATE, stillSitting.state)
+
+        // Motion is what arms it, and the bar is measured from motion.
+        val driving = connected
+            .handle(DetectionEvent.VehicleEnter(T0))
+            .handle(DetectionEvent.StationaryExit(T0 + SUSTAIN))
+
+        assertEquals(DetectionState.DRIVING, driving.state)
+    }
+
+    @Test
+    fun `a connected link holds the drive through a gap with no movement evidence`() {
+        // §3a "DECIDED 2026-09-20". Underground there are no fixes, so
+        // `lastMovementEvidenceAtMillis` never advances and `movementIdleWindow` would fire
+        // on the first tick — not because the car stopped but because the sky is gone. The
+        // link is the better witness, and while it holds this row is suppressed.
+        //
+        // Pinned here rather than in `platform-tests` because §3a forbids a fixture that
+        // depends on a link event: iOS cannot observe a classic Bluetooth edge, so such a
+        // fixture would call a journey one platform cannot detect a shared contract.
+        val driving = idle()
+            .handle(DetectionEvent.CarLinkConnected(T0))
+            .handle(DetectionEvent.VehicleEnter(T0))
+            .handle(DetectionEvent.StationaryExit(T0 + SUSTAIN))
+            .also { assertEquals(DetectionState.DRIVING, it.state) }
+
+        val quiet = driving.handle(
+            DetectionEvent.TimerTick(T0 + SUSTAIN + ParkingDetectionEngine.MOVEMENT_IDLE_WINDOW_MILLIS * 3),
+        )
+
+        assertEquals(DetectionState.DRIVING, quiet.state)
+
+        // The disconnect is what ends it, and §3a sends that straight to CANDIDATE_PENDING.
+        val parked = quiet.handle(
+            DetectionEvent.CarLinkDisconnected(T0 + SUSTAIN + ParkingDetectionEngine.MOVEMENT_IDLE_WINDOW_MILLIS * 4),
+        )
+
+        assertEquals(DetectionState.CANDIDATE_PENDING, parked.state)
+        assertEquals(1, parked.candidatesCreated)
+    }
+
+    @Test
+    fun `the link does not hold a session that never became a drive`() {
+        // The boundary of the rule above. `drivingCandidateWindow` is deliberately *not*
+        // gated on the link: sitting in a parked car with the radio on is exactly what that
+        // row exists to retire, and suppressing it would leave the session open for ever.
+        val state = idle()
+            .handle(DetectionEvent.CarLinkConnected(T0))
+            .handle(DetectionEvent.TimerTick(T0 + ParkingDetectionEngine.DRIVING_CANDIDATE_WINDOW_MILLIS))
+
+        assertEquals(DetectionState.IDLE, state.state)
+        assertEquals(0, state.candidatesCreated)
     }
 
     @Test

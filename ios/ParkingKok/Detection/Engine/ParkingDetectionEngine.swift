@@ -288,6 +288,21 @@ actor ParkingDetectionEngine {
     private static let maximumTickCascade = 6
 
     private func tickOnce(now: Date) -> [DetectionEffect] {
+        // §3a "DECIDED 2026-09-20: a connected car link suppresses `movementIdleWindow`".
+        // A phone still attached to the car's audio during a 180-second gap is at a red
+        // light, in a tunnel or on a ramp — not in a car that has been left. Without it the
+        // row fires on every underground drive the moment anything ticks, because movement
+        // evidence only advances on a location fix and there are none there: "no sky" would
+        // read as "not moving".
+        //
+        // Only that row. The 2-hour ceiling still applies, and so does
+        // `drivingCandidateWindow` — a link connected with no drive is someone sitting in a
+        // parked car with the radio on, which is exactly what that row is for.
+        //
+        // The latch cannot outlive the link on this platform: `CarLinkMonitor` samples
+        // `AVAudioSession.currentRoute` at every wake and derives the edge, so a link that
+        // vanished while the process was dead produces a disconnect on the next wake.
+        let carLinkHolds = !connectedCarLinks.isEmpty
         switch checkpoint.state {
         case .drivingCandidate:
             // Promotion is checked first, and that ordering is a decision: both windows
@@ -312,6 +327,9 @@ actor ParkingDetectionEngine {
             guard let evidence = driving,
                   let reason = DrivingSessionTimeoutPolicy.boundReason(for: evidence, now: now)
             else { return [] }
+            // The link outranks an inference from absence, but only this one: the 2-hour
+            // ceiling is a bound on the session itself and holds either way.
+            if carLinkHolds, reason == .movementIdle { return [] }
             return endDrivingSession(reason: reason, now: now)
 
         case .parkingTransition:

@@ -65,6 +65,54 @@ struct CarLinkTransitionTests {
         #expect(candidates(effects).isEmpty)
     }
 
+    /// §3a "DECIDED 2026-09-20: a connected car link suppresses `movementIdleWindow`".
+    ///
+    /// Pinned here rather than in `platform-tests` because §3a forbids a fixture that
+    /// depends on a link event being present — iOS cannot observe a classic Bluetooth edge,
+    /// so such a fixture would call a journey one platform cannot detect a shared contract.
+    /// Android holds the mirror of this in `ParkingDetectionEngineTest`.
+    @Test("A connected link holds the drive through a gap with no movement evidence")
+    func linkSuppressesMovementIdle() async {
+        // Arrange — underground: a real drive, and then no fixes at all. Movement evidence
+        // only advances on a fix, so without the link the idle window would fire on the
+        // first tick — not because the car stopped but because the sky is gone.
+        let engine = await idleEngine()
+        _ = await engine.handle(.carLinkConnected(at: t0, kind: .bluetoothAudio))
+        _ = await engine.handle(.vehicleEnter(at: t0, confidence: .high))
+        _ = await engine.handle(.timerTick(at: at(DrivingConfirmationPolicy.minimumVehicleDuration)))
+        #expect(await engine.state == .driving)
+
+        // Act — far past the idle window, with the phone still attached to the car.
+        _ = await engine.handle(.timerTick(at: at(30 * 60)))
+
+        // Assert
+        #expect(await engine.state == .driving)
+
+        // The disconnect is what ends it, and §3a sends that straight to CANDIDATE_PENDING.
+        let effects = await engine.handle(.carLinkDisconnected(at: at(31 * 60), kind: .bluetoothAudio))
+        #expect(await engine.state == .candidatePending)
+        #expect(candidates(effects).count == 1)
+    }
+
+    /// The boundary of the rule above: `drivingCandidateWindow` is deliberately *not* gated
+    /// on the link. Sitting in a parked car with the radio on is what that row exists to
+    /// retire, and suppressing it would leave the session open for ever.
+    @Test("The link does not hold a session that never became a drive")
+    func linkDoesNotHoldAnUnpromotedSession() async {
+        // Arrange
+        let engine = await idleEngine()
+        _ = await engine.handle(.carLinkConnected(at: t0, kind: .bluetoothAudio))
+
+        // Act
+        let effects = await engine.handle(
+            .timerTick(at: at(DrivingConfirmationPolicy.drivingCandidateWindow))
+        )
+
+        // Assert
+        #expect(await engine.state == .idle)
+        #expect(candidates(effects).isEmpty)
+    }
+
     @Test("With the link connected, motion still has to sustain 90 s before DRIVING")
     func linkPlusMotionPromotesOnTheUsualBar() async {
         // Arrange

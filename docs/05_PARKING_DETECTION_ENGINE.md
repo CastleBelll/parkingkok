@@ -233,22 +233,51 @@ sky is gone. §3a already states the matching rule one section up, for promotion
 evidence does not gate promotion." The idle window is the same claim in reverse and carries
 no such caveat.
 
-**The question, which is the owner's and not an implementation detail:** does an absent
-location fix count as absent movement? Three answers, materially different products:
+#### DECIDED 2026-09-20: a connected car link suppresses `movementIdleWindow`
 
-- **No — and this is the recommendation.** `movementIdleWindow` should not fire while
-  location is unavailable or degraded, because "no fixes" and "not moving" are the same
-  observation only above ground. It is the one answer that does not punish the app's main
-  setting, and it matches §3a's existing rule for promotion.
-- **Yes, but the windows are too short.** Keep the row and widen `transitionWindow`, which
-  is **unvalidated**, so a walk detected late still answers the transition. This trace
-  needed 1392s.
-- **Yes, as written.** Then `subway_commute_underground`'s `expected` becomes `IDLE` with no
-  candidate, Android schedules real ticks, and every underground drive is retired eight
-  minutes after the last fix unless a walk is detected first.
+The product owner's answer, and it is better than the three this section first offered:
+**if Bluetooth is still connected to the car, the car has not been parked.** A phone attached
+to the car's audio system during a 180-second gap is at a red light, in a tunnel or on a
+ramp — it is not a car that has been left.
 
-Until this is answered, Android stays without a production tick and iOS keeps its per-wake
-one. That is a known divergence, recorded here rather than papered over.
+So `DRIVING → PARKING_TRANSITION` on `movementIdleWindow` does not fire while a car link is
+connected. §3a already called the link "the strongest signal this product can get"; this is
+that sentence applied to the one row that infers a parking from *absence*.
+
+**Only that row**, and the boundary matters:
+
+| row | gated? | why |
+|---|---|---|
+| `movementIdleWindow` | **yes** | it infers a parking from silence, and the link says the car is running |
+| `drivingCandidateWindow` | no | a link with no drive is someone sitting in a parked car with the radio on — which is precisely what this row exists to retire |
+| `transitionWindow` | no | it abandons a suspected parking; keeping it open costs an open session and buys nothing |
+| session maximum duration (2h) | no | a bound on the session itself, not an inference about the car |
+| 45-minute candidate expiry | no | a candidate only exists after a disconnect |
+
+The second row is the counter-example that fixed the rule's scope: two existing tests
+(`Connecting does not skip the 90-second promotion`, `DRIVING_CANDIDATE → IDLE when
+drivingCandidateWindow passes with no promotion`) both connect a link and never drive, and
+both expect the session retired. A blanket suppression broke them, correctly.
+
+##### The latch must not outlive the link
+A connect that is never followed by a disconnect would suppress timeouts for ever and kill
+detection outright — worse than the bug it fixes. The engine is pure and cannot poll, so the
+obligation is the adapter's: **on process start, and on every wake, the adapter re-asserts
+the link's real state and feeds a disconnect if it is gone.** Android can read it
+(`BluetoothProfile` connection state for `AUDIO_VIDEO_CAR_AUDIO` / `AUDIO_VIDEO_HANDSFREE`);
+iOS already samples `AVAudioSession.currentRoute` at every wake and derives the edge, so on
+that platform the latch is a sample by construction.
+
+##### What this does not fix
+`subway_commute_underground` has no link events, so it is unchanged: firing timeouts still
+retires it. A car with no Bluetooth pairing, underground, is in the same position. **Turning
+on a production tick on Android therefore remains blocked** on the narrower question this
+section opened — whether an absent location fix may stand in for absent movement when there
+is no link to ask. The car-link rule removes the common case from that question; it does not
+answer it.
+
+Until the residual is answered, Android stays without a production tick and iOS keeps its
+per-wake one. That is a known divergence, recorded here rather than papered over.
 
 ### Leaving a pending candidate behind
 
