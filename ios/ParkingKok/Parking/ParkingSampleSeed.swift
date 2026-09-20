@@ -49,6 +49,10 @@
             case "settings": .settings
             case "diagnostics": .diagnostics
             case "detail": activeParkingID.map(AppRoute.parkingDetail(id:))
+            // The fixture's unanswered candidate, which carries a fix — so this is the
+            // half of §7a's "where" row that `PK_INJECT_CANDIDATE` cannot reach: the
+            // engine's synthetic evidence produces no reliable location on a simulator.
+            case "confirm": .candidateConfirmation(id: notificationIDs[3])
             default: nil
             }
         }
@@ -170,8 +174,16 @@
                     detectedAt: now.addingTimeInterval(-6 * 60),
                     confidenceBucket: .high,
                     reasonCodes: [.recentVehicleActivity, .vehicleExitDetected, .walkingAfterVehicle],
-                    // No coordinate, like every other row of this fixture.
-                    lastReliableLocation: nil,
+                    // The confirmation screen draws this (docs/10 §7a "where"), so the
+                    // fixture has to carry one or the DEV hook only ever exercises the
+                    // 위치 없음 half of that row. `PK_WITHOUT_LOCATION` is how the other half
+                    // is reached, exactly as it is for the records above.
+                    lastReliableLocation: isWithoutLocationRequested ? nil : LastReliableLocation(
+                        latitude: sampleLatitude,
+                        longitude: sampleLongitude,
+                        horizontalAccuracy: sampleAccuracyMeters,
+                        capturedAt: now.addingTimeInterval(-6 * 60)
+                    ),
                     expiresAt: now.addingTimeInterval(ParkingCandidatePolicy.expiry - 6 * 60),
                     score: 82,
                     driveDuration: 22 * 60,

@@ -19,16 +19,32 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+/**
+ * The fix behind §7a's `마지막으로 확인된 위치`.
+ *
+ * **The radius, never the coordinate.** Android draws no tiles — FR-008 here is an
+ * external maps intent (docs/04_ANDROID_IMPLEMENTATION.md §12) — so the screen has no use
+ * for a latitude, and a coordinate that never enters UI state cannot leak out of it.
+ * [accuracyM] is null when the fix carried no usable accuracy, which reads as
+ * `마지막으로 확인된 위치` with no radius beside it rather than as no location at all.
+ */
+data class ConfirmLocation(val accuracyM: Int?)
+
 /** What `docs/10_DESIGN_UX_SPEC.md` §7a renders. */
 data class ConfirmCandidateUiState(
     /**
      * When the car is believed to have been left. `오후 8:14` on the screen.
      *
-     * The only number on this surface. There is no coordinate, no address and no floor
-     * estimate here — §7a and docs/09 §9 both keep location off this screen, and the
-     * state has no field one could be put in.
+     * There is no floor estimate here: the engine does not know which floor you are on,
+     * and §7a rules a guess out.
      */
     val parkedAtMillis: Long? = null,
+    /**
+     * §7a "where": what the screen says under `마지막으로 확인된 위치`. Null is the ordinary
+     * underground outcome — the drive produced no fix worth keeping — and the screen then
+     * says `위치 없음` in that same place rather than dropping the row.
+     */
+    val location: ConfirmLocation? = null,
     /** §7a: from the user's own history, newest first. Empty on a first-ever run. */
     val floorPicks: List<Floor> = emptyList(),
     /** False until the candidate has been looked up; the screen shows nothing before then. */
@@ -90,6 +106,9 @@ class ConfirmCandidateViewModel(
                 it.copy(
                     loaded = true,
                     parkedAtMillis = candidate.parkedAtMillis,
+                    location = candidate.lastReliableLocation?.let { fix ->
+                        ConfirmLocation(accuracyM = fix.horizontalAccuracyM.takeIf { m -> m > 0f }?.toInt())
+                    },
                     floorPicks = picks,
                 )
             }

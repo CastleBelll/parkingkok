@@ -34,19 +34,40 @@ struct ParkingMapPoint: Equatable, Sendable {
     /// `nil` when the record has no location, or carries one no map can draw.
     init?(_ session: ParkingSession) {
         guard let location = session.location else { return nil }
-        let coordinate = CLLocationCoordinate2D(latitude: location.latitude, longitude: location.longitude)
-        // A corrupt or partially-written row reaches MapKit as NaN and takes the process
-        // with it. Cheaper to refuse it here and fall back to the no-location card.
+        self.init(
+            latitude: location.latitude,
+            longitude: location.longitude,
+            accuracyMeters: location.horizontalAccuracy,
+            capturedAt: location.capturedAt
+        )
+    }
+
+    /// The fix a candidate carries, which is what the confirmation screen has to draw from
+    /// — there is no record yet for it to come off (docs/10 §7a "where").
+    init?(_ location: LastReliableLocation) {
+        self.init(
+            latitude: location.latitude,
+            longitude: location.longitude,
+            accuracyMeters: location.horizontalAccuracy,
+            capturedAt: location.capturedAt
+        )
+    }
+
+    /// The one guard both sources go through. A corrupt or partially-written value reaches
+    /// MapKit as NaN and takes the process with it, so it is refused here and the caller
+    /// falls back to the no-location treatment.
+    private init?(latitude: Double, longitude: Double, accuracyMeters: Double, capturedAt: Date) {
+        let coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
         guard CLLocationCoordinate2DIsValid(coordinate),
-              location.horizontalAccuracy.isFinite,
-              location.horizontalAccuracy > 0
+              accuracyMeters.isFinite,
+              accuracyMeters > 0
         else {
             return nil
         }
-        latitude = location.latitude
-        longitude = location.longitude
-        accuracyMeters = location.horizontalAccuracy
-        capturedAt = location.capturedAt
+        self.latitude = latitude
+        self.longitude = longitude
+        self.accuracyMeters = accuracyMeters
+        self.capturedAt = capturedAt
     }
 
     var coordinate: CLLocationCoordinate2D {

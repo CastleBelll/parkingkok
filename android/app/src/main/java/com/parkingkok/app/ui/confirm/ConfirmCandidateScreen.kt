@@ -11,14 +11,16 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -35,6 +37,7 @@ import com.parkingkok.app.theme.ParkingkokTheme
 import com.parkingkok.app.theme.spacing
 import com.parkingkok.app.ui.components.DetailHeader
 import com.parkingkok.app.ui.components.ParkingkokScreen
+import com.parkingkok.app.ui.components.StaticLocationArtwork
 import com.parkingkok.app.ui.format.timeOfDayText
 import com.parkingkok.app.ui.motion.pressScale
 
@@ -42,10 +45,15 @@ import com.parkingkok.app.ui.motion.pressScale
  * The confirmation screen — `docs/10_DESIGN_UX_SPEC.md` §7a, in the order §7a fixes:
  * the uncertainty, then when it happened, then the floor choice, then the way out.
  *
- * **What is deliberately absent.** No map, no address, no coordinate, no guessed floor.
- * §7a rules all four out and docs/09 §9 keeps location off this surface; the state this
- * screen renders has no field that could carry one, so the rule is structural rather than
- * a thing to remember.
+ * **What is deliberately absent.** No address and no guessed floor. §7a rules both out —
+ * the engine does not know which floor you are on, and an address is a claim this app is
+ * not entitled to make about a fix taken on the way into a garage.
+ *
+ * **Where, though, is present.** An earlier draft of this file said the screen shows no
+ * location at all "because docs/09 §9 keeps it off this surface". That citation was wrong:
+ * §9 is Google RTDN security and says nothing about location. The screen was left claiming
+ * 마지막 위치를 저장했어요 while refusing to say which — so §7a now puts the fix under FR-008's
+ * `마지막으로 확인된 위치`, and `위치 없음` in the same place when there is none.
  *
  * **The two Korean strings that are not in `strings.xml`.** 주차한 것 같아요 and 주차 아님 also
  * appear on the notification, where they are fixed verbatim by
@@ -69,13 +77,6 @@ fun ConfirmCandidateScreen(
         // candidate pending until it expires. The header carries no title, because the
         // screen's first line is the title.
         header = { DetailHeader(title = "", onBack = onBack) },
-        footer = {
-            // §7a: full width, under the choices, reachable without a scroll on the
-            // smallest supported screen. It sits outside the scrolling area precisely so
-            // that stays true at any font scale — it is the honest answer to a guess, and
-            // an honest answer the user has to hunt for is not one.
-            RejectButton(enabled = !state.working, onReject = onReject)
-        },
     ) {
         if (!state.loaded || state.gone) return@ParkingkokScreen
 
@@ -100,12 +101,20 @@ fun ConfirmCandidateScreen(
                         color = MaterialTheme.colorScheme.onBackground,
                     )
                 }
-                Text(
-                    text = stringResource(R.string.candidate_confirm_body),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                if (state.location != null) {
+                    // Only where it is true. With no fix this line used to promise a saved
+                    // location the screen then could not name.
+                    Text(
+                        text = stringResource(R.string.candidate_confirm_body),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
+        }
+
+        item("where") {
+            LastKnownLocation(location = state.location)
         }
 
         item("floors") {
@@ -127,8 +136,63 @@ fun ConfirmCandidateScreen(
                 )
             }
         }
+
+        item("reject") {
+            // §7a: directly under the choices, separated by a divider, and *not* pinned to
+            // the bottom of the screen. It used to live in the scaffold's footer, which on
+            // a short screen left it floating alone in empty space — where a text button
+            // stops reading as a control at all. iOS draws the same two elements.
+            RejectButton(enabled = !state.working, onReject = onReject)
+        }
     }
 }
+
+/**
+ * §7a "where". FR-008's wording above whatever the platform can honestly draw.
+ *
+ * The artwork carries no coordinate — it is the same block plan for every parking
+ * (see [StaticLocationArtwork]) — so the radius beside it is the part that actually says
+ * anything, and it is the part the user is standing there to check.
+ */
+@Composable
+private fun LastKnownLocation(location: ConfirmLocation?) {
+    Column(verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small)) {
+        Text(
+            text = stringResource(R.string.candidate_confirm_where),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (location == null) {
+            // §7a: the same place, not a hidden row. A drive that ended underground with no
+            // fix is ordinary, and saying so is what keeps the line above it honest.
+            Text(
+                text = stringResource(R.string.location_none),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            return@Column
+        }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.medium),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            StaticLocationArtwork(
+                modifier = Modifier.size(LOCATION_PREVIEW_SIDE),
+                pinSize = 24.dp,
+            )
+            Text(
+                text = location.accuracyM
+                    ?.let { stringResource(R.string.location_accuracy, it) }
+                    ?: stringResource(R.string.location_saved),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** The same square iOS gives the hero thumbnail, so the two screens read at one size. */
+private val LOCATION_PREVIEW_SIDE = 112.dp
 
 /**
  * §7a "The floor choices": up to three picks from the user's own history, then the two
@@ -188,7 +252,7 @@ private fun FloorChoices(
                 enabled = enabled,
                 onClick = onPhotoEntry,
                 modifier = Modifier.weight(1f),
-                iconRes = R.drawable.ic_photo,
+                iconRes = R.drawable.ic_camera,
             )
             Escape(
                 label = stringResource(R.string.candidate_confirm_manual),
@@ -233,25 +297,37 @@ private fun Escape(
 /** Sized against the label beside it, not against a touch target. */
 private val ESCAPE_ICON_SIZE = 20.dp
 
-/** §7a 주차 아님: a text button, never a destructive-looking one. It is an ordinary answer. */
+/**
+ * §7a 주차 아님: an ordinary answer, never a destructive-looking one.
+ *
+ * Outlined rather than filled or red — dressing the honest answer as a warning pushes
+ * people towards confirming something that did not happen, which is the one outcome the
+ * detector learns nothing from. It was a bare `TextButton` in the scaffold's footer, which
+ * on a short screen left a stray line of blue floating in empty space and reading as
+ * nothing at all. The border is what makes it a control; the neutral content colour is what
+ * keeps it quieter than the two escapes above it, which are outlined in the accent. iOS
+ * draws the identical pair.
+ */
 @Composable
 private fun RejectButton(enabled: Boolean, onReject: () -> Unit) {
-    TextButton(
-        onClick = onReject,
-        enabled = enabled,
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = MaterialTheme.spacing.touchTarget)
-            .padding(
-                start = MaterialTheme.spacing.gutter,
-                end = MaterialTheme.spacing.gutter,
-                bottom = MaterialTheme.spacing.large,
+    Column(verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.medium)) {
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        OutlinedButton(
+            onClick = onReject,
+            enabled = enabled,
+            shape = MaterialTheme.shapes.small,
+            colors = ButtonDefaults.outlinedButtonColors(
+                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
             ),
-    ) {
-        Text(
-            text = ParkingCandidateNotice.ACTION_REJECT,
-            style = MaterialTheme.typography.titleMedium,
-        )
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = FLOOR_PICK_HEIGHT),
+        ) {
+            Text(
+                text = ParkingCandidateNotice.ACTION_REJECT,
+                style = MaterialTheme.typography.titleMedium,
+            )
+        }
     }
 }
 
@@ -266,6 +342,7 @@ private fun ConfirmCandidatePreview() {
             state = ConfirmCandidateUiState(
                 loaded = true,
                 parkedAtMillis = 1_700_000_000_000L,
+                location = ConfirmLocation(accuracyM = 18),
                 floorPicks = listOf(
                     Floor("B3", FloorKind.BASEMENT, 3),
                     Floor("B1", FloorKind.BASEMENT, 1),

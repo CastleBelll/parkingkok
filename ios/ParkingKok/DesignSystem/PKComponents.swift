@@ -206,6 +206,32 @@ struct PKSoftButtonStyle: ButtonStyle {
     }
 }
 
+/// A control that is unmistakably a control while staying quieter than a tinted fill —
+/// docs/10_DESIGN_UX_SPEC.md §7a's two escapes, and 주차 아님 under them.
+///
+/// The border does the work of saying "press me", which frees the fill to stay off the
+/// screen's one accent (CLAUDE.md design harness). [tint] is what ranks two outlined
+/// controls against each other: the escapes take the primary text colour, 주차 아님 the
+/// secondary one, so it reads as the quietest thing on the screen that is still a button.
+/// Neither takes the accent — the screen's one accent is already spent on whatever sits
+/// above them. Android draws the same pair with `OutlinedButton`.
+struct PKOutlineButtonStyle: ButtonStyle {
+    var tint: Color = PKColor.textPrimary
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(PKTypography.row)
+            .foregroundStyle(tint)
+            .frame(maxWidth: .infinity, minHeight: PKSize.minimumTouchTarget)
+            .padding(.vertical, PKSpacing.m)
+            .background {
+                RoundedRectangle(cornerRadius: PKRadius.button)
+                    .strokeBorder(PKColor.divider, lineWidth: PKSize.hairline)
+            }
+            .pkPressFeedback(configuration.isPressed)
+    }
+}
+
 /// A bare glyph control — the bell and the gear in the header.
 struct PKIconButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {

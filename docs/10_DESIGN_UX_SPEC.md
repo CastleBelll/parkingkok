@@ -197,8 +197,16 @@ control at all. Full width, reachable without a scroll on the smallest supported
 never behind a menu or an X in a corner.
 
 It is the honest answer to a guess, and the detector learns more from it than from any
-confirmation, so it is legible as a button while staying quieter than the picks: the same
-tonal treatment, not a filled one, and not a colour that reads as danger.
+confirmation, so it is legible as a button while staying quieter than the picks: an
+outlined control, not a filled or tinted one, and not a colour that reads as danger.
+
+An earlier draft of this paragraph said "the same tonal treatment". That was wrong twice
+over. A tonal fill is what the picks wear, so it would have made 주차 아님 a fourth peer of
+the three it is supposed to sit under; and a tonal fill in a neutral colour — the only way
+to keep it quieter — reads as a disabled button rather than a subdued one. An outline says
+"this is a control" without spending either the screen's accent or its emphasis, which
+leaves the ranking picks → escapes → 주차 아님 carried by fill, then border colour, then
+content colour.
 
 Rejecting returns to where the user was. It never asks why.
 

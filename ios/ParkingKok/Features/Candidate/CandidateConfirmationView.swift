@@ -9,15 +9,26 @@ import SwiftUI
 /// 오후 8:14
 /// 마지막 위치를 저장했어요.
 ///
-/// [ B1 ]  [ B2 ]  [ B3 ]  [ 직접 입력 ]
+/// 마지막으로 확인된 위치
+/// [ map ]  약 18m 이내
 ///
+/// [ B1 ]  [ B2 ]  [ B3 ]
+/// [ 사진으로 입력 ]  [ 직접 입력 ]
+/// ─────────────────────────
 /// 주차 아님
 /// ```
 ///
 /// ### What is deliberately absent
-/// No map, no address, no coordinate, and no guess at the floor. The engine does not know
-/// which floor you are on, and docs/09 §9 keeps location off this surface — so there is
-/// nothing here for either to be rendered from.
+/// No address, and no guess at the floor. The engine does not know which floor you are on,
+/// and an address is a claim this app is not entitled to make about a fix taken on the way
+/// into a garage.
+///
+/// ### Where, though, is present
+/// An earlier draft of this file said the screen shows no location at all "because docs/09
+/// §9 keeps it off this surface". That citation was wrong: §9 is Google RTDN security and
+/// says nothing about location. The screen was left claiming 마지막 위치를 저장했어요 while
+/// refusing to say which — so §7a now puts the fix under FR-008's `마지막으로 확인된 위치`,
+/// and `위치 없음` in the same place when there is none.
 ///
 /// ### Why it is pushed and not presented
 /// §7a: "A dialog that cannot be dismissed is how apps trap people, and this one is a
@@ -59,10 +70,12 @@ struct CandidateConfirmationView: View {
         PKScreen {
             header
                 .pkEntrance(0)
-            floorChoices
+            lastKnownLocation
                 .pkEntrance(1)
-            rejection
+            floorChoices
                 .pkEntrance(2)
+            rejection
+                .pkEntrance(3)
         }
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $isManualEntryPresented, onDismiss: manualEntryDismissed) {
@@ -97,12 +110,47 @@ struct CandidateConfirmationView: View {
             Text(ParkingDateText.time(candidate.detectedAt))
                 .font(PKTypography.heroSupport)
                 .foregroundStyle(PKColor.textPrimary)
-            Text(Self.savedText)
-                .font(PKTypography.supporting)
-                .foregroundStyle(PKColor.textSecondary)
+            // Only where it is true. With no fix this line used to promise a saved
+            // location the screen then could not name.
+            if mapPoint != nil {
+                Text(Self.savedText)
+                    .font(PKTypography.supporting)
+                    .foregroundStyle(PKColor.textSecondary)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
+    }
+
+    /// §7a "where": FR-008's wording over the same thumbnail the home hero draws, accuracy
+    /// circle and all. The circle is the point — the user is standing there deciding
+    /// whether the app caught the right spot, and a bare pin would overstate what it knows.
+    private var lastKnownLocation: some View {
+        VStack(alignment: .leading, spacing: PKSpacing.s) {
+            Text(ParkingMapPoint.label)
+                .font(PKTypography.caption)
+                .foregroundStyle(PKColor.textSecondary)
+            if let mapPoint {
+                HStack(spacing: PKSpacing.m) {
+                    ParkingMapThumbnail(point: mapPoint, zoneText: nil)
+                    Text(mapPoint.accuracyText)
+                        .font(PKTypography.supporting)
+                        .foregroundStyle(PKColor.textSecondary)
+                }
+            } else {
+                // §7a: the same place, not a hidden row. A drive that ended underground
+                // with no fix is ordinary, and saying so is what keeps the screen honest.
+                Text(Self.noLocationText)
+                    .font(PKTypography.supporting)
+                    .foregroundStyle(PKColor.textSecondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// `nil` when the drive produced no fix worth keeping (§6), or one no map can draw.
+    private var mapPoint: ParkingMapPoint? {
+        candidate.lastReliableLocation.flatMap(ParkingMapPoint.init)
     }
 
     /// §7a: three quick picks and `직접 입력`.
@@ -131,10 +179,11 @@ struct CandidateConfirmationView: View {
                     pillarButton
                 }
                 Button(Self.manualEntryTitle) { openManualEntry(with: nil) }
-                    // The same weight as a quick pick. §7a ranks these after them, and rank
-                    // here is order and label, not a second colour — the design harness
-                    // allows one accent per screen and the picks already spend it.
-                    .buttonStyle(PKSoftButtonStyle())
+                    // Outlined, not tinted. §7a ranks these after the picks, and five
+                    // identically tinted blocks would have given the screen no ranking at
+                    // all — the border keeps them legible as controls while the picks keep
+                    // the screen's one accent (CLAUDE.md design harness).
+                    .buttonStyle(PKOutlineButtonStyle())
             }
         }
     }
@@ -164,7 +213,7 @@ struct CandidateConfirmationView: View {
                 Label(Self.pillarEntryTitle, systemImage: "camera")
             }
         }
-        .buttonStyle(PKSoftButtonStyle())
+        .buttonStyle(PKOutlineButtonStyle())
         .disabled(isReadingPillar)
         .accessibilityLabel(Self.pillarEntryTitle)
     }
@@ -210,22 +259,20 @@ struct CandidateConfirmationView: View {
         isManualEntryPresented = true
     }
 
-    /// §7a: "A text button, full width, under the choices — reachable without a scroll on
-    /// the smallest supported screen, and never hidden behind a menu or an X in a corner."
+    /// §7a: "Directly under the choices, separated from them by a divider, and not pinned
+    /// to the bottom of the screen — a control floating alone in empty space does not read
+    /// as a control at all."
     ///
     /// Plain text rather than a filled or red button. It is the honest answer to a guess,
     /// not a destructive act, and dressing it as a warning would push people towards
     /// confirming something that did not happen — which is the one outcome the detector
-    /// learns nothing from.
+    /// learns nothing from. Android draws the identical pair.
     private var rejection: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: PKSpacing.m) {
             Divider()
                 .overlay(PKColor.divider)
             Button(CandidateNotificationCopy.notParkingTitle) { reject() }
-                .font(PKTypography.row)
-                .foregroundStyle(PKColor.textPrimary)
-                .frame(maxWidth: .infinity, minHeight: PKSize.minimumTouchTarget)
-                .padding(.vertical, PKSpacing.s)
+                .buttonStyle(PKOutlineButtonStyle(tint: PKColor.textSecondary))
         }
     }
 
@@ -257,6 +304,8 @@ struct CandidateConfirmationView: View {
     /// §7a's second line, verbatim. Not the notification's body — the notification says
     /// what was saved, this says it about a moment the user is now looking at.
     static let savedText = "마지막 위치를 저장했어요."
+    /// §7a's `위치 없음`, the same words Android's `location_none` carries.
+    static let noLocationText = "위치 없음"
     static let manualEntryTitle = "직접 입력"
     static let pillarEntryTitle = "사진으로 입력"
 }
