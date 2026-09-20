@@ -190,6 +190,7 @@ fun SettingsScreen(
                     supporting = stringResource(R.string.settings_permission_battery_caption),
                     granted = state.batteryUnrestricted,
                     onClick = onOpenBatterySettings,
+                    deniedLabel = R.string.settings_permission_battery_restricted,
                 )
                 SettingsDivider()
                 PermissionRow(
@@ -388,6 +389,14 @@ private fun PermissionRow(
     supporting: String,
     granted: Boolean,
     onClick: () -> Unit,
+    /**
+     * What the badge says when [granted] is false.
+     *
+     * `거부됨` is right for a runtime permission the user was asked for and declined. The
+     * battery-optimisation row (docs/04_ANDROID §4b) is not a runtime permission and nobody
+     * was ever asked, so the same word would blame the user for a dialog they never saw.
+     */
+    deniedLabel: Int = R.string.settings_permission_denied,
 ) {
     ParkingkokRow(
         title = title,
@@ -404,7 +413,7 @@ private fun PermissionRow(
                         if (granted) {
                             R.string.settings_permission_granted
                         } else {
-                            R.string.settings_permission_denied
+                            deniedLabel
                         },
                     ),
                     containerColor = if (granted) {
