@@ -72,13 +72,13 @@ class ParkingDetectionEngineTest {
             candidate.handle(DetectionEvent.TimerTick(T0 + SUSTAIN)).state,
         )
 
-        // The same tick a full window later promotes and then, in `DRIVING`, notices it has
-        // had no movement evidence at all — which is `PARKING_TRANSITION`, a silent state.
-        // What matters for §3a is that the session was not discarded.
+        // The same moment a full window later promotes and stays there. It has had no
+        // movement evidence at all, which is not the same as movement that stopped — this
+        // is the underground drive, and `movementIdleWindow` must not touch it.
         val atWindow = candidate
             .handle(DetectionEvent.TimerTick(T0 + ParkingDetectionEngine.DRIVING_CANDIDATE_WINDOW_MILLIS))
 
-        assertEquals(DetectionState.PARKING_TRANSITION, atWindow.state)
+        assertEquals(DetectionState.DRIVING, atWindow.state)
         assertNotNull("the travel session survives; only an unpromoted one is discarded", atWindow.session)
     }
 
@@ -107,10 +107,25 @@ class ParkingDetectionEngineTest {
 
     @Test
     fun `DRIVING to PARKING_TRANSITION when movement evidence goes quiet`() {
+        // A fix that moved first: the row is "movement stopped", and a drive that never
+        // moved has nothing that could have stopped.
         val state = driving()
+            .handle(DetectionEvent.Location(fix(T0, accuracyM = 10f, speedMps = 12f)))
             .handle(DetectionEvent.TimerTick(T0 + ParkingDetectionEngine.MOVEMENT_IDLE_WINDOW_MILLIS))
 
         assertEquals(DetectionState.PARKING_TRANSITION, state.state)
+    }
+
+    @Test
+    fun `a drive with no fix at all is never idled by the movement window`() {
+        // The underground car park, which is the whole reason the window reads `null` as
+        // "no movement to have stopped" rather than as "stopped long ago". Seeding it with
+        // the session start instead flips `subway_commute_underground` to `IDLE` 180 s in,
+        // measured 2026-09-20.
+        val state = driving()
+            .handle(DetectionEvent.TimerTick(T0 + ParkingDetectionEngine.MOVEMENT_IDLE_WINDOW_MILLIS * 4))
+
+        assertEquals(DetectionState.DRIVING, state.state)
     }
 
     @Test
@@ -145,6 +160,7 @@ class ParkingDetectionEngineTest {
     fun `PARKING_TRANSITION back to DRIVING when movement evidence returns`() {
         // The red light. Entering PARKING_TRANSITION is silent, so returning costs nothing.
         val state = driving()
+            .handle(DetectionEvent.Location(fix(T0, accuracyM = 10f, speedMps = 12f)))
             .handle(DetectionEvent.TimerTick(T0 + ParkingDetectionEngine.MOVEMENT_IDLE_WINDOW_MILLIS))
             .also { assertEquals(DetectionState.PARKING_TRANSITION, it.state) }
             .handle(DetectionEvent.Location(fix(T0 + 200_000, accuracyM = 10f, speedMps = 12f)))

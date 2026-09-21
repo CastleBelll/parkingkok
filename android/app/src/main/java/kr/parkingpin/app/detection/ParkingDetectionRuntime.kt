@@ -96,29 +96,19 @@ class ParkingDetectionRuntime(
     suspend fun handleUserAnswer(event: DetectionEvent): List<DetectionEffect> = handle(listOf(event))
 
     /**
-     * A timeout moment.
+     * One batch of events, in order, under the lock.
      *
-     * §3a's four timeout rows fire from here and nowhere else — see [DetectionEvent.TimerTick]
-     * for why an ordinary event must not stand in for one.
+     * **§3a's timeout rows need no caller here.** They used to: they fired only on an
+     * explicit `TimerTick`, nothing in the app produced one, and `drivingCandidateWindow`,
+     * `movementIdleWindow` and `transitionWindow` were dead in the shipped build — a drive
+     * that ended with no `vehicle_exit` stayed in `DRIVING` for ever. The engine now settles
+     * them against each event's own timestamp, after folding that event's evidence, which is
+     * the ordering iOS has always used and the one the shared fixtures agree with.
      *
-     * **Nothing in the shipped app calls this, and that is an open defect, not a design.**
-     * `drivingCandidateWindow`, `movementIdleWindow` and `transitionWindow` are therefore
-     * dead in production on this platform: a drive that ends underground with no
-     * `vehicle_exit` stays in `DRIVING` for ever and the trip is lost. The 45-minute expiry
-     * is the one row that is covered from the app side, by
-     * [ParkingCandidateCoordinator.expireIfDue] and the notification's own `setTimeoutAfter`.
-     *
-     * The obvious fix — open every batch with a tick — was tried on 2026-09-20 and
-     * **measured to be wrong**: it flips `subway_commute_underground` from
-     * `CANDIDATE_PENDING` with a candidate to `IDLE` with none. Not through
-     * `drivingCandidateWindow`, which sits below the promotion check, but because
-     * `movementIdleWindow` fires the instant anything ticks underground — there are no
-     * location fixes there, so there is no movement evidence to advance, and "no sky" reads
-     * as "not moving". `transitionWindow` then retires it 300s later.
-     *
-     * A deadline-scheduled tick does exactly the same thing, so the question is a contract
-     * one and not an implementation one: see docs/05 §3a "OPEN: nothing on Android produces
-     * one, and firing them breaks the subway trace".
+     * What is left is the phone that produces **no event at all** after a drive ends. The
+     * 45-minute candidate expiry is covered from the app side by
+     * [ParkingCandidateCoordinator.expireIfDue] and the notification's own `setTimeoutAfter`;
+     * the driving rows are not, and a scheduled tick is the remaining half (docs/05 §3a).
      */
     private suspend fun handle(events: List<DetectionEvent>): List<DetectionEffect> {
         if (events.isEmpty()) return emptyList()

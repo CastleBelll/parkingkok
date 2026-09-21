@@ -35,8 +35,17 @@ data class TravelSession(
     val reasons: List<EvidenceReasonCode> = emptyList(),
     /** When vehicle activity ended, by exit or by car-link disconnect. */
     val vehicleEndedAtMillis: Long? = null,
-    /** Last moment a fix cleared §7's movement bar. Feeds `movementIdleWindow`. */
-    val lastMovementEvidenceAtMillis: Long,
+    /**
+     * Last moment a fix cleared §7's movement bar, or `null` if none ever has.
+     *
+     * **Null is not "long ago", and the difference is the underground car park.** A drive
+     * with no fix at all has no movement that could have stopped, so `movementIdleWindow`
+     * must not fire on it — seeded with the session start it would, 180 s into every
+     * underground drive, because "no sky" is not "not moving". iOS has always read it this
+     * way (`isMovementIdle` returns false for a nil sample) and this is Android catching up
+     * to it, which is what let the timeout rows finally be armed in production.
+     */
+    val lastMovementEvidenceAtMillis: Long? = null,
     /**
      * §3a "DECIDED 2026-09-20: a connected car link suppresses every timeout row".
      *
@@ -185,7 +194,6 @@ data class DetectionEngineState(
                     vehicleFirstSeenAtMillis = vehicleStartedAt,
                     lastVehicleEvidenceAtMillis = atMillis,
                 ),
-                lastMovementEvidenceAtMillis = atMillis,
             )
         }
     }
@@ -287,9 +295,136 @@ class ParkingDetectionEngine(
     private val newCandidateId: () -> String,
 ) {
 
+    /**
+     * One event, then every §3a row whose condition is a timeout the event's own timestamp
+     * has already carried past.
+     *
+     * ### Why the timeouts are settled here and not only on a [DetectionEvent.TimerTick]
+     * They used to fire only on an explicit tick and **nothing in the app produced one**, so
+     * `drivingCandidateWindow`, `movementIdleWindow` and `transitionWindow` were dead in the
+     * shipped build while passing fixtures that supply ticks of their own. A drive that
+     * ended with no `vehicle_exit` stayed in `DRIVING` for ever and the trip was lost.
+     *
+     * Settling **after** the edge is the ordering, and it is the one that survived
+     * measurement. Opening a batch with a tick instead was tried on 2026-09-20 and flipped
+     * `subway_commute_underground` to `IDLE`: the windows were judged before the fix that
+     * would have advanced them. An edge is also evidence, and evidence is folded first.
+     *
+     * ### What this still does not do
+     * iOS examines the windows *before* the edge as well, so a `walking_enter` that arrives
+     * after `transitionWindow` has already closed confirms nothing there, while here it
+     * still opens a candidate. Reaching that needs Android's fold split into evidence and
+     * edge halves the way iOS's `ingest`/`applyEdge` already are — docs/05 §3a.
+     */
     fun handle(state: DetectionEngineState, event: DetectionEvent): EngineStep {
         val folded = fold(state, event)
-        return transition(before = state, state = folded, event = event)
+        val edge = transition(before = state, state = folded, event = event)
+        val effects = edge.effects.toMutableList()
+        return EngineStep(settleTimeouts(edge.state, event.atMillis, effects), effects)
+    }
+
+    /**
+     * Runs [timeoutRow] to a fixed point, because one event can be minutes after the last
+     * and has to catch up more than one boundary: a drive that promoted, went quiet and then
+     * let its transition window close is three rows in a single moment.
+     *
+     * The cap is bug containment rather than a rule — every row moves the state, so a loop
+     * that does not settle is a defect and not a slow case.
+     */
+    private fun settleTimeouts(
+        state: DetectionEngineState,
+        atMillis: Long,
+        effects: MutableList<DetectionEffect>,
+    ): DetectionEngineState {
+        var current = state
+        repeat(MAX_TIMEOUT_CASCADE) {
+            val step = timeoutRow(current, atMillis) ?: return current
+            current = step.state
+            effects += step.effects
+        }
+        return current
+    }
+
+    /**
+     * §3a's elapsed-time rows, and **the only place they live** — an event-driven copy of
+     * any of them would be a second definition of the same deadline.
+     *
+     * `null` means no row applies, which is the ordinary answer.
+     */
+    private fun timeoutRow(state: DetectionEngineState, atMillis: Long): EngineStep? {
+        val session = state.session
+        return when (state.state) {
+            DetectionState.DRIVING_CANDIDATE -> when {
+                // Promotion is read first, and that ordering is a decision: both conditions
+                // can be true on the same late moment, and promotion's became true first
+                // (`minimumVehicleDuration` 90 s against `drivingCandidateWindow` 300 s).
+                // `subway_commute_underground` is exactly that case — the first event after
+                // `vehicle_enter` is 303 s later — and reading the timeout first would send
+                // a 45-minute ride back to `IDLE`.
+                session?.hasSustainedVehicleActivity(atMillis) == true ->
+                    state.moveTo(DetectionState.DRIVING, atMillis)
+
+                // Not gated on the link: a link connected with no drive is someone sitting
+                // in a parked car with the radio on, which is what this row is for.
+                atMillis - state.stateEnteredAtMillis >= DRIVING_CANDIDATE_WINDOW_MILLIS ->
+                    state.endSession(atMillis)
+
+                else -> null
+            }
+
+            DetectionState.DRIVING ->
+                if (session != null && isMovementIdle(session, atMillis)) {
+                    state.moveTo(DetectionState.PARKING_TRANSITION, atMillis)
+                } else {
+                    null
+                }
+
+            DetectionState.PARKING_TRANSITION ->
+                if (atMillis - state.stateEnteredAtMillis >= TRANSITION_WINDOW_MILLIS) {
+                    state.endSession(atMillis)
+                } else {
+                    null
+                }
+
+            DetectionState.CANDIDATE_PENDING ->
+                state.candidate
+                    ?.takeIf { atMillis >= it.expiresAtMillis }
+                    ?.let { state.expireCandidate(atMillis, it) }
+
+            // §11: the vehicle evidence that opened the departure went stale before §7's
+            // guard was ever satisfied. The car never actually left.
+            DetectionState.DEPARTURE_CANDIDATE ->
+                if (session != null &&
+                    atMillis - session.evidence.lastVehicleEvidenceAtMillis >=
+                    DrivingConfirmationGuard.RECENT_VEHICLE_WINDOW_MILLIS
+                ) {
+                    EngineStep(
+                        state.copy(
+                            state = DetectionState.PARKED,
+                            stateEnteredAtMillis = atMillis,
+                            session = null,
+                        ),
+                    ).withCheckpoint()
+                } else {
+                    null
+                }
+
+            DetectionState.IDLE, DetectionState.PARKED -> null
+        }
+    }
+
+    /**
+     * §3a `movementIdleWindow`, suppressed while the phone is still attached to the car.
+     *
+     * Two guards, and both are about the same mistake — inferring a parking from an absence.
+     * A drive with no fix at all (`null`) has no movement that could have stopped, and a
+     * phone still on the car's audio during a 180-second gap is at a red light, in a tunnel
+     * or on a ramp.
+     */
+    private fun isMovementIdle(session: TravelSession, atMillis: Long): Boolean {
+        if (session.carLinkConnected) return false
+        val lastMovement = session.lastMovementEvidenceAtMillis ?: return false
+        return atMillis - lastMovement >= MOVEMENT_IDLE_WINDOW_MILLIS
     }
 
     // ── Evidence folding ────────────────────────────────────────────────────────────
@@ -363,7 +498,6 @@ class ParkingDetectionEngine(
                     vehicleFirstSeenAtMillis = atMillis,
                     lastVehicleEvidenceAtMillis = atMillis,
                 ),
-                lastMovementEvidenceAtMillis = atMillis,
             )
         }
         return session.copy(
@@ -521,12 +655,6 @@ class ParkingDetectionEngine(
             session.hasSustainedVehicleActivity(event.atMillis) ->
                 state.moveTo(DetectionState.DRIVING, event.atMillis)
 
-            // Not gated on the link: a link connected with no drive is someone sitting in
-            // a parked car with the radio on, which is exactly what this row is for.
-            event is DetectionEvent.TimerTick &&
-                event.atMillis - state.stateEnteredAtMillis >= DRIVING_CANDIDATE_WINDOW_MILLIS ->
-                state.endSession(event.atMillis)
-
             else -> EngineStep(state)
         }
     }
@@ -540,16 +668,6 @@ class ParkingDetectionEngine(
             event is DetectionEvent.CarLinkDisconnected -> state.openCandidateOrEndSession(event.atMillis)
 
             event is DetectionEvent.VehicleExit -> state.moveTo(DetectionState.PARKING_TRANSITION, event.atMillis)
-
-            // §3a: suppressed while the phone is still attached to the car, and this is
-            // the only row that is. Without it the row fires on every underground drive the
-            // moment anything ticks, because `lastMovementEvidenceAtMillis` only advances on
-            // a location fix and there are none down there — "no sky" would read as "not
-            // moving".
-            event is DetectionEvent.TimerTick &&
-                !session.carLinkConnected &&
-                event.atMillis - session.lastMovementEvidenceAtMillis >= MOVEMENT_IDLE_WINDOW_MILLIS ->
-                state.moveTo(DetectionState.PARKING_TRANSITION, event.atMillis)
 
             else -> EngineStep(state)
         }
@@ -585,10 +703,6 @@ class ParkingDetectionEngine(
             // Vehicle activity resumed outright — the same return, on a motion event.
             event is DetectionEvent.VehicleEnter || event is DetectionEvent.CarLinkConnected ->
                 state.moveTo(DetectionState.DRIVING, event.atMillis)
-
-            event is DetectionEvent.TimerTick &&
-                event.atMillis - state.stateEnteredAtMillis >= TRANSITION_WINDOW_MILLIS ->
-                state.endSession(event.atMillis)
 
             else -> EngineStep(state)
         }
@@ -637,9 +751,6 @@ class ParkingDetectionEngine(
                 ),
             ).withCheckpoint()
 
-            event is DetectionEvent.TimerTick && event.atMillis >= candidate.expiresAtMillis ->
-                state.expireCandidate(event.atMillis, candidate)
-
             else -> EngineStep(state)
         }
     }
@@ -669,13 +780,9 @@ class ParkingDetectionEngine(
                 listOf(DetectionEffect.EndActiveParking(state.stateEnteredAtMillis)) + step.effects,
             )
         }
-        val lapsed = event is DetectionEvent.VehicleExit ||
-            (
-                event is DetectionEvent.TimerTick &&
-                    event.atMillis - session.evidence.lastVehicleEvidenceAtMillis >=
-                    DrivingConfirmationGuard.RECENT_VEHICLE_WINDOW_MILLIS
-                )
-        return if (lapsed) {
+        // The stale-evidence half of §11's lapse is a timeout and lives in [timeoutRow];
+        // an explicit exit is the event half.
+        return if (event is DetectionEvent.VehicleExit) {
             EngineStep(
                 state.copy(state = DetectionState.PARKED, stateEnteredAtMillis = event.atMillis, session = null),
             ).withCheckpoint()
@@ -814,6 +921,13 @@ class ParkingDetectionEngine(
     }
 
     companion object {
+
+        /**
+         * Enough to walk `DRIVING_CANDIDATE -> DRIVING -> PARKING_TRANSITION -> IDLE` and
+         * stop. Matches the iOS engine's cascade cap, which is the same number for the same
+         * reason.
+         */
+        private const val MAX_TIMEOUT_CASCADE: Int = 6
 
         /**
          * §3a constant `minimumVehicleDuration`, 90 s.

@@ -187,7 +187,7 @@ under arrival-time evaluation it ends in `IDLE` instead of `CANDIDATE_PENDING`.
 one, which is the same statement from the other direction: a fixture that wants a timeout
 to fire says so.
 
-#### OPEN: nothing on Android produces one, and firing them breaks the subway trace
+#### RESOLVED 2026-09-21: nothing on Android produced one, and firing them broke the subway trace
 
 Two facts, both measured on 2026-09-20, that this section does not currently reconcile.
 
@@ -269,15 +269,50 @@ iOS already samples `AVAudioSession.currentRoute` at every wake and derives the 
 that platform the latch is a sample by construction.
 
 ##### What this does not fix
-`subway_commute_underground` has no link events, so it is unchanged: firing timeouts still
-retires it. A car with no Bluetooth pairing, underground, is in the same position. **Turning
-on a production tick on Android therefore remains blocked** on the narrower question this
-section opened — whether an absent location fix may stand in for absent movement when there
-is no link to ask. The car-link rule removes the common case from that question; it does not
-answer it.
+`subway_commute_underground` has no link events, so it is unchanged by the link rule: a car
+with no Bluetooth pairing, underground, is in the same position. That residual is the
+narrower question this section opened — whether an absent location fix may stand in for
+absent movement when there is no link to ask — and it is answered below.
 
-Until the residual is answered, Android stays without a production tick and iOS keeps its
-per-wake one. That is a known divergence, recorded here rather than papered over.
+#### DECIDED 2026-09-21: an absent fix is not absent movement
+
+**No.** `movementIdleWindow` does not fire on a session that has never had a fix clearing
+§7's movement bar. The row means "movement stopped", and a drive that never produced a
+moving sample has no movement that could have stopped. Underground there are no fixes at
+all, so seeding the anchor with the session start makes "no sky" read as "not moving" — and
+that, not `drivingCandidateWindow`, is what retired the subway trip at `t=6707`.
+
+**iOS has always read it this way.** `ParkingTransitionPolicy.isMovementIdle` returns false
+for a nil `lastMovingSampleAt`, and the row is additionally gated on a *confirmed* session.
+Android's `lastMovementEvidenceAtMillis` was a non-null `Long` seeded with the session
+start, so the two engines disagreed about the same row while every fixture passed — because
+no fixture ticked. It is now `Long?`, with `null` meaning "never moved".
+
+**Android therefore ticks in production, and the ticks come from the events themselves.**
+The engine settles the timeout rows against each event's own timestamp, after folding that
+event's evidence:
+
+```text
+fold(event) -> edge transition -> settle timeouts to a fixed point
+```
+
+Folding first is the half that is easy to get wrong: a batch opened with a tick judges the
+windows *before* the fix that would have advanced them, which is the 2026-09-20 measurement
+above. Settling after the edge keeps every committed fixture green, `subway_commute_underground`
+included, and the Android suite's three tests that asserted the old reading were rewritten
+to give the session a moving fix first — they had been encoding the bug.
+
+The timeout rows now live in exactly one place on each platform (`timeoutRow` here,
+`tickOnce` on iOS); the edge table no longer carries a `timer_tick` branch.
+
+##### Two things this still does not do
+- **A phone that produces no event at all** after a drive ends still waits. Every real drive
+  ends with a motion transition or a fix, and the 45-minute candidate expiry is covered from
+  the app side, but a scheduled tick is the honest remaining half.
+- **iOS examines the windows before the edge as well**, so a `walking_enter` arriving after
+  `transitionWindow` has closed confirms nothing there while Android still opens a candidate.
+  Closing it needs Android's `fold` split into evidence and edge halves, the way iOS's
+  `ingest`/`applyEdge` already are. Recorded rather than papered over.
 
 ### Leaving a pending candidate behind
 
