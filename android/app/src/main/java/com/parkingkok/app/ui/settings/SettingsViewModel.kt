@@ -30,6 +30,8 @@ data class SettingsUiState(
     val foregroundLocationGranted: Boolean = false,
     val backgroundLocationGranted: Boolean = false,
     val notificationsEnabled: Boolean = false,
+    /** §3a's car link. Optional — denial costs accuracy, not detection. */
+    val bluetoothConnectGranted: Boolean = false,
     /** docs/04_ANDROID §4b: without it the drive capture cannot be raised in the background. */
     val batteryUnrestricted: Boolean = false,
     /**
@@ -118,6 +120,7 @@ class SettingsViewModel(
         backgroundLocationGranted =
             container.locationSessionController.hasBackgroundLocationPermission(),
         notificationsEnabled = container.hasNotificationPermission(),
+        bluetoothConnectGranted = container.hasBluetoothConnectPermission(),
         batteryUnrestricted = container.isIgnoringBatteryOptimizations(),
     )
 

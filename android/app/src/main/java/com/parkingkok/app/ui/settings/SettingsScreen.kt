@@ -1,5 +1,7 @@
 package com.parkingkok.app.ui.settings
 
+import android.Manifest
+import android.os.Build
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -58,6 +60,14 @@ fun SettingsScreen(
     onAnalyticsConsentChange: (Boolean) -> Unit,
     onOpenSystemSettings: () -> Unit,
     onOpenBatterySettings: () -> Unit,
+    /**
+     * Asks the OS for one runtime permission (docs/04_ANDROID §3).
+     *
+     * Rows that the system will still show a dialog for use this; the ones it will not —
+     * background location, and anything already permanently denied — fall through to
+     * [onOpenSystemSettings], which is where they can actually be changed.
+     */
+    onRequestPermission: (String) -> Unit,
     onDeleteHistory: () -> Unit,
     onOpenDiagnostics: () -> Unit,
     onBack: () -> Unit,
@@ -140,23 +150,46 @@ fun SettingsScreen(
         }
         item("notification") {
             ParkingkokCard(contentPadding = 0.dp) {
-                // Not a second permission row. Whether the OS grant exists is stated once,
-                // under 권한; this row is about the feature, which is not built yet
-                // (candidate notifications land with detection).
+                // This said 준비 중 until 2026-09-21, long after candidate notifications
+                // shipped. A settings screen that reports a built feature as unbuilt is how
+                // a user concludes the app is broken when it is working, so it now states
+                // the two things that actually decide whether a prompt arrives: the OS
+                // grant, and §9's rule that a `low` candidate is recorded and not announced.
                 ParkingkokRow(
                     title = stringResource(R.string.settings_notification_status),
-                    supporting = stringResource(R.string.settings_notification_pending_caption),
+                    supporting = stringResource(
+                        if (state.notificationsEnabled) {
+                            R.string.settings_notification_on_caption
+                        } else {
+                            R.string.settings_notification_off_caption
+                        },
+                    ),
                     iconRes = R.drawable.ic_bell,
-                    enabled = false,
                     trailing = {
                         StatusBadge(
-                            text = stringResource(R.string.coming_soon_badge),
+                            text = stringResource(
+                                if (state.notificationsEnabled) {
+                                    R.string.settings_permission_granted
+                                } else {
+                                    R.string.settings_permission_denied
+                                },
+                            ),
                             containerColor = MaterialTheme.colorScheme.surfaceVariant,
                             contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     },
+                    onClick = {
+                        if (state.notificationsEnabled || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                            onOpenSystemSettings()
+                        } else {
+                            onRequestPermission(Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                    },
                 )
             }
+        }
+        item("notification-footnote") {
+            SectionFootnote(stringResource(R.string.settings_notification_footnote))
         }
 
         // 3. 권한
@@ -170,9 +203,18 @@ fun SettingsScreen(
                     title = stringResource(R.string.settings_permission_location),
                     supporting = stringResource(R.string.settings_permission_location_caption),
                     granted = state.foregroundLocationGranted,
-                    onClick = onOpenSystemSettings,
+                    // Granted rows go to system Settings, because the only thing left to do
+                    // with one is take it away; ungranted rows ask, because until
+                    // 2026-09-21 nothing in this app ever did.
+                    onClick = {
+                        if (state.foregroundLocationGranted) onOpenSystemSettings()
+                        else onRequestPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+                    },
                 )
                 SettingsDivider()
+                // Background location is the one the OS will not prompt for from here:
+                // Android 11+ requires the user to choose 항상 허용 in system Settings, so
+                // this row goes straight there whichever state it is in.
                 PermissionRow(
                     iconRes = R.drawable.ic_map,
                     title = stringResource(R.string.settings_permission_background),
@@ -198,7 +240,10 @@ fun SettingsScreen(
                     title = stringResource(R.string.settings_permission_activity),
                     supporting = stringResource(R.string.settings_permission_activity_caption),
                     granted = state.activityRecognitionGranted,
-                    onClick = onOpenSystemSettings,
+                    onClick = {
+                        if (state.activityRecognitionGranted) onOpenSystemSettings()
+                        else onRequestPermission(Manifest.permission.ACTIVITY_RECOGNITION)
+                    },
                 )
                 SettingsDivider()
                 PermissionRow(
@@ -206,7 +251,30 @@ fun SettingsScreen(
                     title = stringResource(R.string.settings_permission_notification),
                     supporting = stringResource(R.string.settings_permission_notification_caption),
                     granted = state.notificationsEnabled,
-                    onClick = onOpenSystemSettings,
+                    onClick = {
+                        if (state.notificationsEnabled || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                            onOpenSystemSettings()
+                        } else {
+                            onRequestPermission(Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                    },
+                )
+                SettingsDivider()
+                // §3a's car link. Declared since the link landed and requested by nothing
+                // until 2026-09-21, which is the most likely reason no link event was ever
+                // observed on a real drive. Denial costs accuracy and nothing else.
+                PermissionRow(
+                    iconRes = R.drawable.ic_car,
+                    title = stringResource(R.string.settings_permission_bluetooth),
+                    supporting = stringResource(R.string.settings_permission_bluetooth_caption),
+                    granted = state.bluetoothConnectGranted,
+                    onClick = {
+                        if (state.bluetoothConnectGranted || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                            onOpenSystemSettings()
+                        } else {
+                            onRequestPermission(Manifest.permission.BLUETOOTH_CONNECT)
+                        }
+                    },
                 )
             }
         }
@@ -460,6 +528,7 @@ private fun SettingsPreview() {
             onAnalyticsConsentChange = {},
             onOpenSystemSettings = {},
             onOpenBatterySettings = {},
+            onRequestPermission = {},
             onDeleteHistory = {},
             onOpenDiagnostics = {},
             onBack = {},

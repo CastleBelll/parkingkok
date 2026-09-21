@@ -1,6 +1,8 @@
 package com.parkingkok.app.ui.navigation
 
 import android.content.Context
+import android.Manifest
+import android.os.Build
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
@@ -14,6 +16,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
@@ -437,6 +441,26 @@ private fun HistoryRoute(
     )
 }
 
+/**
+ * What `자동 주차 감지` actually needs, asked for together (docs/04_ANDROID §3).
+ *
+ * `BLUETOOTH_CONNECT` is in the list because §3a's car link cannot work without it and
+ * nothing was requesting it — the manifest comment claimed it was "requested only alongside
+ * Smart Detection" and that request did not exist. Denial is not a failure: the link is an
+ * optional vehicle signal and detection stands on motion and location alone.
+ *
+ * `ACCESS_BACKGROUND_LOCATION` is deliberately not here. Android 11+ will not show a dialog
+ * for it in the same request as the foreground one, so it stays the row that opens system
+ * Settings.
+ */
+private fun detectionPermissions(): Array<String> = buildList {
+    add(Manifest.permission.ACCESS_FINE_LOCATION)
+    add(Manifest.permission.ACCESS_COARSE_LOCATION)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) add(Manifest.permission.ACTIVITY_RECOGNITION)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) add(Manifest.permission.POST_NOTIFICATIONS)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) add(Manifest.permission.BLUETOOTH_CONNECT)
+}.toTypedArray()
+
 @Composable
 private fun SettingsRoute(
     container: AppContainer,
@@ -453,9 +477,30 @@ private fun SettingsRoute(
         onPauseOrDispose { }
     }
 
+    // docs/04_ANDROID §3. Until 2026-09-21 nothing in the shipped UI requested a runtime
+    // permission — the only launchers in the app were on the developer diagnostics screen,
+    // and turning on 자동 주차 감지 wrote a preference and asked for nothing. A user who
+    // installed the app could not grant what detection needs without going to system
+    // Settings by hand, and every device test so far had been granted over adb, which is
+    // what hid it.
+    val requestPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { viewModel.refresh() }
+
+    // Turning detection on asks for what detection needs, in one dialog. Background
+    // location is deliberately absent: Android 11+ refuses to prompt for it alongside the
+    // foreground one, so it stays a row that opens system Settings.
+    val enableDetection = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { viewModel.refresh() }
+
     SettingsScreen(
         state = state,
-        onDetectionEnabledChange = viewModel::onDetectionEnabledChange,
+        onRequestPermission = { permission -> requestPermission.launch(permission) },
+        onDetectionEnabledChange = { enabled ->
+            if (enabled) enableDetection.launch(detectionPermissions())
+            viewModel.onDetectionEnabledChange(enabled)
+        },
         onLockScreenNoticeChange = viewModel::onLockScreenNoticeChange,
         onAnalyticsConsentChange = viewModel::onAnalyticsConsentChange,
         onOpenBatterySettings = {

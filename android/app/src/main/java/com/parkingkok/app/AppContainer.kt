@@ -60,6 +60,9 @@ import com.parkingkok.app.trace.FileTraceStore
 import com.parkingkok.app.trace.NotificationLabelPromptDelivery
 import com.parkingkok.app.trace.TraceLabelPrompter
 import com.parkingkok.app.trace.TraceRecorder
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import android.os.PowerManager
 import com.parkingkok.app.widget.CompositeWidgetProjectionStore
 import com.parkingkok.app.widget.GlanceWidgetProjectionStore
@@ -441,6 +444,16 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
      */
     fun hasNotificationPermission(): Boolean =
         NotificationManagerCompat.from(appContext).areNotificationsEnabled()
+
+    /**
+     * §3a's car link needs this to read the connecting device's [android.bluetooth.BluetoothClass]
+     * and tell car audio from headphones. Below Android 12 the legacy `BLUETOOTH` permission
+     * is install-time, so there is nothing to check.
+     */
+    fun hasBluetoothConnectPermission(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+            ContextCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT) ==
+            PackageManager.PERMISSION_GRANTED
 
     private companion object {
         /**
