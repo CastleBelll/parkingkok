@@ -29,14 +29,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 
 /**
- * Whether motion plays, for everything below [com.parkingpin.app.theme.ParkingkokTheme].
+ * Whether motion plays, for everything below [com.parkingpin.app.theme.ParkingpinTheme].
  *
  * Read it rather than querying the system: one reader means one place that can get the
  * accessibility contract wrong, and a `@Preview` or a test can override it.
  */
 val LocalMotionEnabled = staticCompositionLocalOf { true }
 
-/** The screen entry timeline, 0..1. Provided by `ParkingkokScreen`; 1 means "already in". */
+/** The screen entry timeline, 0..1. Provided by `ParkingpinScreen`; 1 means "already in". */
 val LocalScreenEntry = staticCompositionLocalOf<State<Float>> { SettledEntry }
 
 /**
@@ -106,7 +106,7 @@ fun Modifier.pressScale(interactionSource: InteractionSource): Modifier {
 /**
  * The element's slice of the screen's entry animation: fade up into place, once.
  *
- * [index] is its position down the screen. `ParkingkokScreen` assigns it, so a screen does
+ * [index] is its position down the screen. `ParkingpinScreen` assigns it, so a screen does
  * not have to count its own children.
  *
  * The timeline is read inside the layer block, which means an arriving frame redraws

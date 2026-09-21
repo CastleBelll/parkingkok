@@ -10,7 +10,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.parkingpin.app.domain.detection.CandidateOutcome
-import com.parkingpin.app.theme.ParkingkokTheme
+import com.parkingpin.app.theme.ParkingpinTheme
 import com.parkingpin.app.ui.components.BrandHeader
 import com.parkingpin.app.ui.components.NotificationsAction
 import org.junit.Assert.assertEquals
@@ -32,7 +32,7 @@ class NotificationHistoryScreenTest {
         onOpenRecord: (String) -> Unit = {},
     ) {
         composeTestRule.setContent {
-            ParkingkokTheme {
+            ParkingpinTheme {
                 NotificationHistoryScreen(
                     state = state,
                     onOpenCandidate = onOpenCandidate,
@@ -138,7 +138,7 @@ class NotificationHistoryScreenTest {
         // Arrange — the dot is state, so the label carries it too (docs/01 §8). Rendering
         // both bells at once is what proves the difference is the flag and nothing else.
         composeTestRule.setContent {
-            ParkingkokTheme {
+            ParkingpinTheme {
                 BrandHeader(
                     actions = {
                         NotificationsAction(unanswered = false, onClick = {})

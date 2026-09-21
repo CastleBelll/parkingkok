@@ -15,7 +15,7 @@ import androidx.compose.ui.res.stringResource
 import com.parkingpin.app.R
 import com.parkingpin.app.domain.photo.PillarSuggestion
 import com.parkingpin.app.theme.spacing
-import com.parkingpin.app.ui.components.ParkingkokCard
+import com.parkingpin.app.ui.components.ParkingpinCard
 
 /**
  * What the pillar photo read, offered for the blanks in the record
@@ -37,7 +37,7 @@ fun PillarSuggestionCard(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    ParkingkokCard(modifier = modifier, contentPadding = MaterialTheme.spacing.large) {
+    ParkingpinCard(modifier = modifier, contentPadding = MaterialTheme.spacing.large) {
         Text(
             text = stringResource(R.string.pillar_suggestion_title),
             style = MaterialTheme.typography.titleMedium,

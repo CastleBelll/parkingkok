@@ -54,7 +54,7 @@ class AnalyticsBucketTest {
 
     /**
      * The two platforms have to agree on these strings or the numbers cannot be added up.
-     * `ios/ParkingKokTests/AnalyticsTests.swift` asserts the same values.
+     * `ios/ParkingPinTests/AnalyticsTests.swift` asserts the same values.
      */
     @Test
     fun `bucket wire values are the cross-platform ones`() {

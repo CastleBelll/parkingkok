@@ -211,7 +211,7 @@ class FileTraceStore(
     }
 
     companion object {
-        private const val TAG = "ParkingkokTrace"
+        private const val TAG = "ParkingpinTrace"
         private const val TEMPORARY_SUFFIX = ".tmp"
         private const val FILE_EXTENSION = ".json"
         private const val DIRECTORY_NAME = "detection/traces"

@@ -16,13 +16,13 @@ import com.parkingpin.app.detection.ParkingCandidateChannel
 import com.parkingpin.app.domain.detection.DetectionEvent
 import com.parkingpin.app.domain.detection.MotionDomainEvent
 import com.parkingpin.app.domain.detection.MotionEventKind
-import com.parkingpin.app.theme.ParkingkokTheme
-import com.parkingpin.app.ui.navigation.ParkingkokApp
+import com.parkingpin.app.theme.ParkingpinTheme
+import com.parkingpin.app.ui.navigation.ParkingpinApp
 import kotlinx.coroutines.launch
 
 /**
  * The single entry point. It owns the window and nothing else — the shell, its back stack
- * and every screen live in [ParkingkokApp] (docs/03_SYSTEM_ARCHITECTURE.md §5 keeps
+ * and every screen live in [ParkingpinApp] (docs/03_SYSTEM_ARCHITECTURE.md §5 keeps
  * business logic out of the Activity).
  */
 class MainActivity : ComponentActivity() {
@@ -41,7 +41,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // Before super.onCreate, which is what the library requires: it swaps the splash
-        // theme out for Theme.Parkingkok, so the activity is never drawn wearing the
+        // theme out for Theme.Parkingpin, so the activity is never drawn wearing the
         // splash's white window.
         installSplashScreen()
         super.onCreate(savedInstanceState)
@@ -50,10 +50,10 @@ class MainActivity : ComponentActivity() {
         // The fallback only fires under a harness whose Application is not ours. It is
         // safe because `preferencesDataStore` memoizes one DataStore per process, so a
         // second container still reads and writes the same store.
-        val container = ParkingkokApplication.containerOf(this) ?: AppContainer(this)
+        val container = ParkingpinApplication.containerOf(this) ?: AppContainer(this)
         setContent {
-            ParkingkokTheme {
-                ParkingkokApp(
+            ParkingpinTheme {
+                ParkingpinApp(
                     container = container,
                     candidateId = pendingCandidateId,
                     onCandidateOpened = { pendingCandidateId = null },

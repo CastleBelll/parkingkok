@@ -15,7 +15,7 @@ import androidx.compose.ui.unit.dp
  * padding inside a primary card; both are named after the job so the mockup density in
  * `design-references/` can be retuned in one place.
  */
-data class ParkingkokSpacing(
+data class ParkingpinSpacing(
     val hairline: Dp = 2.dp,
     val tiny: Dp = 4.dp,
     val small: Dp = 8.dp,
@@ -31,4 +31,4 @@ data class ParkingkokSpacing(
     val touchTarget: Dp = 48.dp,
 )
 
-internal val LocalParkingkokSpacing = staticCompositionLocalOf { ParkingkokSpacing() }
+internal val LocalParkingpinSpacing = staticCompositionLocalOf { ParkingpinSpacing() }

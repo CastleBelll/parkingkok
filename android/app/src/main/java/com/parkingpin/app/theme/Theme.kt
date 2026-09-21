@@ -29,7 +29,7 @@ import com.parkingpin.app.ui.motion.rememberMotionEnabled
  * - danger       -> error
  *
  * The two schemes are `internal` rather than private because the Glance widget renders
- * outside `MaterialTheme` and must read the same tokens — see `ParkingkokGlanceColors`.
+ * outside `MaterialTheme` and must read the same tokens — see `ParkingpinGlanceColors`.
  * A second palette declared for the widget is exactly the scattering §2 forbids.
  */
 internal val LightColors = lightColorScheme(
@@ -97,13 +97,13 @@ internal val DarkColors = darkColorScheme(
 )
 
 @Composable
-fun ParkingkokTheme(
+fun ParkingpinTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit,
 ) {
     CompositionLocalProvider(
-        LocalParkingkokSpacing provides ParkingkokSpacing(),
-        LocalParkingkokSurfaces provides ParkingkokSurfaces(
+        LocalParkingpinSpacing provides ParkingpinSpacing(),
+        LocalParkingpinSurfaces provides ParkingpinSurfaces(
             border = if (darkTheme) BrandPalette.DarkDivider else BrandPalette.LightDivider,
         ),
         // Read once, here, so that every animation below this point obeys the same answer
@@ -112,17 +112,17 @@ fun ParkingkokTheme(
     ) {
         MaterialTheme(
             colorScheme = if (darkTheme) DarkColors else LightColors,
-            typography = ParkingkokTypography,
-            shapes = ParkingkokShapes,
+            typography = ParkingpinTypography,
+            shapes = ParkingpinShapes,
             content = content,
         )
     }
 }
 
 /** Spacing tokens, reached the same way as `MaterialTheme.colorScheme`. */
-val MaterialTheme.spacing: ParkingkokSpacing
-    @Composable @ReadOnlyComposable get() = LocalParkingkokSpacing.current
+val MaterialTheme.spacing: ParkingpinSpacing
+    @Composable @ReadOnlyComposable get() = LocalParkingpinSpacing.current
 
 /** Surface tokens, reached the same way as `MaterialTheme.colorScheme`. */
-val MaterialTheme.surfaces: ParkingkokSurfaces
-    @Composable @ReadOnlyComposable get() = LocalParkingkokSurfaces.current
+val MaterialTheme.surfaces: ParkingpinSurfaces
+    @Composable @ReadOnlyComposable get() = LocalParkingpinSurfaces.current

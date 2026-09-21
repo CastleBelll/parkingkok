@@ -1,6 +1,6 @@
 # iOS — 주차핀
 
-`ParkingKok.xcodeproj` is **generated**, not committed. `ios/project.yml` is the
+`ParkingPin.xcodeproj` is **generated**, not committed. `ios/project.yml` is the
 source of truth; the `.pbxproj` is a build artifact (see ADR note in the PR for T-1.3).
 
 ## Toolchain
@@ -22,11 +22,11 @@ silently drops the platform/product setting presets.
 ```sh
 cd ios && xcodegen generate
 
-xcodebuild -project ParkingKok.xcodeproj -scheme ParkingKok \
+xcodebuild -project ParkingPin.xcodeproj -scheme ParkingPin \
   -configuration DEV \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build
 
-xcodebuild -project ParkingKok.xcodeproj -scheme ParkingKok \
+xcodebuild -project ParkingPin.xcodeproj -scheme ParkingPin \
   -configuration DEV \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
 ```
@@ -37,11 +37,11 @@ xcodebuild -project ParkingKok.xcodeproj -scheme ParkingKok \
 committed (docs/18_CI_CD_AUTOMATED_RELEASE.md keeps it as `APPLE_TEAM_ID`). Pass it in:
 
 ```sh
-xcodebuild -project ParkingKok.xcodeproj -scheme ParkingKok \
+xcodebuild -project ParkingPin.xcodeproj -scheme ParkingPin \
   -configuration DEV -destination 'id=<device-udid>' \
   PK_DEVELOPMENT_TEAM=<team-id> -allowProvisioningUpdates build
 
-xcrun devicectl device install app --device <device-udid> <path>/ParkingKok.app
+xcrun devicectl device install app --device <device-udid> <path>/ParkingPin.app
 xcrun devicectl device process launch --device <device-udid> com.parkingkok.app.dev
 ```
 
@@ -316,11 +316,11 @@ Neither half of M2 is fully observable in the simulator: the simulator has no ca
 GPU. Both need the device.
 
 ```sh
-xcodebuild -project ParkingKok.xcodeproj -scheme ParkingKok \
+xcodebuild -project ParkingPin.xcodeproj -scheme ParkingPin \
   -configuration DEV -destination 'id=<device-udid>' \
   PK_DEVELOPMENT_TEAM=<team-id> -allowProvisioningUpdates build
 
-xcrun devicectl device install app --device <device-udid> <path>/ParkingKok.app
+xcrun devicectl device install app --device <device-udid> <path>/ParkingPin.app
 xcrun devicectl device process launch --device <device-udid> --terminate-existing \
   --environment-variables '{"PK_SEED_SAMPLE_PARKING":"1","PK_INITIAL_ROUTE":"detail"}' \
   com.parkingkok.app.dev

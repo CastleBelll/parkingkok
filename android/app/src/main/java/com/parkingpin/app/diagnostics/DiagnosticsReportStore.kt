@@ -55,7 +55,7 @@ class FileDiagnosticsReportStore(private val file: File) : DiagnosticsReportStor
     }
 
     companion object {
-        private const val TAG = "ParkingkokDiagnostics"
+        private const val TAG = "ParkingpinDiagnostics"
         private const val TEMPORARY_SUFFIX = ".tmp"
         private const val DIRECTORY_NAME = "detection"
         private const val FILE_NAME = "diagnostics.json"

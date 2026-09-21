@@ -51,14 +51,14 @@ import com.parkingpin.app.domain.parking.ParkingLocation
 import com.parkingpin.app.domain.parking.ParkingRecord
 import com.parkingpin.app.domain.parking.ParkingSource
 import com.parkingpin.app.domain.photo.PhotoSource
-import com.parkingpin.app.theme.ParkingkokTheme
+import com.parkingpin.app.theme.ParkingpinTheme
 import com.parkingpin.app.theme.spacing
 import com.parkingpin.app.ui.UiNotice
 import com.parkingpin.app.ui.components.DetailHeader
 import com.parkingpin.app.ui.components.IconChip
 import com.parkingpin.app.ui.components.LocationPreviewCard
-import com.parkingpin.app.ui.components.ParkingkokCard
-import com.parkingpin.app.ui.components.ParkingkokScreen
+import com.parkingpin.app.ui.components.ParkingpinCard
+import com.parkingpin.app.ui.components.ParkingpinScreen
 import com.parkingpin.app.ui.components.PrimaryCtaButton
 import com.parkingpin.app.ui.motion.pressScale
 import com.parkingpin.app.ui.format.dayText
@@ -102,16 +102,16 @@ fun ParkingDetailScreen(
     var pickingPhoto by remember { mutableStateOf(false) }
     var viewingPhoto by remember { mutableStateOf(false) }
 
-    ParkingkokScreen(
+    ParkingpinScreen(
         modifier = modifier,
         header = { DetailHeader(title = stringResource(R.string.detail_title), onBack = onBack) },
     ) {
-        if (!state.loaded) return@ParkingkokScreen
+        if (!state.loaded) return@ParkingpinScreen
 
         val record = state.record
         if (record == null) {
             item("gone") {
-                ParkingkokCard {
+                ParkingpinCard {
                     Text(
                         text = stringResource(R.string.detail_gone),
                         style = MaterialTheme.typography.titleMedium,
@@ -119,7 +119,7 @@ fun ParkingDetailScreen(
                     )
                 }
             }
-            return@ParkingkokScreen
+            return@ParkingpinScreen
         }
 
         item("map") { LocationBlock(record) }
@@ -225,7 +225,7 @@ fun ParkingDetailScreen(
 private fun LocationBlock(record: ParkingRecord) {
     val location = record.location
     if (location == null) {
-        ParkingkokCard {
+        ParkingpinCard {
             Text(
                 text = stringResource(R.string.detail_map_none_title),
                 style = MaterialTheme.typography.titleMedium,
@@ -259,7 +259,7 @@ private fun LocationBlock(record: ParkingRecord) {
  */
 @Composable
 private fun SummaryCard(record: ParkingRecord, nowMillis: Long) {
-    ParkingkokCard(contentPadding = 0.dp) {
+    ParkingpinCard(contentPadding = 0.dp) {
         Column(Modifier.padding(MaterialTheme.spacing.card)) {
             Text(
                 text = stringResource(R.string.home_active_title),
@@ -458,7 +458,7 @@ private fun PhotoCard(
     onOpen: () -> Unit,
     onReplace: () -> Unit,
 ) {
-    ParkingkokCard(contentPadding = MaterialTheme.spacing.medium) {
+    ParkingpinCard(contentPadding = MaterialTheme.spacing.medium) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -572,7 +572,7 @@ private fun PhotoViewer(
 /** One sentence about what just happened, dismissed by the user. */
 @Composable
 private fun NoticeCard(notice: UiNotice, onDismiss: () -> Unit) {
-    ParkingkokCard(contentPadding = MaterialTheme.spacing.large) {
+    ParkingpinCard(contentPadding = MaterialTheme.spacing.large) {
         Text(
             text = stringResource(
                 when (notice) {
@@ -678,7 +678,7 @@ private val PHOTO_CARD_HEIGHT = 180.dp
 @Preview(name = "Detail", showBackground = true)
 @Composable
 private fun ParkingDetailPreview() {
-    ParkingkokTheme {
+    ParkingpinTheme {
         ParkingDetailScreen(
             state = ParkingDetailUiState(
                 record = ParkingRecord(

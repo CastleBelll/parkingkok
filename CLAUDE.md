@@ -110,10 +110,10 @@ in its own URL, so it was not purely internal.
 **That window is now closed.** Once a build reaches a store the package name and bundle ID
 are permanent, and a PR that changes either is wrong.
 
-Swift type and module names, Kotlin class names and the `ParkingKok`/`Parkingkok` prefixes
-on them were deliberately **left alone**. None of them reaches a user or a store listing,
-and renaming them would have been churn across several hundred files for no outcome. A file
-called `ParkingkokApp.kt` inside `com.parkingpin.app` is expected, not a leftover.
+Internal names went with them, the same day and for consistency rather than necessity: the
+Swift module and Xcode targets are `ParkingPin`, the directories are `ios/ParkingPin*`, and
+the Kotlin `Parkingkok*` type prefix is `Parkingpin*`. Nothing named `ParkingKok` or
+`parkingkok` remains outside this paragraph and the git history.
 
 ## Visual Reference Rule
 When building or revising UI, consult the packaged design screenshots in `design-references/`

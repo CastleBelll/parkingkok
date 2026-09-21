@@ -5,7 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import com.google.android.gms.location.ActivityTransitionResult
-import com.parkingpin.app.ParkingkokApplication
+import com.parkingpin.app.ParkingpinApplication
 import kotlinx.coroutines.launch
 
 /**
@@ -23,7 +23,7 @@ class ActivityTransitionReceiver : BroadcastReceiver() {
         if (!ActivityTransitionResult.hasResult(intent)) return
         val result = ActivityTransitionResult.extractResult(intent) ?: return
 
-        val container = ParkingkokApplication.containerOf(context) ?: return
+        val container = ParkingpinApplication.containerOf(context) ?: return
         val clock = container.clock
         val nowElapsedNanos = clock.elapsedRealtimeNanos()
         val nowEpochMillis = clock.nowEpochMillis()
@@ -59,6 +59,6 @@ class ActivityTransitionReceiver : BroadcastReceiver() {
 
     companion object {
         const val ACTION_TRANSITION = "com.parkingpin.app.action.ACTIVITY_TRANSITION"
-        private const val TAG = "ParkingkokTransition"
+        private const val TAG = "ParkingpinTransition"
     }
 }

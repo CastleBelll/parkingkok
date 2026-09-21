@@ -118,7 +118,7 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
     /**
      * docs/07 "동의", the half the settings toggle alone cannot cover: Firebase collects
      * `session_start` and friends on its own, behind [analyticsRecorder]'s back.
-     * [ParkingkokApplication] runs this for the life of the process.
+     * [ParkingpinApplication] runs this for the life of the process.
      */
     val analyticsCollectionGate: AnalyticsCollectionGate by lazy {
         AnalyticsCollectionGate(
@@ -203,7 +203,7 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
     /**
      * The orphan sweep (FR-007 photos are sensitive local data, docs/06 §1).
      *
-     * Exposed rather than run from [ParkingkokApplication] because it is the first thing
+     * Exposed rather than run from [ParkingpinApplication] because it is the first thing
      * that would open the database on a process a broadcast started, which is the cost the
      * lazy database above exists to avoid. The shell runs it once, when there is a screen.
      */
@@ -284,7 +284,7 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
     /**
      * Brings every placed widget up to date and, the first time, keeps it that way.
      *
-     * Called from [ParkingkokApplication] on process start and from the widget receivers
+     * Called from [ParkingpinApplication] on process start and from the widget receivers
      * when the host asks for an update — a newly placed widget has an empty state file,
      * and a reboot delivers `onUpdate` before anything else runs.
      *

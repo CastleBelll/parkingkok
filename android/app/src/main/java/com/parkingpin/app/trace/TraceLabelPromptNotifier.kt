@@ -207,6 +207,6 @@ class NotificationLabelPromptDelivery(context: Context) : LabelPromptDelivering 
     }
 
     private companion object {
-        const val TAG = "ParkingkokTrace"
+        const val TAG = "ParkingpinTrace"
     }
 }

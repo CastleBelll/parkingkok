@@ -30,11 +30,11 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.parkingpin.app.R
-import com.parkingpin.app.theme.ParkingkokTheme
+import com.parkingpin.app.theme.ParkingpinTheme
 import com.parkingpin.app.theme.spacing
 import com.parkingpin.app.ui.components.DetailHeader
-import com.parkingpin.app.ui.components.ParkingkokCard
-import com.parkingpin.app.ui.components.ParkingkokScreen
+import com.parkingpin.app.ui.components.ParkingpinCard
+import com.parkingpin.app.ui.components.ParkingpinScreen
 import com.parkingpin.app.ui.motion.pressScale
 
 /**
@@ -66,7 +66,7 @@ fun ManualParkingScreen(
         if (state.pillarSuggestionOffered) floorFocus.requestFocus()
     }
 
-    ParkingkokScreen(
+    ParkingpinScreen(
         modifier = modifier,
         header = { DetailHeader(title = stringResource(R.string.manual_title), onBack = onBack) },
     ) {
@@ -79,7 +79,7 @@ fun ManualParkingScreen(
         }
 
         item("form") {
-            ParkingkokCard {
+            ParkingpinCard {
                 Field(
                     value = state.floorRaw,
                     onValueChange = onFloorChange,
@@ -115,7 +115,7 @@ fun ManualParkingScreen(
 
         if (state.alreadyActive) {
             item("already-active") {
-                ParkingkokCard {
+                ParkingpinCard {
                     Text(
                         text = stringResource(R.string.manual_already_active),
                         style = MaterialTheme.typography.bodyMedium,
@@ -197,7 +197,7 @@ private fun Field(
 @Preview(name = "Manual entry", showBackground = true)
 @Composable
 private fun ManualParkingPreview() {
-    ParkingkokTheme {
+    ParkingpinTheme {
         ManualParkingScreen(
             state = ManualParkingUiState(floorRaw = "B3", zone = "A구역"),
             onFloorChange = {},

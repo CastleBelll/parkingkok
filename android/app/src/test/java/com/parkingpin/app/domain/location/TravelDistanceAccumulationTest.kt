@@ -17,7 +17,7 @@ import org.junit.Test
  * are that rule's four moving parts: refuse and keep the anchor, clear and advance it,
  * reach the floor eventually on slow travel, and never let a jump through.
  *
- * `ParkingKokTests/DrivingDistanceAccumulationTests` asserts the same numbers on iOS.
+ * `ParkingPinTests/DrivingDistanceAccumulationTests` asserts the same numbers on iOS.
  */
 class TravelDistanceAccumulationTest {
 

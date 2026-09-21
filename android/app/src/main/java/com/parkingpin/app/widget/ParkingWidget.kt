@@ -50,7 +50,7 @@ internal class ParkingWidget : GlanceAppWidget() {
             val projection = ParkingWidgetState.decode(
                 currentState(ParkingWidgetState.ProjectionKey),
             )
-            GlanceTheme(colors = ParkingkokGlanceColors) {
+            GlanceTheme(colors = ParkingpinGlanceColors) {
                 // Read at composition rather than carried in the projection: the snapshot
                 // stores when the session started, so the elapsed line is recomputed on
                 // every redraw instead of going stale the moment it is written.

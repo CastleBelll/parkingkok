@@ -39,7 +39,7 @@ class DetectionRegistrationCoordinatorTest {
         // leaves the Play services subscription alive, so re-registering would be waste.
         coordinator.setDetectionEnabled(true)
 
-        // Act — what ParkingkokApplication.onCreate does on the next process start.
+        // Act — what ParkingpinApplication.onCreate does on the next process start.
         val status = coordinator.reconcile()
 
         // Assert

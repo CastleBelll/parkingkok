@@ -12,7 +12,7 @@ import org.junit.Test
  * being unreachable.
  *
  * The key strings and bucket wire values asserted here are the cross-platform contract —
- * `ios/ParkingKokTests/AnalyticsTests.swift` asserts the same ones. If the two drift, the
+ * `ios/ParkingPinTests/AnalyticsTests.swift` asserts the same ones. If the two drift, the
  * platforms' numbers stop being addable (docs/17 §8).
  */
 class AnalyticsEventContractTest {

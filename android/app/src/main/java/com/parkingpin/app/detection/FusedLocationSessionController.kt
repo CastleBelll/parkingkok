@@ -389,6 +389,6 @@ class FusedLocationSessionController(
     }
 
     private companion object {
-        const val TAG = "ParkingkokLocation"
+        const val TAG = "ParkingpinLocation"
     }
 }

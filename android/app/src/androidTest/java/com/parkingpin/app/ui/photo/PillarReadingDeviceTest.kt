@@ -14,7 +14,7 @@ import com.parkingpin.app.domain.photo.PhotoSource
 import com.parkingpin.app.data.photo.MlKitPillarTextReader
 import com.parkingpin.app.domain.photo.PillarSuggestion
 import com.parkingpin.app.domain.photo.ReadPillarSuggestionUseCase
-import com.parkingpin.app.theme.ParkingkokTheme
+import com.parkingpin.app.theme.ParkingpinTheme
 import com.parkingpin.app.ui.manual.ManualParkingScreen
 import com.parkingpin.app.ui.manual.ManualParkingUiState
 import kotlinx.coroutines.runBlocking
@@ -72,7 +72,7 @@ class PillarReadingDeviceTest {
     /** Renders the form as `사진으로 입력` leaves it, and writes it out as a PNG. */
     private fun capture(suggestion: PillarSuggestion, darkTheme: Boolean, name: String) {
         composeTestRule.setContent {
-            ParkingkokTheme(darkTheme = darkTheme) {
+            ParkingpinTheme(darkTheme = darkTheme) {
                 ManualParkingScreen(
                     state = ManualParkingUiState(
                         floorRaw = suggestion.floorRaw.orEmpty(),

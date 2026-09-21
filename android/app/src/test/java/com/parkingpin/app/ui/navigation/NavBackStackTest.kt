@@ -19,7 +19,7 @@ class NavBackStackTest {
     fun `starts at home with nowhere to go back to`() {
         val stack = NavBackStack.rootedAtHome()
 
-        assertEquals(ParkingkokRoute.Home, stack.current)
+        assertEquals(ParkingpinRoute.Home, stack.current)
         assertFalse(stack.canGoBack)
     }
 
@@ -27,65 +27,65 @@ class NavBackStackTest {
     fun `back at the root stays at the root`() {
         val stack = NavBackStack.rootedAtHome().pop()
 
-        assertEquals(ParkingkokRoute.Home, stack.current)
+        assertEquals(ParkingpinRoute.Home, stack.current)
     }
 
     @Test
     fun `push then pop returns where it started`() {
-        val stack = NavBackStack.rootedAtHome().push(ParkingkokRoute.Settings)
+        val stack = NavBackStack.rootedAtHome().push(ParkingpinRoute.Settings)
 
-        assertEquals(ParkingkokRoute.Settings, stack.current)
+        assertEquals(ParkingpinRoute.Settings, stack.current)
         assertTrue(stack.canGoBack)
-        assertEquals(ParkingkokRoute.Home, stack.pop().current)
+        assertEquals(ParkingpinRoute.Home, stack.pop().current)
     }
 
     @Test
     fun `a double tap does not stack the same screen twice`() {
         val stack = NavBackStack.rootedAtHome()
-            .push(ParkingkokRoute.History)
-            .push(ParkingkokRoute.History)
+            .push(ParkingpinRoute.History)
+            .push(ParkingpinRoute.History)
 
         assertEquals(2, stack.entries.size)
-        assertEquals(ParkingkokRoute.Home, stack.pop().current)
+        assertEquals(ParkingpinRoute.Home, stack.pop().current)
     }
 
     @Test
     fun `two different records are two different screens`() {
         val stack = NavBackStack.rootedAtHome()
-            .push(ParkingkokRoute.Detail("a"))
-            .push(ParkingkokRoute.Detail("b"))
+            .push(ParkingpinRoute.Detail("a"))
+            .push(ParkingpinRoute.Detail("b"))
 
         assertEquals(3, stack.entries.size)
-        assertEquals(ParkingkokRoute.Detail("a"), stack.pop().current)
+        assertEquals(ParkingpinRoute.Detail("a"), stack.pop().current)
     }
 
     @Test
     fun `replaceTop swaps the screen without deepening the stack`() {
         val stack = NavBackStack.rootedAtHome()
-            .push(ParkingkokRoute.ManualEntry())
-            .replaceTop(ParkingkokRoute.History)
+            .push(ParkingpinRoute.ManualEntry())
+            .replaceTop(ParkingpinRoute.History)
 
         assertEquals(2, stack.entries.size)
-        assertEquals(ParkingkokRoute.History, stack.current)
-        assertEquals(ParkingkokRoute.Home, stack.pop().current)
+        assertEquals(ParkingpinRoute.History, stack.current)
+        assertEquals(ParkingpinRoute.Home, stack.pop().current)
     }
 
     @Test
     fun `popToRoot unwinds everything`() {
         val stack = NavBackStack.rootedAtHome()
-            .push(ParkingkokRoute.Settings)
-            .push(ParkingkokRoute.Diagnostics)
+            .push(ParkingpinRoute.Settings)
+            .push(ParkingpinRoute.Diagnostics)
             .popToRoot()
 
-        assertEquals(ParkingkokRoute.Home, stack.current)
+        assertEquals(ParkingpinRoute.Home, stack.current)
         assertFalse(stack.canGoBack)
     }
 
     @Test
     fun `a stack survives being saved and restored`() {
         val original = NavBackStack.rootedAtHome()
-            .push(ParkingkokRoute.History)
-            .push(ParkingkokRoute.Detail("record-42"))
+            .push(ParkingpinRoute.History)
+            .push(ParkingpinRoute.Detail("record-42"))
 
         val restored = NavBackStack.decode(original.encode())
 
@@ -95,18 +95,18 @@ class NavBackStackTest {
     @Test
     fun `every route survives the round trip`() {
         val routes = listOf(
-            ParkingkokRoute.Home,
-            ParkingkokRoute.ManualEntry(),
-            ParkingkokRoute.ManualEntry("candidate-with-dashes-1234"),
-            ParkingkokRoute.History,
-            ParkingkokRoute.Settings,
-            ParkingkokRoute.Diagnostics,
-            ParkingkokRoute.Detail("id-with-dashes-1234"),
-            ParkingkokRoute.Confirm("candidate-with-dashes-1234"),
+            ParkingpinRoute.Home,
+            ParkingpinRoute.ManualEntry(),
+            ParkingpinRoute.ManualEntry("candidate-with-dashes-1234"),
+            ParkingpinRoute.History,
+            ParkingpinRoute.Settings,
+            ParkingpinRoute.Diagnostics,
+            ParkingpinRoute.Detail("id-with-dashes-1234"),
+            ParkingpinRoute.Confirm("candidate-with-dashes-1234"),
         )
 
         routes.forEach { route ->
-            assertEquals(route, ParkingkokRouteCodec.decode(ParkingkokRouteCodec.encode(route)))
+            assertEquals(route, ParkingpinRouteCodec.decode(ParkingpinRouteCodec.encode(route)))
         }
     }
 
@@ -116,7 +116,7 @@ class NavBackStackTest {
         val restored = NavBackStack.decode(listOf("home", "gallery", "detail:a"))
 
         assertEquals(
-            listOf(ParkingkokRoute.Home, ParkingkokRoute.Detail("a")),
+            listOf(ParkingpinRoute.Home, ParkingpinRoute.Detail("a")),
             restored.entries,
         )
     }
@@ -132,7 +132,7 @@ class NavBackStackTest {
 
     @Test
     fun `a detail token with no id is not a destination`() {
-        assertEquals(null, ParkingkokRouteCodec.decode("detail:"))
+        assertEquals(null, ParkingpinRouteCodec.decode("detail:"))
     }
 
     @Test
@@ -140,20 +140,20 @@ class NavBackStackTest {
         // docs/05 §10a: the tap "opens the confirmation screen for that candidateId".
         val stack = NavBackStack.openingCandidate("candidate-1")
 
-        assertEquals(ParkingkokRoute.Confirm("candidate-1"), stack.current)
+        assertEquals(ParkingpinRoute.Confirm("candidate-1"), stack.current)
         // Back leaves the guess unanswered and shows the app, rather than closing it.
         assertTrue(stack.canGoBack)
-        assertEquals(ParkingkokRoute.Home, stack.pop().current)
+        assertEquals(ParkingpinRoute.Home, stack.pop().current)
     }
 
     @Test
     fun `a manual form opened to confirm a candidate is a different screen from a blank one`() {
         // They share a composable but not an identity: encoding one must not restore the
         // other, or a process death would turn a confirmation into a fresh manual save.
-        assertNotEquals(ParkingkokRoute.ManualEntry(), ParkingkokRoute.ManualEntry("candidate-1"))
+        assertNotEquals(ParkingpinRoute.ManualEntry(), ParkingpinRoute.ManualEntry("candidate-1"))
         assertEquals(
-            ParkingkokRoute.ManualEntry("candidate-1"),
-            ParkingkokRouteCodec.decode(ParkingkokRouteCodec.encode(ParkingkokRoute.ManualEntry("candidate-1"))),
+            ParkingpinRoute.ManualEntry("candidate-1"),
+            ParkingpinRouteCodec.decode(ParkingpinRouteCodec.encode(ParkingpinRoute.ManualEntry("candidate-1"))),
         )
     }
 }

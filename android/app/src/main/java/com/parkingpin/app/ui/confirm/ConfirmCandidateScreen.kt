@@ -27,10 +27,10 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.parkingpin.app.R
 import com.parkingpin.app.domain.detection.ParkingCandidateNotice
-import com.parkingpin.app.theme.ParkingkokTheme
+import com.parkingpin.app.theme.ParkingpinTheme
 import com.parkingpin.app.theme.spacing
 import com.parkingpin.app.ui.components.DetailHeader
-import com.parkingpin.app.ui.components.ParkingkokScreen
+import com.parkingpin.app.ui.components.ParkingpinScreen
 import com.parkingpin.app.ui.components.StaticLocationArtwork
 import com.parkingpin.app.ui.format.timeOfDayText
 
@@ -63,14 +63,14 @@ fun ConfirmCandidateScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    ParkingkokScreen(
+    ParkingpinScreen(
         modifier = modifier,
         // §7a "Not a modal": a pushed screen with an ordinary back. Backing out leaves the
         // candidate pending until it expires. The header carries no title, because the
         // screen's first line is the title.
         header = { DetailHeader(title = "", onBack = onBack) },
     ) {
-        if (!state.loaded || state.gone) return@ParkingkokScreen
+        if (!state.loaded || state.gone) return@ParkingpinScreen
 
         item("question") {
             Text(
@@ -283,7 +283,7 @@ private val CHOICE_HEIGHT = 56.dp
 @Preview(name = "Confirm — with a fix", showBackground = true)
 @Composable
 private fun ConfirmCandidatePreview() {
-    ParkingkokTheme {
+    ParkingpinTheme {
         ConfirmCandidateScreen(
             state = ConfirmCandidateUiState(
                 loaded = true,
@@ -301,7 +301,7 @@ private fun ConfirmCandidatePreview() {
 @Preview(name = "Confirm — no fix", showBackground = true)
 @Composable
 private fun ConfirmCandidateNoLocationPreview() {
-    ParkingkokTheme {
+    ParkingpinTheme {
         ConfirmCandidateScreen(
             state = ConfirmCandidateUiState(loaded = true, parkedAtMillis = 1_700_000_000_000L),
             onManualEntry = {},

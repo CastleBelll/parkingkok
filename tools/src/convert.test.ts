@@ -121,7 +121,7 @@ describe('convertTraceToJson', () => {
    * The fixture is copied off the device and committed, so a coordinate reaching it would
    * walk parking locations straight past docs/00_CORE_RULES.md Privacy. Checked against the
    * **encoded bytes** rather than the field list, same reasoning and same technique as
-   * `ios/ParkingKokTests/DiagnosticsReportTests.swift` and the Android `DiagnosticsReportTest`:
+   * `ios/ParkingPinTests/DiagnosticsReportTests.swift` and the Android `DiagnosticsReportTest`:
    * a field-by-field check only covers the fields somebody remembered to look at.
    */
   it('no coordinate survives into the encoded fixture, even when the trace object has one', () => {

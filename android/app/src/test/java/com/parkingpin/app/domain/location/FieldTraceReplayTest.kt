@@ -12,7 +12,7 @@ import org.junit.Test
  * The trace format is the platform-neutral contract in
  * docs/05_CROSS_PLATFORM_DOMAIN_CONTRACT.md §9, so a recording made on one platform is a
  * legitimate input to the other's engine. That is the whole point of §7's parity claim:
- * the same fixes have to produce the same verdict. `ParkingKokTests/FieldTraceReplayTests`
+ * the same fixes have to produce the same verdict. `ParkingPinTests/FieldTraceReplayTests`
  * replays these exact runs and reaches 3 moving samples on the subway commute and 0 on the
  * walking control; anything else here is a parity defect, not a tuning difference.
  *

@@ -4,7 +4,7 @@
  * Traces and fixtures are copied off the device by design (contract §9), so a latitude
  * reaching one turns it into a record of where someone parks — docs/00_CORE_RULES.md
  * Privacy. Same reasoning and same technique as the existing diagnostics export tests
- * (`ios/ParkingKokTests/DiagnosticsReportTests.swift`,
+ * (`ios/ParkingPinTests/DiagnosticsReportTests.swift`,
  * `android/.../DiagnosticsReportTest.kt`): inspect the encoded bytes, because a field list
  * only tells you about the fields you remembered to look at.
  *

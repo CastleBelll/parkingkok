@@ -10,7 +10,7 @@ import androidx.compose.ui.graphics.Color
  * in feature code" — so screens read colours through `MaterialTheme.colorScheme` and
  * never construct a [Color]. The compensating tokens below (`*Container`, `*Muted`) are
  * derived shades the mockups use for icon chips and filled rows; they are named after the
- * Material role they fill so the mapping in [ParkingkokTheme] stays readable.
+ * Material role they fill so the mapping in [ParkingpinTheme] stays readable.
  */
 internal object BrandPalette {
 

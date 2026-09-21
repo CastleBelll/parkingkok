@@ -5,7 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import androidx.core.app.NotificationManagerCompat
-import com.parkingpin.app.ParkingkokApplication
+import com.parkingpin.app.ParkingpinApplication
 import com.parkingpin.app.domain.detection.DetectionEvent
 import kotlinx.coroutines.launch
 
@@ -35,7 +35,7 @@ class ParkingCandidateReceiver : BroadcastReceiver() {
         NotificationManagerCompat.from(context)
             .cancel(ParkingCandidateChannel.notificationId(candidateId))
 
-        val container = ParkingkokApplication.containerOf(context)
+        val container = ParkingpinApplication.containerOf(context)
         if (container == null) {
             // The store was never reached, so the candidate survives to its expiry and the
             // event is lost. Logged rather than swallowed because §10a calls rejection the

@@ -4,7 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
-import com.parkingpin.app.ParkingkokApplication
+import com.parkingpin.app.ParkingpinApplication
 import kotlinx.coroutines.launch
 
 /**
@@ -24,7 +24,7 @@ class RegistrationRecoveryReceiver : BroadcastReceiver() {
         val action = intent.action
         if (action != Intent.ACTION_BOOT_COMPLETED && action != Intent.ACTION_MY_PACKAGE_REPLACED) return
 
-        val container = ParkingkokApplication.containerOf(context) ?: return
+        val container = ParkingpinApplication.containerOf(context) ?: return
         Log.i(TAG, "recovery triggered by $action")
 
         val pendingResult = goAsync()
@@ -40,6 +40,6 @@ class RegistrationRecoveryReceiver : BroadcastReceiver() {
     }
 
     private companion object {
-        const val TAG = "ParkingkokRegistration"
+        const val TAG = "ParkingpinRegistration"
     }
 }

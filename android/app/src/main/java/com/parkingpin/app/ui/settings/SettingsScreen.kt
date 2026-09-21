@@ -31,12 +31,12 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.parkingpin.app.R
-import com.parkingpin.app.theme.ParkingkokTheme
+import com.parkingpin.app.theme.ParkingpinTheme
 import com.parkingpin.app.theme.spacing
 import com.parkingpin.app.ui.components.DetailHeader
-import com.parkingpin.app.ui.components.ParkingkokCard
-import com.parkingpin.app.ui.components.ParkingkokRow
-import com.parkingpin.app.ui.components.ParkingkokScreen
+import com.parkingpin.app.ui.components.ParkingpinCard
+import com.parkingpin.app.ui.components.ParkingpinRow
+import com.parkingpin.app.ui.components.ParkingpinScreen
 import com.parkingpin.app.ui.components.RowChevron
 import com.parkingpin.app.ui.components.SectionTitle
 import com.parkingpin.app.ui.components.StatusBadge
@@ -75,12 +75,12 @@ fun SettingsScreen(
 ) {
     var confirmingDelete by remember { mutableStateOf(false) }
 
-    ParkingkokScreen(
+    ParkingpinScreen(
         modifier = modifier,
         header = { DetailHeader(title = stringResource(R.string.settings_title), onBack = onBack) },
     ) {
         item("account") {
-            ParkingkokCard {
+            ParkingpinCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         painter = painterResource(R.drawable.ic_person),
@@ -110,7 +110,7 @@ fun SettingsScreen(
         // 1. 자동 감지
         item("detection-title") { SectionTitle(stringResource(R.string.settings_section_detection)) }
         item("detection") {
-            ParkingkokCard(contentPadding = 0.dp) {
+            ParkingpinCard(contentPadding = 0.dp) {
                 SwitchRow(
                     title = stringResource(R.string.settings_detection_toggle),
                     supporting = stringResource(R.string.settings_detection_toggle_caption),
@@ -149,13 +149,13 @@ fun SettingsScreen(
             SectionTitle(stringResource(R.string.settings_section_notification))
         }
         item("notification") {
-            ParkingkokCard(contentPadding = 0.dp) {
+            ParkingpinCard(contentPadding = 0.dp) {
                 // This said 준비 중 until 2026-09-21, long after candidate notifications
                 // shipped. A settings screen that reports a built feature as unbuilt is how
                 // a user concludes the app is broken when it is working, so it now states
                 // the two things that actually decide whether a prompt arrives: the OS
                 // grant, and §9's rule that a `low` candidate is recorded and not announced.
-                ParkingkokRow(
+                ParkingpinRow(
                     title = stringResource(R.string.settings_notification_status),
                     supporting = stringResource(
                         if (state.notificationsEnabled) {
@@ -197,7 +197,7 @@ fun SettingsScreen(
             SectionTitle(stringResource(R.string.settings_section_permission))
         }
         item("permission") {
-            ParkingkokCard(contentPadding = 0.dp) {
+            ParkingpinCard(contentPadding = 0.dp) {
                 PermissionRow(
                     iconRes = R.drawable.ic_place,
                     title = stringResource(R.string.settings_permission_location),
@@ -282,8 +282,8 @@ fun SettingsScreen(
         // 4. Plus
         item("plus-title") { SectionTitle(stringResource(R.string.settings_section_plus)) }
         item("plus") {
-            ParkingkokCard(contentPadding = 0.dp) {
-                ParkingkokRow(
+            ParkingpinCard(contentPadding = 0.dp) {
+                ParkingpinRow(
                     title = stringResource(R.string.settings_plus_title),
                     supporting = stringResource(R.string.settings_plus_caption),
                     // No sparkle. docs/10 §9 rules sparkles and crowns out of anything
@@ -304,8 +304,8 @@ fun SettingsScreen(
         // 5. 데이터
         item("data-title") { SectionTitle(stringResource(R.string.settings_section_data)) }
         item("data") {
-            ParkingkokCard(contentPadding = 0.dp) {
-                ParkingkokRow(
+            ParkingpinCard(contentPadding = 0.dp) {
+                ParkingpinRow(
                     title = stringResource(R.string.settings_data_export),
                     supporting = stringResource(R.string.settings_data_export_caption),
                     iconRes = R.drawable.ic_download,
@@ -319,7 +319,7 @@ fun SettingsScreen(
                     },
                 )
                 SettingsDivider()
-                ParkingkokRow(
+                ParkingpinRow(
                     title = stringResource(R.string.settings_data_delete),
                     supporting = stringResource(R.string.settings_data_delete_caption),
                     iconRes = R.drawable.ic_delete,
@@ -334,7 +334,7 @@ fun SettingsScreen(
         // 6. 개인정보
         item("privacy-title") { SectionTitle(stringResource(R.string.settings_section_privacy)) }
         item("privacy") {
-            ParkingkokCard {
+            ParkingpinCard {
                 Row {
                     Icon(
                         painter = painterResource(R.drawable.ic_shield),
@@ -357,8 +357,8 @@ fun SettingsScreen(
             SectionTitle(stringResource(R.string.settings_section_developer))
         }
         item("developer") {
-            ParkingkokCard(contentPadding = 0.dp) {
-                ParkingkokRow(
+            ParkingpinCard(contentPadding = 0.dp) {
+                ParkingpinRow(
                     title = stringResource(R.string.settings_diagnostics),
                     supporting = stringResource(R.string.settings_diagnostics_caption),
                     iconRes = R.drawable.ic_tune,
@@ -411,7 +411,7 @@ private fun SwitchRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
-    ParkingkokRow(
+    ParkingpinRow(
         title = title,
         supporting = supporting,
         iconRes = iconRes,
@@ -466,7 +466,7 @@ private fun PermissionRow(
      */
     deniedLabel: Int = R.string.settings_permission_denied,
 ) {
-    ParkingkokRow(
+    ParkingpinRow(
         title = title,
         supporting = supporting,
         iconRes = iconRes,
@@ -513,7 +513,7 @@ private fun SettingsDivider() {
 @Preview(name = "Settings", showBackground = true)
 @Composable
 private fun SettingsPreview() {
-    ParkingkokTheme {
+    ParkingpinTheme {
         SettingsScreen(
             state = SettingsUiState(
                 detectionEnabled = true,

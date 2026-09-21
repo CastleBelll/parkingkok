@@ -352,6 +352,6 @@ class TraceRecorder(
     }
 
     private companion object {
-        const val TAG = "ParkingkokTrace"
+        const val TAG = "ParkingpinTrace"
     }
 }

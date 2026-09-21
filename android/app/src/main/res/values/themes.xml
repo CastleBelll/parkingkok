@@ -9,11 +9,11 @@
       user tapped and the screen that replaces it are then the same image, which is the
       whole point of a splash.
     -->
-    <style name="Theme.Parkingkok.Splash" parent="Theme.SplashScreen">
+    <style name="Theme.Parkingpin.Splash" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@android:color/white</item>
         <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
-        <item name="postSplashScreenTheme">@style/Theme.Parkingkok</item>
+        <item name="postSplashScreenTheme">@style/Theme.Parkingpin</item>
     </style>
 
-    <style name="Theme.Parkingkok" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.Parkingpin" parent="android:Theme.Material.Light.NoActionBar" />
 </resources>

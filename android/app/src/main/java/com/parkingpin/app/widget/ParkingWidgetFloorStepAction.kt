@@ -7,7 +7,7 @@ import androidx.glance.action.ActionParameters
 import androidx.glance.action.actionParametersOf
 import androidx.glance.appwidget.action.ActionCallback
 import androidx.glance.appwidget.action.actionRunCallback
-import com.parkingpin.app.ParkingkokApplication
+import com.parkingpin.app.ParkingpinApplication
 import com.parkingpin.app.domain.parking.usecase.AdjustParkingFloorUseCase
 
 /**
@@ -38,7 +38,7 @@ class ParkingWidgetFloorStepAction : ActionCallback {
         glanceId: GlanceId,
         parameters: ActionParameters,
     ) {
-        val container = ParkingkokApplication.containerOf(context) ?: return
+        val container = ParkingpinApplication.containerOf(context) ?: return
         val sessionId = parameters[SessionIdKey]
         val delta = parameters[DeltaKey]
 

@@ -6,7 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import androidx.core.content.IntentCompat
-import com.parkingpin.app.ParkingkokApplication
+import com.parkingpin.app.ParkingpinApplication
 import com.parkingpin.app.domain.detection.CarLinkPolicy
 import com.parkingpin.app.domain.detection.DetectionEvent
 import kotlinx.coroutines.launch
@@ -52,7 +52,7 @@ class CarLinkReceiver : BroadcastReceiver() {
             ?: return
         if (!CarLinkPolicy.isCarAudioDevice(deviceClassOf(device))) return
 
-        val container = ParkingkokApplication.containerOf(context) ?: return
+        val container = ParkingpinApplication.containerOf(context) ?: return
         val atMillis = container.clock.nowEpochMillis()
         val event = if (connected) {
             DetectionEvent.CarLinkConnected(atMillis)

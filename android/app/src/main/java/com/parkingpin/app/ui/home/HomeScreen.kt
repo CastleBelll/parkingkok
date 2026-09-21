@@ -60,14 +60,14 @@ import com.parkingpin.app.domain.parking.ParkingLocation
 import com.parkingpin.app.domain.parking.ParkingRecord
 import com.parkingpin.app.domain.parking.ParkingSource
 import com.parkingpin.app.domain.photo.PhotoSource
-import com.parkingpin.app.theme.ParkingkokTheme
+import com.parkingpin.app.theme.ParkingpinTheme
 import com.parkingpin.app.theme.spacing
 import com.parkingpin.app.ui.components.BrandHeader
 import com.parkingpin.app.ui.components.IconChip
-import com.parkingpin.app.ui.components.ParkingkokCard
+import com.parkingpin.app.ui.components.ParkingpinCard
 import com.parkingpin.app.ui.components.PrimaryCtaButton
-import com.parkingpin.app.ui.components.ParkingkokRow
-import com.parkingpin.app.ui.components.ParkingkokScreen
+import com.parkingpin.app.ui.components.ParkingpinRow
+import com.parkingpin.app.ui.components.ParkingpinScreen
 import com.parkingpin.app.ui.components.StaticLocationArtwork
 import com.parkingpin.app.ui.components.RowChevron
 import com.parkingpin.app.ui.components.NotificationsAction
@@ -111,7 +111,7 @@ fun HomeScreen(
 ) {
     var pickingPhoto by remember { mutableStateOf(false) }
 
-    ParkingkokScreen(
+    ParkingpinScreen(
         modifier = modifier,
         header = {
             BrandHeader(
@@ -128,7 +128,7 @@ fun HomeScreen(
             )
         },
     ) {
-        if (!state.loaded) return@ParkingkokScreen
+        if (!state.loaded) return@ParkingpinScreen
 
         val active = state.active
         item("hero") {
@@ -191,7 +191,7 @@ fun HomeScreen(
             item("recent-empty") { RecentEmpty() }
         } else {
             item("recent") {
-                ParkingkokCard(contentPadding = 0.dp) {
+                ParkingpinCard(contentPadding = 0.dp) {
                     state.recent.forEachIndexed { index, record ->
                         if (index > 0) {
                             HorizontalDivider(
@@ -232,8 +232,8 @@ fun HomeScreen(
  */
 @Composable
 private fun PendingCandidateRow(parkedAtMillis: Long?, onClick: () -> Unit) {
-    ParkingkokCard(contentPadding = 0.dp) {
-        ParkingkokRow(
+    ParkingpinCard(contentPadding = 0.dp) {
+        ParkingpinRow(
             title = ParkingCandidateNotice.TITLE,
             supporting = if (parkedAtMillis != null) {
                 stringResource(R.string.home_candidate_supporting, timeOfDayText(parkedAtMillis))
@@ -308,7 +308,7 @@ private fun ActiveParkingCard(
     onStepFloor: (Int) -> Unit,
 ) {
     // One step nearer than the rows below it: this is the card the screen is about.
-    ParkingkokCard {
+    ParkingpinCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
             // The live dot is paired with the words beside it; §8 of
             // docs/01_PRODUCT_REQUIREMENTS.md rules out signalling state by colour alone.
@@ -589,8 +589,8 @@ private fun PrimaryActions(
     onEndParking: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.medium)) {
-        ParkingkokCard(contentPadding = 0.dp) {
-            ParkingkokRow(
+        ParkingpinCard(contentPadding = 0.dp) {
+            ParkingpinRow(
                 title = stringResource(R.string.home_map),
                 supporting = stringResource(
                     if (canOpenMap) R.string.home_map_caption else R.string.home_map_caption_none,
@@ -604,7 +604,7 @@ private fun PrimaryActions(
                 modifier = Modifier.padding(start = MaterialTheme.spacing.large),
                 color = MaterialTheme.colorScheme.outlineVariant,
             )
-            ParkingkokRow(
+            ParkingpinRow(
                 title = stringResource(
                     if (hasPhoto) R.string.home_photo_view else R.string.home_photo_add,
                 ),
@@ -627,7 +627,7 @@ private fun PrimaryActions(
                 modifier = Modifier.padding(start = MaterialTheme.spacing.large),
                 color = MaterialTheme.colorScheme.outlineVariant,
             )
-            ParkingkokRow(
+            ParkingpinRow(
                 title = stringResource(R.string.home_detail),
                 supporting = stringResource(R.string.home_detail_caption),
                 iconRes = R.drawable.ic_car,
@@ -647,7 +647,7 @@ private fun PrimaryActions(
 /** One sentence about what just happened, dismissed by the user. */
 @Composable
 private fun NoticeCard(notice: UiNotice, onDismiss: () -> Unit) {
-    ParkingkokCard(contentPadding = MaterialTheme.spacing.large) {
+    ParkingpinCard(contentPadding = MaterialTheme.spacing.large) {
         Text(
             text = stringResource(
                 when (notice) {
@@ -669,7 +669,7 @@ private fun NoticeCard(notice: UiNotice, onDismiss: () -> Unit) {
 /** Nothing is parked: one card, one job — start a record (FR-001). */
 @Composable
 private fun NotParkedCard(onSaveParking: () -> Unit) {
-    ParkingkokCard {
+    ParkingpinCard {
         Text(
             text = stringResource(R.string.home_empty_title),
             style = MaterialTheme.typography.headlineSmall,
@@ -741,7 +741,7 @@ private fun RecentHeader(onOpenHistory: () -> Unit, hasHistory: Boolean) {
 
 @Composable
 private fun RecentEmpty() {
-    ParkingkokCard {
+    ParkingpinCard {
         Text(
             text = stringResource(R.string.home_recent_empty),
             style = MaterialTheme.typography.bodyMedium,
@@ -758,7 +758,7 @@ private fun RecentRow(record: ParkingRecord, nowMillis: Long, onClick: () -> Uni
     // the row a whole line and drifted from iOS, which reads `B2 · 어제  오후 2:32`.
     val floor = record.floor?.displayLabel ?: stringResource(R.string.home_no_floor)
     val title = "$floor · ${dayText(record.startedAtMillis, nowMillis)}"
-    ParkingkokRow(
+    ParkingpinRow(
         title = title,
         supporting = null,
         iconRes = R.drawable.ic_car,
@@ -797,7 +797,7 @@ private val STEPPER_DIVIDER_HEIGHT = 26.dp
 @Preview(name = "Home - parked", showBackground = true)
 @Composable
 private fun HomeParkedPreview() {
-    ParkingkokTheme {
+    ParkingpinTheme {
         HomeScreen(
             state = HomeUiState(
                 active = previewRecord(),
@@ -826,7 +826,7 @@ private fun HomeParkedPreview() {
 @Preview(name = "Home - empty", showBackground = true)
 @Composable
 private fun HomeEmptyPreview() {
-    ParkingkokTheme {
+    ParkingpinTheme {
         HomeScreen(
             state = HomeUiState(loaded = true, nowMillis = PREVIEW_NOW),
             onStepFloor = {},
@@ -873,7 +873,7 @@ private fun previewRecord(
 @Preview(name = "Home - candidate pending", showBackground = true)
 @Composable
 private fun HomeCandidatePreview() {
-    ParkingkokTheme {
+    ParkingpinTheme {
         HomeScreen(
             state = HomeUiState(
                 loaded = true,

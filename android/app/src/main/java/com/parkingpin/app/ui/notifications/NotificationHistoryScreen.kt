@@ -20,12 +20,12 @@ import androidx.compose.ui.unit.dp
 import com.parkingpin.app.R
 import com.parkingpin.app.domain.detection.CandidateOutcome
 import com.parkingpin.app.domain.detection.ParkingCandidateNotice
-import com.parkingpin.app.theme.ParkingkokTheme
+import com.parkingpin.app.theme.ParkingpinTheme
 import com.parkingpin.app.theme.spacing
 import com.parkingpin.app.ui.components.DetailHeader
-import com.parkingpin.app.ui.components.ParkingkokCard
-import com.parkingpin.app.ui.components.ParkingkokRow
-import com.parkingpin.app.ui.components.ParkingkokScreen
+import com.parkingpin.app.ui.components.ParkingpinCard
+import com.parkingpin.app.ui.components.ParkingpinRow
+import com.parkingpin.app.ui.components.ParkingpinScreen
 import com.parkingpin.app.ui.components.RowChevron
 import com.parkingpin.app.ui.format.dayText
 import com.parkingpin.app.ui.format.timeOfDayText
@@ -51,21 +51,21 @@ fun NotificationHistoryScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    ParkingkokScreen(
+    ParkingpinScreen(
         modifier = modifier,
         header = {
             DetailHeader(title = stringResource(R.string.notifications_title), onBack = onBack)
         },
     ) {
-        if (!state.loaded) return@ParkingkokScreen
+        if (!state.loaded) return@ParkingpinScreen
 
         if (state.rows.isEmpty()) {
             item("empty") { EmptyNotifications() }
-            return@ParkingkokScreen
+            return@ParkingpinScreen
         }
 
         item("rows") {
-            ParkingkokCard(contentPadding = 0.dp) {
+            ParkingpinCard(contentPadding = 0.dp) {
                 state.rows.forEachIndexed { index, row ->
                     if (index > 0) {
                         HorizontalDivider(
@@ -99,7 +99,7 @@ private fun NotificationRowItem(
     onOpenCandidate: (String) -> Unit,
     onOpenRecord: (String) -> Unit,
 ) {
-    ParkingkokRow(
+    ParkingpinRow(
         title = ParkingCandidateNotice.TITLE,
         supporting = row.outcomeText(),
         iconRes = R.drawable.ic_car,
@@ -157,7 +157,7 @@ private fun NotificationRow.outcomeText(): String = when (outcome) {
 
 @Composable
 private fun EmptyNotifications() {
-    ParkingkokCard {
+    ParkingpinCard {
         Text(
             text = stringResource(R.string.notifications_empty_title),
             style = MaterialTheme.typography.titleLarge,
@@ -176,7 +176,7 @@ private fun EmptyNotifications() {
 @Preview(name = "Notifications", showBackground = true)
 @Composable
 private fun NotificationHistoryPreview() {
-    ParkingkokTheme {
+    ParkingpinTheme {
         NotificationHistoryScreen(
             state = NotificationHistoryUiState(
                 rows = listOf(
@@ -204,7 +204,7 @@ private fun NotificationHistoryPreview() {
 @Preview(name = "Notifications — empty", showBackground = true)
 @Composable
 private fun NotificationHistoryEmptyPreview() {
-    ParkingkokTheme {
+    ParkingpinTheme {
         NotificationHistoryScreen(
             state = NotificationHistoryUiState(loaded = true),
             onOpenCandidate = {},

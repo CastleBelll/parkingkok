@@ -8,7 +8,7 @@ import androidx.compose.ui.unit.dp
 /**
  * How a surface is told apart from the page behind it.
  *
- * This used to be `ParkingkokElevation`, and it cast shadows. The design harness in
+ * This used to be `ParkingpinElevation`, and it cast shadows. The design harness in
  * CLAUDE.md now forbids them: a heavy card shadow is one of the specific patterns that
  * makes an app read as machine-generated, and docs/10_DESIGN_UX_SPEC.md §5 asks for
  * background, border and spacing instead. The old file argued that a white card on a pale
@@ -18,7 +18,7 @@ import androidx.compose.ui.unit.dp
  * The type is named for what it produces so nobody has to open it to find out that an
  * "elevation" token draws an outline.
  */
-data class ParkingkokSurfaces(
+data class ParkingpinSurfaces(
     /** The hairline that separates a surface from the page. */
     val border: Color,
     /**
@@ -29,6 +29,6 @@ data class ParkingkokSurfaces(
     val borderWidth: Dp = 1.dp,
 )
 
-internal val LocalParkingkokSurfaces = staticCompositionLocalOf {
-    ParkingkokSurfaces(border = BrandPalette.LightDivider)
+internal val LocalParkingpinSurfaces = staticCompositionLocalOf {
+    ParkingpinSurfaces(border = BrandPalette.LightDivider)
 }

@@ -5,7 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import androidx.core.app.NotificationManagerCompat
-import com.parkingpin.app.ParkingkokApplication
+import com.parkingpin.app.ParkingpinApplication
 import com.parkingpin.app.domain.trace.TraceLabelPrompt
 import kotlinx.coroutines.launch
 
@@ -38,7 +38,7 @@ class TraceLabelPromptReceiver : BroadcastReceiver() {
         NotificationManagerCompat.from(context)
             .cancel(TraceLabelPromptChannel.notificationId(sessionId))
 
-        val container = ParkingkokApplication.containerOf(context)
+        val container = ParkingpinApplication.containerOf(context)
         if (container == null) {
             Log.w(TAG, "trace label prompt tap arrived with no container")
             return
@@ -60,6 +60,6 @@ class TraceLabelPromptReceiver : BroadcastReceiver() {
     }
 
     private companion object {
-        const val TAG = "ParkingkokTrace"
+        const val TAG = "ParkingpinTrace"
     }
 }

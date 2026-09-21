@@ -107,6 +107,6 @@ class DetectionRegistrationCoordinator(
     }
 
     private companion object {
-        const val TAG = "ParkingkokRegistration"
+        const val TAG = "ParkingpinRegistration"
     }
 }

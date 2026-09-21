@@ -5,7 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import com.google.android.gms.location.LocationResult
-import com.parkingpin.app.ParkingkokApplication
+import com.parkingpin.app.ParkingpinApplication
 import com.parkingpin.app.domain.location.LocationSample
 import kotlinx.coroutines.launch
 
@@ -23,7 +23,7 @@ class LocationUpdateReceiver : BroadcastReceiver() {
         if (!LocationResult.hasResult(intent)) return
         val result = LocationResult.extractResult(intent) ?: return
 
-        val container = ParkingkokApplication.containerOf(context) ?: return
+        val container = ParkingpinApplication.containerOf(context) ?: return
 
         val samples = result.locations.map { location ->
             LocationSample(
@@ -58,6 +58,6 @@ class LocationUpdateReceiver : BroadcastReceiver() {
 
     companion object {
         const val ACTION_LOCATION_UPDATE = "com.parkingpin.app.action.LOCATION_UPDATE"
-        private const val TAG = "ParkingkokLocation"
+        private const val TAG = "ParkingpinLocation"
     }
 }

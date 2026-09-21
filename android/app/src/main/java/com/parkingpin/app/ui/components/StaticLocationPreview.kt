@@ -189,7 +189,7 @@ fun LocationPreviewCard(
     caption: String,
     modifier: Modifier = Modifier,
 ) {
-    ParkingkokCard(modifier = modifier, contentPadding = MaterialTheme.spacing.medium) {
+    ParkingpinCard(modifier = modifier, contentPadding = MaterialTheme.spacing.medium) {
         StaticLocationArtwork(
             modifier = Modifier
                 .fillMaxWidth()

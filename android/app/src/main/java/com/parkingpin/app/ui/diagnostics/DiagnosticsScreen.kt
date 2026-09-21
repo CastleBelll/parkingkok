@@ -51,7 +51,7 @@ import com.parkingpin.app.domain.trace.TraceSession
 import com.parkingpin.app.domain.trace.TraceSessionBoundaryPolicy
 import com.parkingpin.app.domain.trace.TraceSplitResult
 import com.parkingpin.app.domain.trace.TraceSummary
-import com.parkingpin.app.theme.ParkingkokTheme
+import com.parkingpin.app.theme.ParkingpinTheme
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -828,7 +828,7 @@ private fun Long?.formatTime(): String = if (this == null) "—" else timeFormat
 @Preview(showBackground = true)
 @Composable
 private fun DiagnosticsScreenPreview() {
-    ParkingkokTheme {
+    ParkingpinTheme {
         DiagnosticsScreen(
             state = DiagnosticsUiState(
                 permissions = DiagnosticsPermissions(

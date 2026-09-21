@@ -18,7 +18,7 @@ import androidx.compose.ui.unit.dp
  * `large` sits between the two so Material components the app does not style by hand
  * (dialogs, sheets) land somewhere sensible instead of on the Material default.
  */
-internal val ParkingkokShapes = Shapes(
+internal val ParkingpinShapes = Shapes(
     extraSmall = RoundedCornerShape(10.dp),
     small = RoundedCornerShape(16.dp),
     medium = RoundedCornerShape(16.dp),

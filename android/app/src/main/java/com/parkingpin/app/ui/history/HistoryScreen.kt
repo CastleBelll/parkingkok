@@ -35,12 +35,12 @@ import com.parkingpin.app.R
 import com.parkingpin.app.domain.parking.FloorParser
 import com.parkingpin.app.domain.parking.ParkingRecord
 import com.parkingpin.app.domain.parking.ParkingSource
-import com.parkingpin.app.theme.ParkingkokTheme
+import com.parkingpin.app.theme.ParkingpinTheme
 import com.parkingpin.app.theme.spacing
 import com.parkingpin.app.ui.components.DetailHeader
-import com.parkingpin.app.ui.components.ParkingkokCard
-import com.parkingpin.app.ui.components.ParkingkokRow
-import com.parkingpin.app.ui.components.ParkingkokScreen
+import com.parkingpin.app.ui.components.ParkingpinCard
+import com.parkingpin.app.ui.components.ParkingpinRow
+import com.parkingpin.app.ui.components.ParkingpinScreen
 import com.parkingpin.app.ui.components.RowChevron
 import com.parkingpin.app.ui.components.StatusBadge
 import com.parkingpin.app.ui.motion.pressScale
@@ -66,15 +66,15 @@ fun HistoryScreen(
 ) {
     var confirmingDeleteAll by remember { mutableStateOf(false) }
 
-    ParkingkokScreen(
+    ParkingpinScreen(
         modifier = modifier,
         header = { DetailHeader(title = stringResource(R.string.history_title), onBack = onBack) },
     ) {
-        if (!state.loaded) return@ParkingkokScreen
+        if (!state.loaded) return@ParkingpinScreen
 
         if (state.records.isEmpty()) {
             item("empty") { EmptyHistory() }
-            return@ParkingkokScreen
+            return@ParkingpinScreen
         }
 
         item("count") {
@@ -89,7 +89,7 @@ fun HistoryScreen(
         // into a stack of floating panels — the AI dashboard CLAUDE.md's design harness
         // rules out, and the same thing home's preview was fixed for.
         item("records") {
-            ParkingkokCard(contentPadding = 0.dp) {
+            ParkingpinCard(contentPadding = 0.dp) {
                 state.records.forEachIndexed { index, record ->
                     if (index > 0) {
                         HorizontalDivider(
@@ -166,7 +166,7 @@ private fun HistoryRow(record: ParkingRecord, nowMillis: Long, onClick: () -> Un
     // a single repeated car chip, and docs/19 §4 asks for the automatic ones to be picked
     // out by a badge — so the chip is the list's rhythm and the badge carries the meaning.
     // Tinting the chip as well made every row look like a different kind of thing.
-    ParkingkokRow(
+    ParkingpinRow(
         title = place,
         iconRes = R.drawable.ic_car,
         onClick = onClick,
@@ -212,7 +212,7 @@ private fun HistoryRow(record: ParkingRecord, nowMillis: Long, onClick: () -> Un
 
 @Composable
 private fun EmptyHistory() {
-    ParkingkokCard {
+    ParkingpinCard {
         Text(
             text = stringResource(R.string.history_empty_title),
             style = MaterialTheme.typography.titleLarge,
@@ -234,7 +234,7 @@ private val BADGE_INDENT = 56.dp
 @Preview(name = "History", showBackground = true)
 @Composable
 private fun HistoryPreview() {
-    ParkingkokTheme {
+    ParkingpinTheme {
         HistoryScreen(
             state = HistoryUiState(
                 records = listOf(

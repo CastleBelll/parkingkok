@@ -23,7 +23,7 @@ import androidx.compose.ui.unit.sp
  * | primary row        | titleMedium      |
  * | supporting text    | bodyMedium       |
  */
-internal val ParkingkokTypography = Typography(
+internal val ParkingpinTypography = Typography(
     // §4: "visually 56-64sp/pt equivalent". 60 sits in the middle of that band.
     displayLarge = TextStyle(
         fontFamily = FontFamily.Default,

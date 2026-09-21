@@ -5,7 +5,7 @@ import android.content.ComponentName
 import android.content.Context
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
-import com.parkingpin.app.ParkingkokApplication
+import com.parkingpin.app.ParkingpinApplication
 
 /**
  * The two providers of docs/06_LOCAL_DATA_AND_WIDGET_SYNC.md §7a, 2x2 and 4x2.
@@ -32,7 +32,7 @@ abstract class ParkingWidgetReceiver : GlanceAppWidgetReceiver() {
         appWidgetIds: IntArray,
     ) {
         super.onUpdate(context, appWidgetManager, appWidgetIds)
-        ParkingkokApplication.containerOf(context)?.syncParkingWidgets()
+        ParkingpinApplication.containerOf(context)?.syncParkingWidgets()
     }
 }
 
