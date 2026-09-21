@@ -14,6 +14,16 @@ import Foundation
 /// Thin by design, like `FirebaseAnonymousSignIn` beside it: the ordering and the
 /// uid-changed check live in `LinkingAccountIdentity`, where a test can reach them.
 struct FirebaseAccountLinking: AccountLinking {
+    #if PK_DEV
+        /// The last raw code `link(with:)` refused with, for the diagnostics file.
+        ///
+        /// The mapped case says which *kind* of refusal it was; this says exactly which
+        /// code produced it, because on 2026-09-21 a device reported a refusal that no
+        /// account in the project could explain, and a Korean sentence read off a screen is
+        /// not evidence. Compiled out of STAGING and PROD.
+        nonisolated(unsafe) static var lastRefusalCode: Int?
+    #endif
+
     private let bootstrap: FirebaseBootstrap
 
     init(bootstrap: FirebaseBootstrap = .shared) {
@@ -59,11 +69,17 @@ struct FirebaseAccountLinking: AccountLinking {
             // problem is that their Apple ID's email belongs to a Google sign-in sends them
             // looking for a phone that has nothing to do with it.
             AppLog.identity.info("link refused: \(error.code, privacy: .public)")
+            #if PK_DEV
+                Self.lastRefusalCode = error.code
+            #endif
             return Self.collisionResults[error.code] ?? .alreadyLinkedElsewhere
         } catch {
             // The domain and code only — an auth message can carry a token fragment or an
             // email, and docs/09 §11 keeps both out of the log.
             let nsError = error as NSError
+            #if PK_DEV
+                Self.lastRefusalCode = nsError.code
+            #endif
             AppLog.identity.info("link failed: \(nsError.domain, privacy: .public)(\(nsError.code, privacy: .public))")
             return .failed(reason: "\(nsError.domain)(\(nsError.code))")
         }

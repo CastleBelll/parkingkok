@@ -88,7 +88,7 @@ final class SettingsModel {
             isAccountBusy = false
             accountMessage = Self.message(for: outcome)
             #if PK_DEV
-                lastLinkOutcome = "\(outcome)"
+                lastLinkOutcome = "\(outcome) code=\(FirebaseAccountLinking.lastRefusalCode.map(String.init) ?? "none")"
             #endif
             await refresh()
         }
@@ -113,11 +113,13 @@ final class SettingsModel {
 
         /// The uid and every provider attached to it, for the DEV-only row in Settings.
         var accountDebugSummary: String {
-            switch accountState {
+            let identity = switch accountState {
             case .none: "no user"
             case let .anonymous(uid): "\(uid) · anonymous"
             case let .linked(uid, provider): "\(uid) · \(provider.rawValue)"
             }
+            guard let lastLinkOutcome else { return identity }
+            return "\(identity)\n\(lastLinkOutcome)"
         }
     #endif
 

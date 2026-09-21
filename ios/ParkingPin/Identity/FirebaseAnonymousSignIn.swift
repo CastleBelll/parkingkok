@@ -118,7 +118,8 @@ enum IdentityComposition {
                 "uid": user?.uid ?? "none",
                 "isAnonymous": user?.isAnonymous ?? false,
                 "providers": user?.providerData.map(\.providerID) ?? [],
-                "capturedAt": ISO8601DateFormatter().string(from: Date())
+                "capturedAt": ISO8601DateFormatter().string(from: Date()),
+                "lastLinkOutcome": lastLinkOutcome ?? "none"
             ]
             // `Library/Application Support` for the same reason the widget projection uses
             // it: it is the only part of a shared container `devicectl` will read.
