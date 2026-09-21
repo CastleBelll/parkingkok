@@ -96,6 +96,23 @@ class ParkingDetectionRuntime(
     suspend fun handleUserAnswer(event: DetectionEvent): List<DetectionEffect> = handle(listOf(event))
 
     /**
+     * Nothing happened, and that is the point (docs/05 §3a).
+     *
+     * The engine settles §3a's elapsed-time rows against each event's own timestamp, so on a
+     * phone that keeps producing events — a fix, a transition, a link edge — the timeouts
+     * take care of themselves. A phone that produces **none** is the case this exists for: a
+     * drive that ends underground with no `vehicle_exit`, no fixes because there is no sky,
+     * and no walk transition delivered. The session stays open, and with it the location
+     * foreground service.
+     *
+     * [DrivingLocationService] is the only caller, which is the whole design: it is alive
+     * exactly while a bounded capture is, so the tick exists precisely while the silence
+     * would cost something, and a parked phone ticks never.
+     */
+    suspend fun handleTick(atMillis: Long): List<DetectionEffect> =
+        handle(listOf(DetectionEvent.TimerTick(atMillis)))
+
+    /**
      * One batch of events, in order, under the lock.
      *
      * **§3a's timeout rows need no caller here.** They used to: they fired only on an

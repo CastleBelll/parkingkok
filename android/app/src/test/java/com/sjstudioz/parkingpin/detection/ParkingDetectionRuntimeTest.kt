@@ -164,6 +164,26 @@ class ParkingDetectionRuntimeTest {
         runtime.handleMotion(motion(MotionEventKind.STARTED_WALKING, START + DRIVE_MILLIS + 20_000))
     }
 
+    @Test
+    fun `a tick closes a drive that stopped producing events`() = runTest {
+        // docs/05 §3a's remaining half. The engine settles the timeout rows against each
+        // event's own timestamp, which covers every drive that keeps producing events; this
+        // is the one that stops — underground, no `vehicle_exit`, no fixes because there is
+        // no sky, no walk transition delivered. Nothing would ever end it, and the location
+        // foreground service would stay up behind it.
+        runtime.handleMotion(motion(MotionEventKind.ENTERED_VEHICLE, START))
+        runtime.handleMotion(motion(MotionEventKind.ENTERED_VEHICLE, START + SUSTAIN))
+        assertEquals(DetectionState.DRIVING, runtime.restore().state)
+
+        runtime.handleTick(START + ParkingDetectionEngine.SESSION_MAXIMUM_DURATION_MILLIS)
+
+        // The two-hour ceiling, which is the only row that bounds a drive with no movement
+        // evidence at all — `movementIdleWindow` correctly declines to fire on one.
+        val settled = runtime.restore()
+        assertEquals(DetectionState.IDLE, settled.state)
+        assertNull("the session ends with it, which is what stops the capture", settled.session)
+    }
+
     private fun motion(kind: MotionEventKind, atMillis: Long) =
         MotionDomainEvent(kind = kind, atMillis = atMillis, receivedAtMillis = atMillis)
 
@@ -175,5 +195,6 @@ class ParkingDetectionRuntimeTest {
     private companion object {
         const val START = 1_700_000_000_000L
         const val DRIVE_MILLIS = 420_000L
+        const val SUSTAIN = ParkingDetectionEngine.MINIMUM_VEHICLE_DURATION_MILLIS
     }
 }

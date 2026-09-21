@@ -306,10 +306,25 @@ to give the session a moving fix first — they had been encoding the bug.
 The timeout rows now live in exactly one place on each platform (`timeoutRow` here,
 `tickOnce` on iOS); the edge table no longer carries a `timer_tick` branch.
 
-##### Two things this still does not do
-- **A phone that produces no event at all** after a drive ends still waits. Every real drive
-  ends with a motion transition or a fix, and the 45-minute candidate expiry is covered from
-  the app side, but a scheduled tick is the honest remaining half.
+##### The scheduled half (2026-09-21)
+**Android ticks once a minute while — and only while — the location foreground service is
+up.** Per-event settling covers every drive that keeps producing events; the one that stops
+is the case this is for: underground, no `vehicle_exit`, no fixes because there is no sky, no
+walk transition delivered. Nothing ends that session, and the capture service stays up behind
+it. Even the two-hour ceiling could not fire, because it too was only reached through an
+event.
+
+**A loop inside `DrivingLocationService`, not an `AlarmManager`.** The costly state and that
+service have the same lifetime, so the tick exists exactly while the silence would cost
+something and a parked phone ticks never — no alarms to schedule, no exact-alarm permission
+to justify, nothing to leak. Doze does not apply while a foreground service runs, which is
+the other reason it belongs there. One minute against a shortest window of 180 s gives three
+chances at each boundary.
+
+iOS needs no equivalent: its adapters wake on Core Motion and `CLServiceSession`, and the
+engine ticks at `now` on each of those.
+
+##### One thing this still does not do
 - **iOS examines the windows before the edge as well**, so a `walking_enter` arriving after
   `transitionWindow` has closed confirms nothing there while Android still opens a candidate.
   Closing it needs Android's `fold` split into evidence and edge halves, the way iOS's

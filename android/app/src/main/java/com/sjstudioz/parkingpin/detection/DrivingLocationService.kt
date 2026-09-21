@@ -13,7 +13,15 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.sjstudioz.parkingpin.MainActivity
+import com.sjstudioz.parkingpin.ParkingpinApplication
 import com.sjstudioz.parkingpin.R
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 /**
  * Keeps the bounded driving capture alive while the app is in the background
@@ -53,6 +61,9 @@ import com.sjstudioz.parkingpin.R
  */
 class DrivingLocationService : Service() {
 
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var ticking = false
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -63,9 +74,48 @@ class DrivingLocationService : Service() {
             notification(),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION,
         )
+        startTicking()
         // Not sticky: the drive is what justifies this service, and the system restarting
         // it on its own — with no session behind it — is the leak the class doc rules out.
         return START_NOT_STICKY
+    }
+
+    override fun onDestroy() {
+        scope.cancel()
+        super.onDestroy()
+    }
+
+    /**
+     * The scheduled half of §3a's timeout rows.
+     *
+     * The engine settles those rows against each event's own timestamp, which covers every
+     * drive that keeps producing events. It does not cover the one that stops: underground,
+     * with no `vehicle_exit`, no fixes because there is no sky, and no walk transition
+     * delivered. That session stays `DRIVING` — and this service, whose whole justification
+     * is a live capture, stays up behind it.
+     *
+     * **A loop here rather than an alarm, and that is the design.** The costly state and
+     * this service have the same lifetime, so the tick exists exactly while the silence
+     * would cost something and a parked phone ticks never — no `AlarmManager`, no exact-alarm
+     * permission, nothing to leak. `AndroidOS` doze restrictions do not apply while a
+     * foreground service is running, which is the other reason this is the right place.
+     *
+     * One minute, against a shortest window of 180 s (`movementIdleWindow`): three chances
+     * to notice each boundary.
+     */
+    private fun startTicking() {
+        if (ticking) return
+        val runtime = ParkingpinApplication.containerOf(this)?.parkingDetectionRuntime ?: return
+        ticking = true
+        scope.launch {
+            while (isActive) {
+                delay(TICK_INTERVAL_MILLIS)
+                // Wall-clock, because every window in §3a is expressed in it and the
+                // engine's own events carry it. A tick on a different clock could not be
+                // compared with them.
+                runtime.handleTick(System.currentTimeMillis())
+            }
+        }
     }
 
     private fun notification(): Notification =
@@ -102,6 +152,9 @@ class DrivingLocationService : Service() {
 
     companion object {
         private const val TAG = "DrivingCapture"
+
+        /** See [startTicking]: a third of the shortest §3a window. */
+        private const val TICK_INTERVAL_MILLIS = 60_000L
         private const val CHANNEL_ID = "parking_driving_capture"
         private const val NOTIFICATION_ID = 0x9A2D
 
