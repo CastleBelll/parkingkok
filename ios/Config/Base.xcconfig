@@ -16,7 +16,7 @@ SWIFT_TREAT_WARNINGS_AS_ERRORS = YES
 GCC_TREAT_WARNINGS_AS_ERRORS = YES
 
 // ── Product identity ────────────────────────────────────────────────────────
-PK_BUNDLE_ID_BASE = kr.parkingpin.app
+PK_BUNDLE_ID_BASE = com.sjstudioz.parkingpin
 MARKETING_VERSION = 0.1.0
 CURRENT_PROJECT_VERSION = 1
 

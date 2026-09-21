@@ -35,7 +35,7 @@ actor CoreMotionHistoryProvider: MotionHistoryProviding {
 
     init() {
         let queue = OperationQueue()
-        queue.name = "kr.parkingpin.motion-history"
+        queue.name = "com.sjstudioz.parkingpin.motion-history"
         queue.maxConcurrentOperationCount = 1
         self.queue = queue
     }

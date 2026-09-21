@@ -1,8 +1,17 @@
 #include "Base.xcconfig"
 
-// Local development build. Installs side by side with STAGING and PROD.
-PK_BUNDLE_ID = $(PK_BUNDLE_ID_BASE).dev
-PK_DISPLAY_NAME = 주차핀 DEV
+// Local development build.
+//
+// **The same bundle id as PROD, on purpose (2026-09-21).** Suffixed ids meant three App IDs,
+// three App Groups and three Firebase apps to register and keep in step, for one developer
+// with one phone — and the only thing they bought was side-by-side installation. The build
+// configurations stay: `PK_DEV` still compiles in the diagnostics, and it still cannot reach
+// a store.
+//
+// The cost, written down because it is real: installing this replaces a store build and
+// shares its records. There is no separate app to hide behind any more.
+PK_BUNDLE_ID = $(PK_BUNDLE_ID_BASE)
+PK_DISPLAY_NAME = 주차핀
 PK_APP_ENV = dev
 
 SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) DEBUG PK_DEV

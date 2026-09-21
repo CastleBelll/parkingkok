@@ -110,21 +110,28 @@ The listing name and the icon label are different fields on purpose: a home scre
 at roughly eight Hangul characters, so the long form would render as `주차핀 - 자동…` under
 the icon. Every string *inside* the app is still plain 주차핀.
 
-Identifiers were renamed to match, **once, on 2026-09-21, before the first store
-submission** — that being the only moment a package name can change. Play shows the package
-in its own URL, so it was not purely internal.
+Identifiers were settled **before the first store submission**, which is the only moment a
+package name can change. Play shows the package in its own URL, so it was never purely
+internal.
 
 | | value |
 |---|---|
-| Android `applicationId` and package | `kr.parkingpin.app` |
-| iOS bundle prefix | `kr.parkingpin.app` (`.dev`, `.staging` per xcconfig) |
-| iOS App Group | `group.kr.parkingpin.app*`, derived from the bundle id |
-| Firebase project | `parkingpin-dev` / `parkingpin-staging` / `parkingpin-prod` |
+| Android `applicationId`, `namespace` and Kotlin package | `com.sjstudioz.parkingpin` |
+| iOS bundle id — **every configuration, DEV included** | `com.sjstudioz.parkingpin` |
+| iOS widget extension | `com.sjstudioz.parkingpin.widget` |
+| iOS App Group | `group.com.sjstudioz.parkingpin` |
+| Firebase project | `parkingpin-51147` |
 
-The prefix is `kr.` and not `com.` because `com.parkingpin.app` was already taken — bundle
-IDs and App Group IDs are globally unique across all of Apple, and a domain you own is not
-required, only a string nobody else has. `kr.` for a Korean app is both conventional and a
-far less contested namespace.
+**`com.sjstudioz.` is a studio namespace, and that is the point.** Two earlier attempts were
+wrong in different ways: `com.parkingkok.app` was the old brand, and `kr.parkingpin.app`
+read as a claim on `parkingpin.kr`, a domain nobody here owns. A studio prefix claims
+nothing, survives the app being renamed, and gives the next app somewhere to live.
+
+**DEV and STAGING share the production bundle id.** Suffixed ids meant three App IDs, three
+App Groups and three Firebase apps to keep in step, for one developer with one phone, and
+all they bought was side-by-side installation. The build *configurations* remain — `PK_DEV`
+still compiles in the diagnostics and still cannot reach a store. The cost is real and worth
+knowing: installing a DEV build replaces a store build and shares its records.
 
 **That window is now closed.** Once a build reaches a store the package name and bundle ID
 are permanent, and a PR that changes either is wrong.

@@ -225,7 +225,7 @@ final class DetectionRuntime {
         /// capture the acceptance criteria ask for:
         ///
         /// ```sh
-        /// xcrun simctl launch <udid> kr.parkingpin.app.dev \
+        /// xcrun simctl launch <udid> com.sjstudioz.parkingpin.dev \
         ///   PK_INJECT_CANDIDATE=medium PK_OPEN_CANDIDATE=1
         /// ```
         ///
@@ -260,7 +260,7 @@ final class DetectionRuntime {
         ///
         /// ```sh
         /// xcrun devicectl device process launch --device <udid> \
-        ///   --environment-variables '{"PK_FORCE_DRIVING_SESSION":"1"}' kr.parkingpin.app.dev
+        ///   --environment-variables '{"PK_FORCE_DRIVING_SESSION":"1"}' com.sjstudioz.parkingpin.dev
         /// ```
         private static var isFieldTestDrivingSessionForced: Bool {
             ProcessInfo.processInfo.environment["PK_FORCE_DRIVING_SESSION"] == "1"
