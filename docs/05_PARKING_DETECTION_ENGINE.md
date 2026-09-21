@@ -93,6 +93,7 @@ field data exists. Neither platform may pick its own value for one.
 | `drivingCandidateWindow` | 300s | §7 `vehicleEvidenceMaxAge` — evidence older than this is already not counted |
 | `movementIdleWindow` | 180s | §7 `maximumBaseline`. **unvalidated** |
 | `transitionWindow` | 300s | §7 vehicle window, reused so a walk that starts late still counts. **unvalidated** |
+| `sessionMaximumDuration` | 2h | hard ceiling on one `DRIVING` session. Longer than any ordinary commute, far shorter than a day; without it a drive that never sees another fix keeps the location capture up for ever (§19). Ends in `IDLE` with no candidate — two hours in, nothing knows where the car was left. Android gained it 2026-09-21; iOS always had it |
 
 ### The car link
 

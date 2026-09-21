@@ -129,6 +129,30 @@ class ParkingDetectionEngineTest {
     }
 
     @Test
+    fun `the session ceiling ends a drive that nothing else ever ended`() {
+        // Two hours of `DRIVING` with no fix and no exit — the underground-then-silent case
+        // the movement window deliberately will not touch. Straight to IDLE and no
+        // candidate: nothing here knows where the car was left.
+        val state = driving()
+            .handle(DetectionEvent.TimerTick(T0 + ParkingDetectionEngine.SESSION_MAXIMUM_DURATION_MILLIS))
+
+        assertEquals(DetectionState.IDLE, state.state)
+        assertNull("the travel session ends with it, which is what stops the capture", state.session)
+        assertNull(state.candidate)
+    }
+
+    @Test
+    fun `a connected car link does not hold the session past the ceiling`() {
+        // The gating table's fourth row. The link suppresses `movementIdleWindow` because
+        // that row infers a parking from silence; the ceiling infers nothing.
+        val state = driving()
+            .handle(DetectionEvent.CarLinkConnected(T0))
+            .handle(DetectionEvent.TimerTick(T0 + ParkingDetectionEngine.SESSION_MAXIMUM_DURATION_MILLIS))
+
+        assertEquals(DetectionState.IDLE, state.state)
+    }
+
+    @Test
     fun `PARKING_TRANSITION to CANDIDATE_PENDING on walking`() {
         val state = driving()
             .handle(DetectionEvent.VehicleExit(T0 + 1_000))

@@ -372,12 +372,26 @@ class ParkingDetectionEngine(
                 else -> null
             }
 
-            DetectionState.DRIVING ->
-                if (session != null && isMovementIdle(session, atMillis)) {
+            DetectionState.DRIVING -> when {
+                session == null -> null
+
+                // The ceiling, and the one row a connected car link does not suppress: it
+                // is a bound on the session itself rather than an inference about the car.
+                // Straight to `IDLE` with no candidate, exactly as iOS's
+                // `maximumDurationReached` does — two hours in, nothing here knows where the
+                // car was left, and guessing would be worse than saying nothing.
+                //
+                // Without it a drive that never sees another fix keeps the location
+                // foreground service up for ever, which is the battery cost §19 exists to
+                // bound.
+                atMillis - session.evidence.vehicleFirstSeenAtMillis >= SESSION_MAXIMUM_DURATION_MILLIS ->
+                    state.endSession(atMillis)
+
+                isMovementIdle(session, atMillis) ->
                     state.moveTo(DetectionState.PARKING_TRANSITION, atMillis)
-                } else {
-                    null
-                }
+
+                else -> null
+            }
 
             DetectionState.PARKING_TRANSITION ->
                 if (atMillis - state.stateEnteredAtMillis >= TRANSITION_WINDOW_MILLIS) {
@@ -928,6 +942,15 @@ class ParkingDetectionEngine(
          * reason.
          */
         private const val MAX_TIMEOUT_CASCADE: Int = 6
+
+        /**
+         * §3a's hard ceiling on one driving session, 2 h.
+         *
+         * Longer than any ordinary commute and far shorter than a day. iOS has always had
+         * it (`DrivingSessionTimeoutPolicy.maximumDuration`); Android did not, which was
+         * invisible while no timeout row fired at all.
+         */
+        const val SESSION_MAXIMUM_DURATION_MILLIS: Long = 2 * 60 * 60 * 1000L
 
         /**
          * §3a constant `minimumVehicleDuration`, 90 s.
