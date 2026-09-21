@@ -79,3 +79,6 @@ coverage/
 .tool-versions.local
 *.log
 .orca/
+
+# Apple Team ID for local Xcode builds (docs/18: never committed).
+ios/Config/Local.xcconfig

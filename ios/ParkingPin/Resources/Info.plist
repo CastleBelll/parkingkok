@@ -40,9 +40,6 @@
 	<array>
 		<string>location</string>
 	</array>
-	<!-- The mark on the icon's own white, so the icon the user tapped and the screen
-	     that replaces it are the same image. UILaunchScreen rather than a storyboard:
-	     there is nothing here a storyboard would buy. -->
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIColorName</key>

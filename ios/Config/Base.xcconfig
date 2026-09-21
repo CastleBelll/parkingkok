@@ -31,6 +31,18 @@ PK_APP_GROUP = group.$(PK_BUNDLE_ID)
 // APPLE_TEAM_ID). Device builds pass it in:
 //   xcodebuild ... PK_DEVELOPMENT_TEAM=<team> -allowProvisioningUpdates
 PK_DEVELOPMENT_TEAM =
+
+// …which works for `xcodebuild` and not for Xcode, where nothing passes anything
+// and the Team ends up None. A capability cannot be registered without a Team, so
+// opening the project and adding the App Group failed with "Communication with
+// Apple failed" until this existed.
+//
+// `Local.xcconfig` is gitignored and holds one line:
+//   PK_DEVELOPMENT_TEAM = <your team id>
+// The `?` makes it optional, so a fresh checkout and CI both build without it.
+// It comes after the default above because in an xcconfig the later assignment wins.
+#include? "Local.xcconfig"
+
 DEVELOPMENT_TEAM = $(PK_DEVELOPMENT_TEAM)
 CODE_SIGN_STYLE = Automatic
 
