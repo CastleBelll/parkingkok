@@ -217,6 +217,39 @@ struct LinkingAccountIdentityTests {
     }
 }
 
+/// The Firebase adapter, at the one boundary a fake cannot stand in for.
+struct FirebaseAccountLinkingTests {
+    @Test("Reading the account state before Firebase has started answers none instead of trapping")
+    func stateBeforeStartIsSafe() throws {
+        // `Auth.auth()` does not return nil on an unconfigured app — it raises, and the
+        // process dies. The identity is lazy (docs/04_IOS §14), so on an ordinary launch
+        // nothing has started Firebase and this is the *first* thing the settings screen
+        // asks: opening 설정 crashed the app on a real device until the guard existed.
+        //
+        // Nothing in this suite starts Firebase, and the requirement says so out loud
+        // rather than letting the test go quietly vacuous if something ever does.
+        try #require(!FirebaseBootstrap.shared.isStarted)
+
+        #expect(FirebaseAccountLinking().currentState() == .none)
+    }
+
+    @Test("Signing out before Firebase has started is a no-op, not a crash")
+    func signOutBeforeStartIsSafe() async throws {
+        try #require(!FirebaseBootstrap.shared.isStarted)
+
+        await FirebaseAccountLinking().signOut()
+    }
+
+    @Test("Linking before Firebase has started fails instead of trapping")
+    func linkBeforeStartIsSafe() async throws {
+        try #require(!FirebaseBootstrap.shared.isStarted)
+
+        let result = await FirebaseAccountLinking().link(appleCredential())
+
+        #expect(result == .failed(reason: "no current user"))
+    }
+}
+
 /// The nonce, which is the part of Sign in with Apple that is easy to get subtly wrong.
 struct AppleSignInRequestTests {
     @Test("The request carries the hash and the credential carries the raw value")

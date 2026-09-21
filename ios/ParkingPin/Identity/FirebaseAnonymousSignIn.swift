@@ -20,8 +20,21 @@ struct FirebaseAnonymousSignIn: AnonymousSigningIn {
         return Auth.auth().currentUser?.uid
     }
 
+    /// Signs in **only if `configure()` did not just restore someone**.
+    ///
+    /// `currentUid()` above cannot answer before Firebase is up, and Firebase is up only
+    /// when something needs it — so on every cold launch the first caller arrived here with
+    /// `nil` in hand. Minting straight away created a *new* anonymous account each time,
+    /// silently abandoning the previous one and any provider linked to it. Two launches on
+    /// 2026-09-21 left two anonymous accounts in the project, which is how it was found.
+    ///
+    /// `configure()` restores the persisted session from the keychain, so the question has
+    /// to be asked again once it can be answered.
     func signIn() async throws -> String {
         guard bootstrap.start() else { throw AnonymousSignInError.firebaseUnavailable }
+        if let restored = Auth.auth().currentUser {
+            return restored.uid
+        }
         return try await Auth.auth().signInAnonymously().user.uid
     }
 }
@@ -99,12 +112,13 @@ enum IdentityComposition {
                 .containerURL(forSecurityApplicationGroupIdentifier: identifier)
             else { return }
 
+            guard FirebaseBootstrap.shared.isStarted else { return }
             let user = Auth.auth().currentUser
             let state: [String: Any] = [
                 "uid": user?.uid ?? "none",
                 "isAnonymous": user?.isAnonymous ?? false,
                 "providers": user?.providerData.map(\.providerID) ?? [],
-                "capturedAt": ISO8601DateFormatter().string(from: Date()),
+                "capturedAt": ISO8601DateFormatter().string(from: Date())
             ]
             // `Library/Application Support` for the same reason the widget projection uses
             // it: it is the only part of a shared container `devicectl` will read.

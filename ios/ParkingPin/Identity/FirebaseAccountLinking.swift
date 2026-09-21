@@ -14,8 +14,21 @@ import Foundation
 /// Thin by design, like `FirebaseAnonymousSignIn` beside it: the ordering and the
 /// uid-changed check live in `LinkingAccountIdentity`, where a test can reach them.
 struct FirebaseAccountLinking: AccountLinking {
+    private let bootstrap: FirebaseBootstrap
+
+    init(bootstrap: FirebaseBootstrap = .shared) {
+        self.bootstrap = bootstrap
+    }
+
+    /// **Never touches `Auth` before Firebase is up.** `Auth.auth()` does not return nil on
+    /// an unconfigured app — it raises, and the process dies. The identity here is lazy by
+    /// design (docs/04_IOS §14: home renders with no network), so on an ordinary launch
+    /// nothing has started Firebase yet, and this is the first thing the settings screen
+    /// asks. The screen crashed on open until this guard existed.
+    ///
+    /// `.none` is the honest answer either way: no Firebase, no identity.
     func currentState() -> AccountState {
-        guard let user = Auth.auth().currentUser else { return .none }
+        guard bootstrap.isStarted, let user = Auth.auth().currentUser else { return .none }
         let provider = user.providerData
             .lazy
             .compactMap { AccountProvider(providerId: $0.providerID) }
@@ -25,7 +38,12 @@ struct FirebaseAccountLinking: AccountLinking {
     }
 
     func link(_ credential: AccountCredential) async -> AccountLinkResult {
-        guard let user = Auth.auth().currentUser else { return .failed(reason: "no current user") }
+        // Started by the anonymous sign-in that `LinkingAccountIdentity` does first, so this
+        // is a guard rather than the ordinary path — but an unguarded `Auth.auth()` is a
+        // crash, not a nil.
+        guard bootstrap.isStarted, let user = Auth.auth().currentUser else {
+            return .failed(reason: "no current user")
+        }
         let previousUid = user.uid
         let authCredential: AuthCredential = switch credential {
         case let .apple(idToken, rawNonce):
@@ -51,6 +69,7 @@ struct FirebaseAccountLinking: AccountLinking {
     }
 
     func signOut() async {
+        guard bootstrap.isStarted else { return }
         try? Auth.auth().signOut()
     }
 }
