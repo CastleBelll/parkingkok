@@ -554,6 +554,58 @@ Negative:
 
 These are defaults for field tuning, not guaranteed truth.
 
+### 8a. Measured 2026-09-21: the underground parking that scored 55
+
+The first real candidate this project produced scored **low** and therefore notified nobody
+(§9). The arithmetic, from a 100-minute drive that ended underground:
+
+```text
+recent vehicle session       +25
+vehicle exit                 +15
+stationary after driving     +10    ← walking would have been +30
+route comfortably over min    +5
+                            ────
+                              55    (medium starts at 60)
+```
+
+Two of §8's positives are structurally unavailable underground, and both of them are ones
+above-ground parking collects for free:
+
+- **`walking shortly after vehicle` (+30) is usually `stationary after driving` (+10).** You
+  park, get out, and stand at the lift. The Activity Transition API reports STILL before it
+  reports WALKING, and often instead of it.
+- **`location movement stopped` (+10) cannot fire at all.** It needs a fix, and there are no
+  fixes under a slab.
+
+So the app's main setting carries a 30-point structural penalty against the weights.
+
+**Raising `stationary after driving` is the obvious fix and it is the wrong one.** A long bus
+ride that ends with the rider standing at a stop produces *exactly* the same evidence — the
+engine cannot tell them apart from motion, which is what §12 already says. Every point added
+there buys one parking notification and one bus notification.
+
+The one signal that separates them is the car link, and it is already weighted +20. A
+Bluetooth disconnect also adds `vehicle exit` through the same fold, so the same drive with a
+paired car scores:
+
+```text
+recent vehicle session       +25
+vehicle exit                 +15
+car link disconnected        +20
+                            ────
+                              60    → medium → notifies
+```
+
+A bus has no car link and stays below the bar. That is the discrimination §8 was built to
+make, and it had never once fired: `BLUETOOTH_CONNECT` was declared in the manifest and
+requested by nothing until 2026-09-21, so the +20 was unreachable. No link event appears in
+any trace recorded before that date, which is the same fact from the other side.
+
+**No weight is being changed on the strength of one candidate.** The next drive with the
+permission actually granted is the measurement that decides whether anything here needs
+tuning, and the number to watch is how often a real parking still lands under 60 with a car
+link present.
+
 ## 9. Confidence Buckets
 - high: >=80
 - medium: 60...79
