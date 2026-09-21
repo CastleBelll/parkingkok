@@ -25,6 +25,9 @@ enum CredentialResult: Sendable, Equatable {
 /// The nonce is what stops a token captured from one sign-in being replayed into another,
 /// which is why it is generated per attempt and never stored.
 ///
+/// ## What is asked for
+/// The email, as Apple's relay address, and nothing else — see `prepare`.
+///
 /// ## Why Apple and not Google on iOS
 /// App Store Review Guideline 4.8: an app offering a third-party sign-in must also offer an
 /// equivalent private option. Apple alone satisfies it, needs no extra SDK, and is the one
@@ -36,9 +39,19 @@ final class AppleSignInRequest {
     func prepare(_ request: ASAuthorizationAppleIDRequest) {
         let nonce = SignInNonce.generate()
         self.nonce = nonce
-        // Deliberately not `.fullName` or `.email`: the app has no use for either, and
-        // docs/09 §1 keeps what is not needed out of the app entirely.
-        request.requestedScopes = []
+        // `.email` and deliberately **not** `.fullName`.
+        //
+        // Apple answers with a relay address (`…@privaterelay.appleid.com`) unless the user
+        // chooses to share their real one, so what is stored is an address that forwards and
+        // nothing else. It is the only thing that can answer "restore my subscription" from
+        // a person who has lost their phone — a uid cannot, and docs/07 §13c means the
+        // account on the iPhone is unreachable from anywhere else. Asked for now rather than
+        // later because Apple hands out the email **only at the first authorization**: a user
+        // who signs in today and is asked next year has to revoke the app in iOS Settings
+        // first, which is not a thing to ask of someone already in trouble.
+        //
+        // A name is still not asked for, because nothing displays one (docs/09 §1).
+        request.requestedScopes = [.email]
         request.nonce = nonce.hashed
     }
 

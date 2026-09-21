@@ -57,7 +57,8 @@ struct FirebaseAccountLinking: AccountLinking {
         let previousUid = user.uid
         let authCredential: AuthCredential = switch credential {
         case let .apple(idToken, rawNonce):
-            // `fullName` stays nil on purpose: the request never asks for it (docs/09 §1).
+            // `fullName` stays nil on purpose: the request asks for the email and not the
+            // name (docs/09 §1), so there is no name to pass on.
             OAuthProvider.appleCredential(withIDToken: idToken, rawNonce: rawNonce, fullName: nil)
         }
         do {

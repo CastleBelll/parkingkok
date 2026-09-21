@@ -277,15 +277,17 @@ struct AppleSignInRequestTests {
         #expect(SignInNonce.generate().raw != SignInNonce.generate().raw)
     }
 
-    @Test("Preparing a request asks for no name and no email")
+    @Test("Preparing a request asks for the email and not the name")
     @MainActor
-    func requestAsksForNothingItDoesNotNeed() {
+    func requestAsksForTheEmailOnly() {
         let request = ASAuthorizationAppleIDProvider().createRequest()
 
         AppleSignInRequest().prepare(request)
 
-        // docs/09 §1. The app has no use for either, so it never receives them.
-        #expect(request.requestedScopes?.isEmpty ?? true)
+        // The relay address is what can answer "restore my subscription" later, and Apple
+        // hands it over only at the first authorization — so it is asked for now or not at
+        // all. A name is not asked for: docs/09 §1, nothing displays one.
+        #expect(request.requestedScopes == [.email])
         #expect(request.nonce?.count == 64)
     }
 
