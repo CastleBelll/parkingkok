@@ -233,6 +233,29 @@ because they were never in the account.
 Revisit when there is something on the server worth merging, and revisit it as a merge, not
 as a switch.
 
+#### How to verify a link, and the tool that will lie to you (2026-09-21)
+
+**`firebase auth:export` does not report `apple.com` providers.** Measured: the same uid, at
+the same moment, read two ways —
+
+```text
+device   uid 8ksG8nZRP7RY7jj94Gco6i4MQv82  isAnonymous false  providers ["apple.com"]
+export   uid 8ksG8nZRP7RY7jj94Gco6i4MQv82  providerUserInfo []
+```
+
+— while the Google user beside it exports its provider, email, display name and photo in
+full. The export is not lagging; it reads the same both before and long after.
+
+An hour went into that gap. The export said a link had never happened, so the screen that
+said it had was treated as the broken thing; the real state was that the link *had*
+succeeded, on an account that a second bug then orphaned, and every later attempt was
+refused with 17025 by a credential nobody could see.
+
+**So: never confirm an Apple link with `auth:export`.** Use the app's own view of
+`Auth.currentUser.providerData` (the DEV diagnostics file writes it into the App Group
+container, where `devicectl device copy from` can read it) or the Firebase console. The
+export remains fine for Google and for counting accounts.
+
 ### 13c. One provider per platform, and the gap that leaves (2026-09-21)
 
 | platform | provider offered | why |

@@ -62,6 +62,11 @@ struct FirebaseAccountLinking: AccountLinking {
         }
         do {
             let result = try await user.link(with: authCredential)
+            #if PK_DEV
+                // Cleared, or the next success reports the previous refusal's code and
+                // reads as a failure that did not happen — it did exactly that once.
+                Self.lastRefusalCode = nil
+            #endif
             return .linked(uid: result.user.uid, previousUid: previousUid)
         } catch let error as NSError where Self.collisionResults[error.code] != nil {
             // docs/07 §13b, and **three different situations** that were being reported as
