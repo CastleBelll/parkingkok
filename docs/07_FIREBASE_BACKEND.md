@@ -202,9 +202,24 @@ That last row is the one a user will assume the other way round. Sign-in copy mu
 
 ### 13b. The credential already belongs to someone else
 
-`linkWithCredential` fails with a collision when the Google/Apple account is already attached
-to another Firebase user — most often the same person, on a phone they signed in on before.
-Two ways out:
+**There are three collisions, not one (2026-09-21).** They were all reported to the user as
+"이미 다른 기기에서 사용 중", and that sentence is wrong for two of them:
+
+| iOS code | Android `errorCode` | what actually happened | what the user is told |
+|---|---|---|---|
+| 17025 | `ERROR_CREDENTIAL_ALREADY_IN_USE` | this Apple/Google account is attached to another Firebase user | 다른 기기에서 이미 사용 중 |
+| 17012 / 17007 | `ERROR_ACCOUNT_EXISTS_WITH_DIFFERENT_CREDENTIAL`, `ERROR_EMAIL_ALREADY_IN_USE` | the **email** behind it belongs to an account with a different sign-in method | 이 이메일은 다른 로그인 방식으로 이미 쓰고 있어요 |
+| 17015 | `ERROR_PROVIDER_ALREADY_LINKED` | it is already on *this* account | nothing — the screen was behind |
+
+The middle row is not about the other device at all. A project with **one account per email
+address** answers it whenever the same person signs in with Apple on the iPhone and Google
+on the Android phone — which §13c says is exactly what this product produces — and sending
+that user to look for another phone is a dead end. The last row was worse in a quieter way:
+it reported a conflict for a screen that only needed refreshing.
+
+`linkWithCredential` fails with the first of them when the Google/Apple account is already
+attached to another Firebase user — most often the same person, on a phone they signed in on
+before. Two ways out:
 
 - **sign in to the existing account**, abandoning this device's anonymous uid and anything
   keyed to it, or

@@ -144,8 +144,11 @@ class SettingsViewModel(
      * were never in the account.
      */
     private fun messageFor(result: AccountLinkResult): Int? = when (result) {
-        is AccountLinkResult.Linked -> null
+        is AccountLinkResult.Linked,
+        AccountLinkResult.AlreadyLinkedToThisAccount,
+        -> null
         AccountLinkResult.AlreadyLinkedElsewhere -> R.string.settings_account_conflict
+        AccountLinkResult.EmailBelongsToAnotherAccount -> R.string.settings_account_email_conflict
         is AccountLinkResult.Failed -> R.string.settings_account_failed
     }
 

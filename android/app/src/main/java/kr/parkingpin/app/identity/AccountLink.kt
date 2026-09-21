@@ -39,13 +39,29 @@ sealed interface AccountLinkResult {
     data class Linked(val uid: String, val previousUid: String) : AccountLinkResult
 
     /**
-     * docs/07 §13b: the credential already belongs to another Firebase user.
+     * docs/07 §13b: this Google/Apple account is already attached to another Firebase user.
      *
      * v1 refuses rather than switching. Switching abandons this device's anonymous uid and
      * everything keyed to it, silently and unrecoverably, and the app has no server state
      * yet that would make the trade worth it.
      */
     data object AlreadyLinkedElsewhere : AccountLinkResult
+
+    /**
+     * docs/07 §13b: **a different collision, and it used to be reported as the one above.**
+     *
+     * The provider is attached to nobody — the *email address* behind it already belongs to
+     * an account with a different sign-in method. A project with one account per email
+     * answers this whenever the same person signs in with Google here and Apple on their
+     * other phone, and it is not something the user can fix by finding that phone.
+     */
+    data object EmailBelongsToAnotherAccount : AccountLinkResult
+
+    /**
+     * The provider is already on *this* user. Not a failure: the screen is behind, so the
+     * caller refreshes and says 연결됨.
+     */
+    data object AlreadyLinkedToThisAccount : AccountLinkResult
 
     /** Offline, cancelled at the provider sheet, anything else. Nothing changed. */
     data class Failed(val reason: String) : AccountLinkResult

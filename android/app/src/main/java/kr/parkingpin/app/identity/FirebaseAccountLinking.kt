@@ -41,9 +41,19 @@ class FirebaseAccountLinking(private val auth: FirebaseAuth) : AccountLinking {
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (collision: FirebaseAuthUserCollisionException) {
-            // docs/07 §13b. Refused rather than switched: the alternative abandons this
-            // device's uid silently, and v1 has nothing on the server worth that.
-            AccountLinkResult.AlreadyLinkedElsewhere
+            // docs/07 §13b, and three situations rather than one. Refused rather than
+            // switched in every case — the alternative abandons this device's uid silently,
+            // and v1 has nothing on the server worth that — but a user told their account
+            // is "in use on another device" when the real problem is their email goes
+            // looking for a phone that has nothing to do with it.
+            Log.i(TAG, "link refused: ${collision.errorCode}")
+            when (collision.errorCode) {
+                ERROR_PROVIDER_ALREADY_LINKED -> AccountLinkResult.AlreadyLinkedToThisAccount
+                ERROR_EMAIL_ALREADY_IN_USE,
+                ERROR_ACCOUNT_EXISTS_WITH_DIFFERENT_CREDENTIAL,
+                -> AccountLinkResult.EmailBelongsToAnotherAccount
+                else -> AccountLinkResult.AlreadyLinkedElsewhere
+            }
         } catch (failure: Exception) {
             // Class name only — an auth message can carry a project or a token fragment,
             // and docs/09 §11 keeps those out of the log.
@@ -58,6 +68,13 @@ class FirebaseAccountLinking(private val auth: FirebaseAuth) : AccountLinking {
 
     private companion object {
         const val TAG = "PkAccount"
+
+        // `FirebaseAuthUserCollisionException.errorCode`, which is a string rather than the
+        // numeric code the iOS SDK reports. The two platforms answer the same three cases.
+        const val ERROR_PROVIDER_ALREADY_LINKED = "ERROR_PROVIDER_ALREADY_LINKED"
+        const val ERROR_EMAIL_ALREADY_IN_USE = "ERROR_EMAIL_ALREADY_IN_USE"
+        const val ERROR_ACCOUNT_EXISTS_WITH_DIFFERENT_CREDENTIAL =
+            "ERROR_ACCOUNT_EXISTS_WITH_DIFFERENT_CREDENTIAL"
     }
 }
 
