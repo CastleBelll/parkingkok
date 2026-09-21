@@ -1,3 +1,4 @@
+import AuthenticationServices
 import SwiftUI
 
 /// Settings (`design-references/05-settings.png`).
@@ -57,22 +58,71 @@ struct SettingsView: View {
         }
     }
 
-    /// The mock's banner: no sign-up, nothing leaves the device.
+    /// The mock's banner — no sign-up, nothing leaves the device — and, under it, the one
+    /// row that changes that.
+    ///
+    /// docs/07 §13a: signing in **links** a provider to the anonymous uid this device
+    /// already has. It is not a backup and not a restore, and the copy never says 백업 or
+    /// 복원, because a user who reads either will expect their records on the next phone
+    /// and there is no sync to give them one. So this stays a quiet row rather than a
+    /// sign-in wall: the app has never needed an account and still does not.
     private var accountSection: some View {
         Section {
             HStack(spacing: PKSpacing.l) {
-                PKIconChip("iphone")
+                PKIconChip(model.isSignedIn ? "person.crop.circle.badge.checkmark" : "iphone")
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("회원가입 없이 사용 중")
+                    Text(model.isSignedIn ? "Apple 계정 연결됨" : "회원가입 없이 사용 중")
                         .font(PKTypography.row)
                         .foregroundStyle(PKColor.textPrimary)
-                    Text("모든 주차 데이터는 이 기기에만 저장됩니다")
-                        .font(PKTypography.supporting)
-                        .foregroundStyle(PKColor.textSecondary)
+                    Text(
+                        model.isSignedIn
+                            ? "주차 기록은 계속 이 기기에만 저장돼요"
+                            : "모든 주차 데이터는 이 기기에만 저장됩니다"
+                    )
+                    .font(PKTypography.supporting)
+                    .foregroundStyle(PKColor.textSecondary)
                 }
             }
             .padding(.vertical, PKSpacing.xs)
             .accessibilityElement(children: .combine)
+
+            if model.isSignedIn {
+                Button("연결 해제") {
+                    Task { await model.signOut() }
+                }
+                .font(PKTypography.row)
+                .foregroundStyle(PKColor.textPrimary)
+                .disabled(model.isAccountBusy)
+            } else {
+                VStack(alignment: .leading, spacing: PKSpacing.s) {
+                    // Apple's own button, at Apple's own sizing. A custom-styled one is a
+                    // review rejection, and this is the rare case where the platform's
+                    // control outranks the design harness.
+                    SignInWithAppleButton(
+                        .signIn,
+                        onRequest: { model.prepareAppleRequest($0) },
+                        onCompletion: { result in
+                            Task { await model.completeAppleSignIn(result) }
+                        }
+                    )
+                    .signInWithAppleButtonStyle(.black)
+                    .frame(height: 44)
+                    .clipShape(RoundedRectangle(cornerRadius: PKRadius.button, style: .continuous))
+                    .disabled(model.isAccountBusy)
+
+                    Text("나중에 추가될 기능을 위해 계정을 연결해 둬요")
+                        .font(PKTypography.supporting)
+                        .foregroundStyle(PKColor.textSecondary)
+                }
+                .padding(.vertical, PKSpacing.xs)
+            }
+
+            if let message = model.accountMessage {
+                Text(message)
+                    .font(PKTypography.supporting)
+                    .foregroundStyle(PKColor.textSecondary)
+                    .padding(.vertical, PKSpacing.xs)
+            }
         }
         .listRowBackground(PKColor.surface)
     }

@@ -218,6 +218,27 @@ because they were never in the account.
 Revisit when there is something on the server worth merging, and revisit it as a merge, not
 as a switch.
 
+### 13c. One provider per platform, and the gap that leaves (2026-09-21)
+
+| platform | provider offered | why |
+|---|---|---|
+| Android | Google | Credential Manager, already on every device, no extra SDK |
+| iOS | **Apple only** | Guideline 4.8 makes Sign in with Apple mandatory the moment any third-party sign-in is offered, and it needs no SDK beyond `AuthenticationServices`. Google on iOS would mean adding the GoogleSignIn package, a reversed-client-id URL scheme, and a second button |
+
+**The consequence, written down rather than discovered later: an account created on the
+iPhone cannot be reached from the Android phone, and the reverse.** A user who signs in with
+Apple on iOS and then installs the Android app gets a different anonymous uid there, with no
+way to attach it to the same account.
+
+This costs nothing today — §13a's table shows records never move between devices anyway, so
+the account carries only a referral ledger and an entitlement that do not exist yet. It
+stops being free the moment an entitlement does. The fix at that point is **Google on iOS**
+(the GoogleSignIn package), not Apple on Android: Apple's Android flow is a web redirect
+through `startActivityForSignInWithProvider`, which is more surface for the same result.
+
+Until then, restore-purchase flows must not be described as "다른 기기에서 복원" across
+platforms, because across platforms they cannot be.
+
 ## 14. Remote Config
 Common values + platform overrides.
 Server values always clamped by client.

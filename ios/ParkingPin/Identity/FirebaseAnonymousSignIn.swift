@@ -44,6 +44,15 @@ enum IdentityComposition {
     static let anonymous: any AnonymousIdentityProviding = FirebaseBootstrap.shared.isAvailable
         ? LazyAnonymousIdentity(signIn: FirebaseAnonymousSignIn())
         : UnavailableAnonymousIdentity()
+
+    /// The same `anonymous` above, deliberately: linking attaches a provider to *that* uid,
+    /// so a second identity here would be the §13a bug this layer exists to prevent.
+    static let account = LinkingAccountIdentity(
+        anonymous: anonymous,
+        linking: FirebaseBootstrap.shared.isAvailable
+            ? FirebaseAccountLinking()
+            : UnavailableAccountLinking()
+    )
 }
 
 #if PK_DEV

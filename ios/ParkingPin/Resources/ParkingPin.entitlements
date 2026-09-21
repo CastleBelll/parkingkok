@@ -2,9 +2,16 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- docs/06 §6. The only entitlement either target needs, and the reason the widget
-	     can read the active parking at all: it is a separate process with its own
-	     container. No team id, no profile, nothing secret — see docs/18. -->
+	<!-- docs/07 §13a. Sign in with Apple. Required by App Store Guideline 4.8 once the app
+	     offers any third-party sign-in, and on iOS it is the *only* one offered. Like the
+	     group above it carries no team id and nothing secret. -->
+	<key>com.apple.developer.applesignin</key>
+	<array>
+		<string>Default</string>
+	</array>
+	<!-- docs/06 §6. The reason the widget can read the active parking at all: it is a
+	     separate process with its own container. The one entitlement the widget target
+	     also carries. No team id, no profile, nothing secret — see docs/18. -->
 	<key>com.apple.security.application-groups</key>
 	<array>
 		<string>$(PK_APP_GROUP)</string>

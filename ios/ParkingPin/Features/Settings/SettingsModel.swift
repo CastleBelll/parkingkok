@@ -1,3 +1,4 @@
+import AuthenticationServices
 import Foundation
 import Observation
 import UIKit
@@ -12,6 +13,9 @@ final class SettingsModel {
     private let runtime: DetectionRuntime
     private let analyticsConsent: any AnalyticsConsentStoring
     private let analytics: any AnalyticsRecording
+    private let account: LinkingAccountIdentity
+    /// Holds the nonce between the button's two callbacks, so it has to outlive them both.
+    private let appleSignIn = AppleSignInRequest()
 
     private(set) var locationAuthorization: LocationAuthorization = .notDetermined
     private(set) var motionAuthorization: MotionAuthorization = .notDetermined
@@ -20,15 +24,23 @@ final class SettingsModel {
     /// docs/07 "동의". Off until the user turns it on, and read back from the store rather
     /// than assumed, so the row cannot claim a consent that was never persisted.
     var isAnalyticsConsentGranted = false
+    /// docs/07 §13a. 회원가입 없음 is the default, so this starts `.none` and stays there
+    /// for a user who never signs in.
+    private(set) var accountState: AccountState = .none
+    private(set) var isAccountBusy = false
+    /// Shown under the row, and only after something the user did. Never an SDK message.
+    private(set) var accountMessage: String?
 
     init(
         runtime: DetectionRuntime = .shared,
         analyticsConsent: any AnalyticsConsentStoring = AnalyticsComposition.consent,
-        analytics: any AnalyticsRecording = AnalyticsComposition.recorder
+        analytics: any AnalyticsRecording = AnalyticsComposition.recorder,
+        account: LinkingAccountIdentity = IdentityComposition.account
     ) {
         self.runtime = runtime
         self.analyticsConsent = analyticsConsent
         self.analytics = analytics
+        self.account = account
     }
 
     func refresh() async {
@@ -38,6 +50,66 @@ final class SettingsModel {
         isSmartDetectionEnabled = runtime.isSmartDetectionEnabled
         isAnalyticsConsentGranted = analyticsConsent.isGranted
         notificationAuthorization = await runtime.notificationAuthorization()
+        accountState = account.state()
+    }
+
+    var isSignedIn: Bool {
+        if case .linked = accountState {
+            true
+        } else {
+            false
+        }
+    }
+
+    /// The first half of `SignInWithAppleButton`: scopes and the hashed nonce.
+    func prepareAppleRequest(_ request: ASAuthorizationAppleIDRequest) {
+        accountMessage = nil
+        appleSignIn.prepare(request)
+    }
+
+    /// The second half. A cancellation says nothing — the user already knows they
+    /// cancelled, and a red line under the button would read as a failure.
+    func completeAppleSignIn(_ result: Result<ASAuthorization, any Error>) async {
+        guard !isAccountBusy else { return }
+        switch appleSignIn.credential(from: result) {
+        case .cancelled:
+            return
+        case .failed:
+            accountMessage = Self.linkFailedMessage
+        case let .credential(credential):
+            isAccountBusy = true
+            let outcome = await account.signIn(with: credential)
+            isAccountBusy = false
+            accountMessage = Self.message(for: outcome)
+            await refresh()
+        }
+    }
+
+    /// Unlinks the provider. The records are untouched, because they were never in the
+    /// account (docs/07 §13a) — which is also why this is not called 로그아웃 anywhere the
+    /// user can read.
+    func signOut() async {
+        guard !isAccountBusy else { return }
+        isAccountBusy = true
+        accountMessage = nil
+        await account.signOut()
+        isAccountBusy = false
+        await refresh()
+    }
+
+    private static let linkFailedMessage = "지금은 연결할 수 없어요. 잠시 후 다시 시도해 주세요."
+
+    private static func message(for result: AccountLinkResult) -> String? {
+        switch result {
+        case .linked:
+            nil
+        case .alreadyLinkedElsewhere:
+            // docs/07 §13b. The second sentence is the one that matters: a user who reads
+            // "이미 사용 중" without it will assume this phone just lost its records.
+            "이 Apple 계정은 다른 기기에서 이미 사용 중이에요. 이 기기의 주차 기록은 그대로 있어요."
+        case .failed:
+            linkFailedMessage
+        }
     }
 
     /// docs/04 §4: Always is requested contextually, only after this opt-in.

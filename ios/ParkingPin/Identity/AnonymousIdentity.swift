@@ -2,9 +2,10 @@ import Foundation
 
 /// The app's technical identity (docs/07 §4, §13).
 ///
-/// The UI stays 회원가입 없음: there is no sign-in screen and never was. This exists only
-/// because a backend call needs *some* caller, and it is created at the moment one is
-/// actually made — docs/04_IOS_IMPLEMENTATION.md §14: "not necessarily before home can
+/// The UI stays 회원가입 없음 by default: the one sign-in row in Settings *links* a provider
+/// to this uid (docs/07 §13a) rather than replacing it, and a user who never taps it never
+/// has an account. This exists because a backend call needs *some* caller, and it is created
+/// at the moment one is actually made — docs/04_IOS_IMPLEMENTATION.md §14: "not necessarily before home can
 /// render."
 ///
 /// It answers `nil` rather than throwing because every caller's honest response to a failed

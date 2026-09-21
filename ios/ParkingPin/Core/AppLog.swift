@@ -19,4 +19,8 @@ enum AppLog {
     /// a payload's keys are `AnalyticsPayload.Key.all` and its values are buckets and
     /// booleans, never a coordinate.
     static let analytics = Logger(subsystem: subsystem, category: "analytics")
+
+    /// Sign-in and account linking (docs/07 §13a). Never logs a token or an email — an
+    /// auth message can carry either, and docs/09 §11 keeps both out of the log.
+    static let identity = Logger(subsystem: subsystem, category: "identity")
 }
