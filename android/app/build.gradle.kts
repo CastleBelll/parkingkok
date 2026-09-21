@@ -102,6 +102,9 @@ dependencies {
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.analytics)
     implementation(libs.firebase.auth)
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play.services)
+    implementation(libs.google.id)
     // `Task.await()`, so the anonymous sign-in is an ordinary suspend call that a caller
     // can cancel, instead of a listener the app has to remember to detach.
     implementation(libs.kotlinx.coroutines.play.services)

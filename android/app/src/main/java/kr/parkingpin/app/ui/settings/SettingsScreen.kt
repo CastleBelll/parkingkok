@@ -68,6 +68,8 @@ fun SettingsScreen(
      * [onOpenSystemSettings], which is where they can actually be changed.
      */
     onRequestPermission: (String) -> Unit,
+    onSignIn: () -> Unit,
+    onSignOut: () -> Unit,
     onDeleteHistory: () -> Unit,
     onOpenDiagnostics: () -> Unit,
     onBack: () -> Unit,
@@ -91,18 +93,52 @@ fun SettingsScreen(
                         modifier = Modifier.size(24.dp),
                     )
                     Spacer(Modifier.width(MaterialTheme.spacing.medium))
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = stringResource(R.string.settings_account_title),
+                            text = stringResource(
+                                if (state.signedIn) {
+                                    R.string.settings_account_signed_in
+                                } else {
+                                    R.string.settings_account_title
+                                },
+                            ),
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                         Text(
-                            text = stringResource(R.string.settings_account_body),
+                            // docs/07 §13a: never 백업 or 복원. Signing in does not move
+                            // records to another device, because there is no sync, and a
+                            // user will assume the opposite unless told.
+                            text = stringResource(
+                                if (state.signedIn) {
+                                    R.string.settings_account_signed_in_body
+                                } else {
+                                    R.string.settings_account_body
+                                },
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                }
+                SettingsDivider()
+                // 회원가입 없음 stays the default, so this is one quiet row rather than a
+                // sign-in wall: the app has never needed an account and still does not.
+                ParkingpinRow(
+                    title = stringResource(
+                        if (state.signedIn) {
+                            R.string.settings_account_sign_out
+                        } else {
+                            R.string.settings_account_sign_in
+                        },
+                    ),
+                    supporting = if (state.signedIn) null else stringResource(R.string.settings_account_sign_in_body),
+                    iconRes = R.drawable.ic_person,
+                    enabled = !state.accountBusy,
+                    onClick = if (state.signedIn) onSignOut else onSignIn,
+                )
+                state.accountMessage?.let { message ->
+                    SectionFootnote(stringResource(message))
                 }
             }
         }
@@ -529,6 +565,8 @@ private fun SettingsPreview() {
             onOpenSystemSettings = {},
             onOpenBatterySettings = {},
             onRequestPermission = {},
+            onSignIn = {},
+            onSignOut = {},
             onDeleteHistory = {},
             onOpenDiagnostics = {},
             onBack = {},

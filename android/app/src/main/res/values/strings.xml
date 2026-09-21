@@ -266,6 +266,16 @@
     <string name="settings_title">설정</string>
     <string name="settings_account_title">회원가입 없이 사용 중</string>
     <string name="settings_account_body">모든 주차 기록은 이 기기에만 저장됩니다</string>
+    <!-- docs/07 §13a. Never 백업 or 복원: signing in does not move records to another
+         device, because there is no sync. Saying otherwise is the one thing this copy
+         must not do. -->
+    <string name="settings_account_signed_in">Google 계정 연결됨</string>
+    <string name="settings_account_signed_in_body">주차 기록은 계속 이 기기에만 저장돼요</string>
+    <string name="settings_account_sign_in">Google로 로그인</string>
+    <string name="settings_account_sign_in_body">나중에 추가될 기능을 위해 계정을 연결해 둬요</string>
+    <string name="settings_account_sign_out">연결 해제</string>
+    <string name="settings_account_conflict">이 Google 계정은 다른 기기에서 이미 사용 중이에요. 이 기기의 주차 기록은 그대로 있어요.</string>
+    <string name="settings_account_failed">지금은 연결할 수 없어요. 잠시 후 다시 시도해 주세요.</string>
     <string name="settings_section_detection">자동 감지</string>
     <string name="settings_detection_toggle">자동 주차 감지</string>
     <string name="settings_detection_toggle_caption">주차 시 자동으로 위치를 기록합니다</string>

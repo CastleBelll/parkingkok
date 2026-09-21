@@ -33,6 +33,10 @@ androidxTestRunner = "1.7.0"
 # Firebase (docs/07 §2). The BOM pins every Firebase artifact, so the modules below
 # carry no version of their own — that is the BOM's whole job.
 firebaseBom = "34.19.0"
+# docs/07 §13a sign-in. Credential Manager is the supported path on Android 14+;
+# GoogleSignInClient is deprecated and its `DEVELOPER_ERROR` was unreadable.
+androidxCredentials = "1.6.0"
+googleId = "1.1.1"
 googleServices = "4.5.0"
 junit = "4.13.2"
 
@@ -64,6 +68,9 @@ mlkit-text-recognition-korean = { module = "com.google.mlkit:text-recognition-ko
 firebase-bom = { module = "com.google.firebase:firebase-bom", version.ref = "firebaseBom" }
 firebase-analytics = { module = "com.google.firebase:firebase-analytics" }
 firebase-auth = { module = "com.google.firebase:firebase-auth" }
+androidx-credentials = { module = "androidx.credentials:credentials", version.ref = "androidxCredentials" }
+androidx-credentials-play-services = { module = "androidx.credentials:credentials-play-services-auth", version.ref = "androidxCredentials" }
+google-id = { module = "com.google.android.libraries.identity.googleid:googleid", version.ref = "googleId" }
 kotlinx-coroutines-play-services = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-play-services", version.ref = "kotlinxCoroutines" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "kotlinxCoroutines" }

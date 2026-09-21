@@ -8,6 +8,11 @@ import kr.parkingpin.app.analytics.AnalyticsConsentStore
 import kr.parkingpin.app.analytics.AnalyticsEvent
 import kr.parkingpin.app.analytics.AnalyticsRecording
 import kr.parkingpin.app.domain.parking.usecase.DeleteParkingHistoryUseCase
+import kr.parkingpin.app.R
+import kr.parkingpin.app.identity.AccountLinkResult
+import kr.parkingpin.app.identity.AccountProvider
+import kr.parkingpin.app.identity.AccountState
+import kr.parkingpin.app.identity.CredentialResult
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -24,6 +29,11 @@ import kotlinx.coroutines.launch
  */
 data class SettingsUiState(
     val detectionEnabled: Boolean = false,
+    /** docs/07 §13a: a provider is attached to the uid this device already had. */
+    val signedIn: Boolean = false,
+    val accountBusy: Boolean = false,
+    /** A string resource, or null. Cleared on the next attempt. */
+    val accountMessage: Int? = null,
     /** docs/06 §7b: the ongoing shade readout. Off by default — the widget is the answer. */
     val lockScreenNoticeEnabled: Boolean = false,
     val activityRecognitionGranted: Boolean = false,
@@ -51,17 +61,32 @@ class SettingsViewModel(
 
     private val permissions = MutableStateFlow(readPermissions())
 
+    /** Held apart from [permissions] because a sign-in is not a grant and does not re-read one. */
+    private data class AccountUi(val signedIn: Boolean, val busy: Boolean, val message: Int?)
+
+    private val account = MutableStateFlow(
+        AccountUi(
+            signedIn = container.accountIdentity.state() is AccountState.Linked,
+            busy = false,
+            message = null,
+        ),
+    )
+
     val uiState: StateFlow<SettingsUiState> =
         combine(
             container.detectionStateStore.desiredEnabled,
             container.detectionStateStore.lockScreenNoticeEnabled,
             analyticsConsentStore.granted,
             permissions,
-        ) { detectionEnabled, lockScreenNotice, analyticsConsent, granted ->
+            account,
+        ) { detectionEnabled, lockScreenNotice, analyticsConsent, granted, accountUi ->
             granted.copy(
                 detectionEnabled = detectionEnabled,
                 lockScreenNoticeEnabled = lockScreenNotice,
                 analyticsConsentGranted = analyticsConsent,
+                signedIn = accountUi.signedIn,
+                accountBusy = accountUi.busy,
+                accountMessage = accountUi.message,
             )
         }.stateIn(
             scope = viewModelScope,
@@ -77,6 +102,51 @@ class SettingsViewModel(
      */
     fun refresh() {
         permissions.value = readPermissions()
+    }
+
+    /**
+     * docs/07 §13a. The token comes from the UI layer because Credential Manager needs an
+     * `Activity` context; everything the token *means* is decided below, in
+     * [LinkingAccountIdentity], which links it to the uid this device already has.
+     */
+    fun onSignIn(requestToken: suspend () -> CredentialResult) {
+        if (uiState.value.accountBusy) return
+        account.value = account.value.copy(busy = true, message = null)
+        viewModelScope.launch {
+            val message = when (val credential = requestToken()) {
+                is CredentialResult.Token -> messageFor(
+                    container.accountIdentity.signIn(AccountProvider.GOOGLE, credential.value),
+                )
+                // The user closed the sheet. Saying anything would be scolding them for it.
+                CredentialResult.Cancelled -> null
+                is CredentialResult.Failed -> R.string.settings_account_failed
+            }
+            account.value = AccountUi(
+                signedIn = container.accountIdentity.state() is AccountState.Linked,
+                busy = false,
+                message = message,
+            )
+        }
+    }
+
+    fun onSignOut() {
+        if (uiState.value.accountBusy) return
+        account.value = account.value.copy(busy = true, message = null)
+        viewModelScope.launch {
+            container.accountIdentity.signOut()
+            account.value = AccountUi(signedIn = false, busy = false, message = null)
+        }
+    }
+
+    /**
+     * docs/07 §13b: a credential already attached to another Firebase user is refused, and
+     * the copy says the records on this phone are untouched — which is true, because they
+     * were never in the account.
+     */
+    private fun messageFor(result: AccountLinkResult): Int? = when (result) {
+        is AccountLinkResult.Linked -> null
+        AccountLinkResult.AlreadyLinkedElsewhere -> R.string.settings_account_conflict
+        is AccountLinkResult.Failed -> R.string.settings_account_failed
     }
 
     fun onDetectionEnabledChange(enabled: Boolean) {
