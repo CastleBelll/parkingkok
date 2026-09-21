@@ -174,6 +174,50 @@ Paid recovery:
 
 Free referral credit after uninstall/cross-platform device change cannot be guaranteed without optional future account-linking. Do not imply guaranteed recovery in UI.
 
+### 13a. Sign-in is a **link**, never a second sign-in (2026-09-21)
+
+The UI stays 회원가입 없음 by default. Signing in is something a user reaches for, not
+something the app demands, and when they do it must cost them nothing.
+
+**The rule: `linkWithCredential` on the existing anonymous user. Never `signInWithCredential`.**
+
+The difference is the whole feature. Linking keeps the same Firebase uid and attaches a
+provider to it, so everything keyed to that uid — `accounts/{accountId}.currentAuthUid`, the
+referral ledger, the entitlement — stays pointed at the same person. Signing in mints a
+*new* uid and abandons the anonymous one, silently, with whatever was keyed to it. Today
+there is no server state to lose, which is exactly why the rule has to be written before
+there is: the failure is invisible until the moment it is expensive.
+
+**What actually carries over, stated plainly so the UI does not overpromise:**
+
+| | carried |
+|---|---|
+| parking records, photos, floor/zone/memo | **yes, trivially** — they are local files and a Room/SwiftData store, keyed to the device and not to any account (docs/00) |
+| OS permissions, detection settings, consent | **yes** — nothing about them is account-shaped |
+| referral / entitlement / `accountId` | **yes, and only because of `linkWithCredential`** |
+| the same data on a *second* device | **no.** There is no sync. Signing in on a new phone gives that phone the same account and an empty history |
+
+That last row is the one a user will assume the other way round. Sign-in copy must not say
+백업 or 복원.
+
+### 13b. The credential already belongs to someone else
+
+`linkWithCredential` fails with a collision when the Google/Apple account is already attached
+to another Firebase user — most often the same person, on a phone they signed in on before.
+Two ways out:
+
+- **sign in to the existing account**, abandoning this device's anonymous uid and anything
+  keyed to it, or
+- **refuse the link** and say why.
+
+**v1 refuses.** Abandoning a uid is unrecoverable and silent, and the app has no server state
+yet that would make the trade worth it. The copy says the account is already in use on
+another device and that the parking records on this phone are untouched — which is true,
+because they were never in the account.
+
+Revisit when there is something on the server worth merging, and revisit it as a merge, not
+as a switch.
+
 ## 14. Remote Config
 Common values + platform overrides.
 Server values always clamped by client.

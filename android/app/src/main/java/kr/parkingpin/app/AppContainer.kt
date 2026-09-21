@@ -53,6 +53,9 @@ import kr.parkingpin.app.domain.widget.ParkingWidgetSync
 import kr.parkingpin.app.entitlement.isWidgetStepperEntitled
 import kr.parkingpin.app.identity.AnonymousIdentity
 import kr.parkingpin.app.identity.FirebaseAnonymousSignIn
+import kr.parkingpin.app.identity.FirebaseAccountLinking
+import kr.parkingpin.app.identity.LinkingAccountIdentity
+import kr.parkingpin.app.identity.UnavailableAccountLinking
 import kr.parkingpin.app.identity.LazyAnonymousIdentity
 import kr.parkingpin.app.identity.UnavailableAnonymousIdentity
 import kr.parkingpin.app.location.CheckpointParkingLocationProvider
@@ -160,6 +163,22 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
         firebaseApp
             ?.let { LazyAnonymousIdentity(FirebaseAnonymousSignIn(FirebaseAuth.getInstance(it))) }
             ?: UnavailableAnonymousIdentity
+    }
+
+    /**
+     * docs/07 §13a: signing in attaches a provider to the uid this device already has.
+     *
+     * Lazy for the same reason [anonymousIdentity] is — nothing on a detection wake needs an
+     * account — and built on top of it rather than beside it, because the anonymous uid has
+     * to exist *before* anything can be linked to it.
+     */
+    val accountIdentity: LinkingAccountIdentity by lazy {
+        LinkingAccountIdentity(
+            anonymous = anonymousIdentity,
+            linking = firebaseApp
+                ?.let { FirebaseAccountLinking(FirebaseAuth.getInstance(it)) }
+                ?: UnavailableAccountLinking,
+        )
     }
 
 
