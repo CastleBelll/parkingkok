@@ -54,7 +54,7 @@ final class ParkingModel {
 
     init(
         store: any ParkingStoring,
-        locationProvider: any ParkingLocationProviding = DetectionParkingLocationProvider(),
+        locationProvider: any ParkingLocationProviding = CurrentFixParkingLocationProvider(),
         photoStore: any ParkingPhotoStoring = UnavailableParkingPhotoStore(),
         clock: any DateProviding = SystemDateProvider(),
         analytics: any AnalyticsRecording = DisabledAnalyticsRecorder(),

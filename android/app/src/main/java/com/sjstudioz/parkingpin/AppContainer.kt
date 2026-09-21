@@ -59,6 +59,7 @@ import com.sjstudioz.parkingpin.identity.UnavailableAccountLinking
 import com.sjstudioz.parkingpin.identity.LazyAnonymousIdentity
 import com.sjstudioz.parkingpin.identity.UnavailableAnonymousIdentity
 import com.sjstudioz.parkingpin.location.CheckpointParkingLocationProvider
+import com.sjstudioz.parkingpin.location.CurrentFixParkingLocationProvider
 import com.sjstudioz.parkingpin.trace.FileTraceStore
 import com.sjstudioz.parkingpin.trace.NotificationLabelPromptDelivery
 import com.sjstudioz.parkingpin.trace.TraceLabelPrompter
@@ -380,7 +381,12 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
     )
 
     val parkingLocationProvider: ParkingLocationProvider by lazy {
-        CheckpointParkingLocationProvider(detectionStateStore)
+        // A fix now, then the drive's, then nothing (FR-001) — see
+        // `CurrentFixParkingLocationProvider` for why the checkpoint alone was not enough.
+        CurrentFixParkingLocationProvider(
+            context = appContext,
+            fallback = CheckpointParkingLocationProvider(detectionStateStore),
+        )
     }
 
     private val registrar = ActivityTransitionRegistrar(appContext)

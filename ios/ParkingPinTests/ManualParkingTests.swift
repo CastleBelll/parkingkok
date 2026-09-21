@@ -1,3 +1,4 @@
+import CoreLocation
 import Foundation
 import Testing
 @testable import ParkingPin
@@ -219,6 +220,83 @@ private struct StubParkingLocationProvider: ParkingLocationProviding {
 
     func currentParkedLocation() async -> ParkedLocation? {
         location
+    }
+}
+
+/// A fake Core Location, so the order of `CurrentFixParkingLocationProvider` is testable
+/// without a GPS.
+@MainActor
+private final class StubOneShotLocator: OneShotLocating {
+    private let fix: CLLocation?
+    private(set) var calls = 0
+
+    init(fix: CLLocation?) {
+        self.fix = fix
+    }
+
+    func currentFix(timeout: TimeInterval) async -> CLLocation? {
+        calls += 1
+        return fix
+    }
+}
+
+private func stubFix(accuracy: CLLocationAccuracy) -> CLLocation {
+    CLLocation(
+        coordinate: CLLocationCoordinate2D(latitude: 37.5, longitude: 127.0),
+        altitude: 0,
+        horizontalAccuracy: accuracy,
+        verticalAccuracy: -1,
+        timestamp: Date()
+    )
+}
+
+/// **FR-001, and the bug that made this suite exist.** 주차 위치 저장 saved no location on a
+/// phone that had not driven with detection on, because the provider only ever read the
+/// detection checkpoint and never asked the OS.
+@MainActor
+struct CurrentFixParkingLocationProviderTests {
+    @Test("Pressing save asks for a fix now, rather than reusing the drive's")
+    func asksForAFix() async {
+        let locator = StubOneShotLocator(fix: stubFix(accuracy: 12))
+        let provider = CurrentFixParkingLocationProvider(
+            locator: locator,
+            fallback: UnavailableParkingLocationProvider()
+        )
+
+        let location = await provider.currentParkedLocation()
+
+        #expect(locator.calls == 1)
+        #expect(location?.horizontalAccuracy == 12)
+    }
+
+    @Test("A fix too coarse to mean anything falls through to the checkpoint")
+    func coarseFixFallsBack() async {
+        // 2 km is what an indoor fix reports, and a pin drawn from it would claim a place
+        // the car is not (FR-008).
+        let fallbackLocation = ParkedLocation(
+            latitude: 37.6,
+            longitude: 127.1,
+            horizontalAccuracy: 20,
+            capturedAt: Date()
+        )
+        let provider = CurrentFixParkingLocationProvider(
+            locator: StubOneShotLocator(fix: stubFix(accuracy: 2000)),
+            fallback: StubParkingLocationProvider(location: fallbackLocation)
+        )
+
+        #expect(await provider.currentParkedLocation() == fallbackLocation)
+    }
+
+    @Test("No fix and no checkpoint still saves, without coordinates")
+    func noFixIsANormalAnswer() async {
+        // FR-001: 위치 권한 없이도 저장 가능. The whole point of the fallback chain ending
+        // in nothing rather than in a failure.
+        let provider = CurrentFixParkingLocationProvider(
+            locator: StubOneShotLocator(fix: nil),
+            fallback: UnavailableParkingLocationProvider()
+        )
+
+        #expect(await provider.currentParkedLocation() == nil)
     }
 }
 

@@ -46,6 +46,60 @@ struct DetectionParkingLocationProvider: ParkingLocationProviding {
     }
 }
 
+/// Asks the OS for a fix, because the user just pressed 주차 위치 저장 (FR-001).
+///
+/// **The old behaviour was to read the detection checkpoint and nothing else**, which meant
+/// a button named "save parking location" saved no location at all on a phone that had not
+/// driven with detection on — a fresh install, detection switched on this morning, a trip
+/// taken before the opt-in. Reported from the device, and it is the app's whole point
+/// missing from the app's main button.
+///
+/// The reasoning behind the old shape conflated two rules. FR-001's "위치 권한 없이도 저장
+/// 가능" means the save must survive a refusal; it does not mean the app may never ask. And
+/// pressing this button is the clearest location request a user can make — clearer than the
+/// background authorization the detection opt-in asks for.
+///
+/// Order, and why:
+/// 1. **A fix now.** The car is here, at this moment. Nothing else can say that.
+/// 2. **The checkpoint**, if it is fresh enough — underground, where a one-shot fix will not
+///    come, the drive that just ended is the better answer anyway.
+/// 3. **Nothing**, and the record is saved without coordinates. FR-001 intact.
+@MainActor
+struct CurrentFixParkingLocationProvider: ParkingLocationProviding {
+    /// A save is not a drive: the engine's 35 m gate (docs/05 §6) exists to keep a poor
+    /// sample from becoming `lastReliableLocation` mid-drive, where a better one is a second
+    /// away. Here there is no second fix coming, and a 60 m pin still answers "which
+    /// building". Past 100 m it stops answering anything, and FR-008 forbids presenting that
+    /// as where the car is.
+    static let maximumHorizontalAccuracy: Double = 100
+
+    private let locator: any OneShotLocating
+    private let fallback: any ParkingLocationProviding
+
+    init(
+        locator: any OneShotLocating = CoreLocationOneShotLocator(),
+        fallback: any ParkingLocationProviding = DetectionParkingLocationProvider()
+    ) {
+        self.locator = locator
+        self.fallback = fallback
+    }
+
+    func currentParkedLocation() async -> ParkedLocation? {
+        if let fix = await locator.currentFix(timeout: CoreLocationOneShotLocator.defaultTimeout),
+           fix.horizontalAccuracy > 0,
+           fix.horizontalAccuracy <= Self.maximumHorizontalAccuracy
+        {
+            return ParkedLocation(
+                latitude: fix.coordinate.latitude,
+                longitude: fix.coordinate.longitude,
+                horizontalAccuracy: fix.horizontalAccuracy,
+                capturedAt: fix.timestamp
+            )
+        }
+        return await fallback.currentParkedLocation()
+    }
+}
+
 /// The permission-less case, made explicit.
 ///
 /// Used by previews and by the FR-001 tests, which have to prove that a save with no
