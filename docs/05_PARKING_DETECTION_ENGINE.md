@@ -324,11 +324,25 @@ chances at each boundary.
 iOS needs no equivalent: its adapters wake on Core Motion and `CLServiceSession`, and the
 engine ticks at `now` on each of those.
 
-##### One thing this still does not do
-- **iOS examines the windows before the edge as well**, so a `walking_enter` arriving after
-  `transitionWindow` has closed confirms nothing there while Android still opens a candidate.
-  Closing it needs Android's `fold` split into evidence and edge halves, the way iOS's
-  `ingest`/`applyEdge` already are. Recorded rather than papered over.
+##### The windows are judged before the edge too (2026-09-21)
+
+Both engines now run **ingest → windows → edge → windows** on every event, and the ordering
+is the contract rather than an implementation detail.
+
+Android's `fold` is split the way iOS's already was: `ingestEvidence` folds what the event
+*observes* — a location fix, a quality degradation — and the session lifecycle a motion or
+link edge implies is folded with the edge afterwards. That split is what lets the windows be
+judged with this event's evidence in hand but without its transition already applied.
+
+The case it fixes: a `walking_enter` arriving after `transitionWindow` has closed. iOS found
+`IDLE` and confirmed nothing; Android found `PARKING_TRANSITION` still standing and opened a
+candidate for a stop that had been abandoned minutes earlier. Held now by a test on each
+side — `A walk that arrives after the window confirms nothing` and
+`a walk that arrives after the transition window confirms nothing`.
+
+Folding the evidence **first** remains the half that is easy to get wrong, and the reason is
+above: a batch opened with a tick judges the windows before the fix that would have advanced
+them, which is the 2026-09-20 measurement that retired the subway trip.
 
 ### Leaving a pending candidate behind
 

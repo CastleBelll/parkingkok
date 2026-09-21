@@ -317,11 +317,43 @@ class ParkingDetectionEngine(
      * edge halves the way iOS's `ingest`/`applyEdge` already are — docs/05 §3a.
      */
     fun handle(state: DetectionEngineState, event: DetectionEvent): EngineStep {
-        val folded = fold(state, event)
+        val effects = mutableListOf<DetectionEffect>()
+
+        // The evidence this event carries, folded **before** the windows are judged. This is
+        // the half that is easy to get wrong: a fix that lands more than `movementIdleWindow`
+        // after the last one is a drive continuing, and judging the window first would read
+        // it as a parking. Measured on 2026-09-20 flipping `subway_commute_underground`.
+        val ingested = ingestEvidence(state, event)
+        val settled = settleTimeouts(ingested, event.atMillis, effects)
+
+        // Then the edge, against the state the windows left behind. `before` stays the state
+        // as it was on entry, because both rules that read it ask "what did *this event*
+        // change" — the promotion bar in `DRIVING_CANDIDATE` and the returning-movement row
+        // in `PARKING_TRANSITION` — and a settle in between changes neither answer.
+        val folded = fold(settled, event)
         val edge = transition(before = state, state = folded, event = event)
-        val effects = edge.effects.toMutableList()
+        effects += edge.effects
+
         return EngineStep(settleTimeouts(edge.state, event.atMillis, effects), effects)
     }
+
+    /**
+     * The evidence half of the fold, and the only part that runs before the windows.
+     *
+     * Mirrors iOS's `ingest`, which folds a location fix and leaves every motion edge to
+     * `applyEdge`. The split is what lets the windows be judged with this event's evidence in
+     * hand but without its transition already applied — so a `walking_enter` that arrives
+     * after `transitionWindow` has closed finds `IDLE` and confirms nothing, which is what
+     * iOS has always done and Android did not.
+     */
+    private fun ingestEvidence(state: DetectionEngineState, event: DetectionEvent): DetectionEngineState =
+        when (event) {
+            is DetectionEvent.Location -> foldLocation(state, event.sample)
+            is DetectionEvent.LocationQualityDegraded -> state.copy(
+                session = state.session?.plusReason(EvidenceReasonCode.LOCATION_QUALITY_DEGRADED),
+            )
+            else -> state
+        }
 
     /**
      * Runs [timeoutRow] to a fixed point, because one event can be minutes after the last
@@ -469,10 +501,12 @@ class ParkingDetectionEngine(
             )
 
             is DetectionEvent.StationaryExit -> state
-            is DetectionEvent.Location -> foldLocation(state, event.sample)
-            is DetectionEvent.LocationQualityDegraded -> state.copy(
-                session = state.session?.plusReason(EvidenceReasonCode.LOCATION_QUALITY_DEGRADED),
-            )
+
+            // Already folded by `ingestEvidence`, before the windows were judged. Folding
+            // again here would count one fix twice.
+            is DetectionEvent.Location,
+            is DetectionEvent.LocationQualityDegraded,
+            -> state
 
             // §3a: opens a session, but does **not** arm the promotion bar. People sit in
             // parked cars, and 90 s of Bluetooth in a stationary one used to promote the

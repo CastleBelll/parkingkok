@@ -154,6 +154,24 @@ class ParkingDetectionEngineTest {
     }
 
     @Test
+    fun `a walk that arrives after the transition window confirms nothing`() {
+        // The windows are judged **before** the edge, which is what iOS has always done and
+        // Android did not: the walk used to find `PARKING_TRANSITION` still standing and open
+        // a candidate for a stop that had already been abandoned 30 s earlier.
+        val transition = driving().handle(DetectionEvent.VehicleExit(T0 + 1_000))
+        assertEquals(DetectionState.PARKING_TRANSITION, transition.state)
+
+        val late = transition.handle(
+            DetectionEvent.WalkingEnter(
+                T0 + 1_000 + ParkingDetectionEngine.TRANSITION_WINDOW_MILLIS + 30_000,
+            ),
+        )
+
+        assertEquals(DetectionState.IDLE, late.state)
+        assertNull("the window closed before the walk arrived", late.candidate)
+    }
+
+    @Test
     fun `PARKING_TRANSITION to CANDIDATE_PENDING on walking`() {
         val state = driving()
             .handle(DetectionEvent.VehicleExit(T0 + 1_000))
