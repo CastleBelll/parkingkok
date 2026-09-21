@@ -44,6 +44,9 @@ struct RehydrationSnapshot: Sendable, Equatable {
     /// Location observations the recorder refused because it had already recorded that
     /// instant — Core Location replaying a cached fix, most often after a relaunch.
     var traceReplayDropCount = 0
+    /// §11 departures that actually closed a record. Zero with a rising
+    /// `drivingSessionCount` is a departure detector that moves the machine and nothing else.
+    var autoEndedParkingCount = 0
 
     // ── Bounded driving session (M0A-2) ──────────────────────────────────────
     var isCapturingDrivingLocation = false
@@ -150,6 +153,7 @@ actor BackgroundCoordinator {
     /// it is off nothing is recorded, and turning it off closes the open session.
     private var isTraceRecordingEnabled = true
 
+    private let endActiveParking: (@Sendable (Date) async -> Bool)?
     private let engine: ParkingDetectionEngine
     private var snapshot = RehydrationSnapshot()
     /// Newest vehicle observation already handed to the engine. Motion history is replayed
@@ -169,8 +173,14 @@ actor BackgroundCoordinator {
         candidateHistory: (any CandidateHistoryStoring)? = nil,
         candidateNotifier: (any CandidateNotifying)? = nil,
         analytics: any AnalyticsRecording = DisabledAnalyticsRecorder(),
+        /// §11 departure closes the open record. A closure rather than the SwiftData store
+        /// itself: this actor runs in background wakes that must not open the model
+        /// container (docs/04 §7), and only a confirmed departure ever calls it. Answers
+        /// whether a record was actually closed.
+        endActiveParking: (@Sendable (Date) async -> Bool)? = nil,
         engine: ParkingDetectionEngine = ParkingDetectionEngine()
     ) {
+        self.endActiveParking = endActiveParking
         self.checkpointStore = checkpointStore
         self.motionHistory = motionHistory
         self.locationCapture = locationCapture
@@ -636,6 +646,14 @@ actor BackgroundCoordinator {
             }
             try? candidateStore?.clear()
             await candidateNotifier?.withdraw(candidateId: id)
+
+        case let .endActiveParking(at):
+            // §11. Reported only when a record was actually closed: a departure detected
+            // after the user already pressed 주차 종료 is not an automatic end.
+            if await endActiveParking?(at) == true {
+                analytics.record(.parkingAutoEnd)
+                snapshot.autoEndedParkingCount += 1
+            }
 
         case .candidateRuleUnmet:
             // §6's rule was not met. An ordinary outcome, counted rather than logged as a

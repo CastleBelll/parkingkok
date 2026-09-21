@@ -105,6 +105,25 @@ struct DrivingEvidence: Sendable, Equatable {
         confirmedAt != nil
     }
 
+    /// §7's guard, **evaluated** rather than latched.
+    ///
+    /// [isConfirmed] is a latch that `promoteToDriving` sets on §3a's 90-second bar, which
+    /// is a weaker test than §7 and is set by a path §11's departure never takes. Reading
+    /// the latch there meant a real departure never confirmed — found by the test that was
+    /// supposed to prove it did.
+    ///
+    /// > recent vehicle evidence AND (duration >=120s OR distance >=800m) AND movement
+    /// > evidence consistent with travel.
+    func meetsDrivingConfirmation(now: Date) -> Bool {
+        guard let lastVehicle = lastVehicleEvidenceAt,
+              now.timeIntervalSince(lastVehicle) <= DrivingConfirmationPolicy.vehicleEvidenceMaxAge
+        else { return false }
+        let longEnough = duration(now: now) >= DrivingConfirmationPolicy.minimumDuration
+        let farEnough = distanceMeters >= DrivingConfirmationPolicy.minimumDistance
+        guard longEnough || farEnough else { return false }
+        return movingSampleCount >= MovementEvidencePolicy.minimumMovingSamples
+    }
+
     func duration(now: Date) -> TimeInterval {
         now.timeIntervalSince(startedAt)
     }

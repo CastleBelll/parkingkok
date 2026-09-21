@@ -273,11 +273,18 @@ final class ParkingModel {
     }
 
     /// docs/06 §8: stamp `endedAt` on the same record and let it fall into history.
+    ///
+    /// [at] is when the parking actually ended. 주차 종료 leaves it nil and means now; §11's
+    /// automatic departure passes the moment the car pulled away, which is minutes before
+    /// the engine could be sure of it — stamping now would record the parking as ending
+    /// somewhere down the road. Never earlier than the start, so a clock that moved
+    /// backwards cannot produce a negative duration.
     @discardableResult
-    func endActiveParking() -> Bool {
+    func endActiveParking(at: Date? = nil) -> Bool {
         guard let session = activeSession else { return false }
+        let endedAt = max(at ?? clock.now, session.startedAt)
         return perform {
-            try store.endSession(id: session.id, at: clock.now)
+            try store.endSession(id: session.id, at: endedAt)
             refreshAfterWrite()
         }
     }

@@ -727,10 +727,18 @@ because leaving one open is recoverable and ending one the user is still sitting
 `parking_auto_end` (docs/17) is reported only when a record was actually closed. A departure
 detected after the user already ended the parking by hand is not an automatic end.
 
-**OPEN: iOS has none of this.** `.parked` and `.departureCandidate` are no-op cases in its
-engine — the two states exist in the enum and nothing transitions into them. Until that is
-built the platforms diverge on §11, and no fixture can pin the rule because a fixture must
-pass on both. This is the next §11 task, not a decision left open.
+**iOS landed the same day (2026-09-21)** and the two platforms now agree. iOS's shape
+differs only where the engines differ: the session is opened by `vehicle_enter` while
+`PARKED`, the bars are checked in `tickOnce`, and the record is closed by the coordinator
+calling `ParkingModel.endActiveParking(at:)`.
+
+One thing the iOS build had to fix on the way, and it is worth knowing about:
+`DrivingEvidence.isConfirmed` is a **latch**, set by `promoteToDriving` on §3a's 90-second
+bar. It is not §7's guard, and departure needs §7's guard. Reading the latch meant a real
+departure never confirmed — caught by the test written to prove it did.
+`meetsDrivingConfirmation(now:)` now evaluates §7 directly, and is what the departure row
+asks. Android never had this hazard because its `DrivingConfirmationGuard.evaluate` was
+already a function of the evidence rather than a flag on it.
 
 ## 12. Taxi/Bus Mitigation
 - short trip guards

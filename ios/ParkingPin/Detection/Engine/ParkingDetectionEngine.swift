@@ -357,10 +357,57 @@ actor ParkingDetectionEngine {
             // no event for a guess that went unanswered.
             return retirePendingCandidate(now: now)
 
-        case .idle, .parked, .departureCandidate:
+        case .departureCandidate:
+            guard let evidence = driving else { return moveTo(.parked, now: now) }
+            // §11 "departure confirmed" is §7's guard in full — the one bar this project
+            // has for a meaningful driving session, movement clause included. Leaving a
+            // parking record open is recoverable; ending one the user is still sitting in
+            // is not, which is why departure is the one place the stricter guard is right.
+            if evidence.meetsDrivingConfirmation(now: now) {
+                return confirmDeparture(now: now)
+            }
+            // Vehicle evidence went quiet without ever becoming a drive: the phone woke up
+            // in a parked car. Back to `PARKED`, silently, having ended nothing.
+            guard now.timeIntervalSince(evidence.lastVehicleEvidenceAt ?? evidence.startedAt)
+                >= DrivingConfirmationPolicy.drivingCandidateWindow
+            else { return [] }
+            driving = nil
+            return [.stopLocationCapture] + moveTo(.parked, now: now)
+
+        case .parked:
+            guard let evidence = driving, departureBarsCleared(evidence, now: now) else { return [] }
+            return moveTo(.departureCandidate, now: now)
+
+        case .idle:
             return []
         }
     }
+
+    /// §11 `DEPARTURE_CANDIDATE → DRIVING`, and the one effect that closes the parking.
+    ///
+    /// The record ends when the car pulled away — `checkpoint.stateEnteredAt` is when §11's
+    /// two bars were first cleared — not now, which is however long §7's guard took to be
+    /// satisfied afterwards.
+    private func confirmDeparture(now: Date) -> [DetectionEffect] {
+        let departedAt = checkpoint.stateEnteredAt
+        hasProducedCandidateInSession = false
+        return [.endActiveParking(at: departedAt)] + moveTo(.driving, now: now)
+    }
+
+    /// §11 `PARKED → DEPARTURE_CANDIDATE`: vehicle ≥ 90 s **and** movement ≥ 500 m.
+    ///
+    /// Both, because a phone that woke up in a parked car satisfies the first on its own.
+    private func departureBarsCleared(_ evidence: DrivingEvidence, now: Date) -> Bool {
+        guard isVehicleActive,
+              now.timeIntervalSince(max(evidence.startedAt, vehicleActiveSince ?? evidence.startedAt))
+              >= DrivingConfirmationPolicy.minimumVehicleDuration
+        else { return false }
+        return evidence.distanceMeters >= Self.departureMovementMeters
+    }
+
+    /// §11's movement bar. Deliberately lower than §7's 800 m: this only opens a candidate
+    /// state, and §7's guard in full is what actually ends the parking.
+    private static let departureMovementMeters: Double = 500
 
     // MARK: - §3a rows driven by events
 
@@ -392,11 +439,28 @@ actor ParkingDetectionEngine {
             // superseded where §10a puts it: when this new session actually produces a
             // candidate of its own.
             return openDrivingCandidate(vehicleEvidenceAt: date, now: now)
-        case .drivingCandidate, .driving, .parked, .departureCandidate:
+        case .parked:
+            // §11: getting back in. The session opens here so the bars have something to
+            // measure, and the state does not move until they are cleared — `PARKED` is
+            // where a phone that merely woke up in a parked car has to stay.
+            if driving == nil {
+                driving = DrivingEvidence(startedAt: date, lastVehicleEvidenceAt: date)
+                checkpoint.travelDistanceEstimate = 0
+                return [.startBoundedLocationCapture, persistedCheckpoint()]
+            }
+            return isNewerEvidence ? [persistedCheckpoint()] : []
+        case .drivingCandidate, .driving, .departureCandidate:
             // No row moves here, but the freshest vehicle observation is still worth
             // remembering: it is the anchor a relaunch replays motion history from.
             return isNewerEvidence ? [persistedCheckpoint()] : []
         }
+    }
+
+    /// §11: the engine was watching a possible departure and the vehicle ended first. The
+    /// parking was never left, so nothing is closed and nothing is said.
+    private func abandonDeparture(now: Date) -> [DetectionEffect] {
+        driving = nil
+        return [.stopLocationCapture] + moveTo(.parked, now: now)
     }
 
     private func handleVehicleExit(now: Date) -> [DetectionEffect] {
@@ -413,7 +477,15 @@ actor ParkingDetectionEngine {
                 + moveTo(.idle, now: now)
         case .driving:
             return endDrivingSession(reason: .vehicleExit, now: now)
-        case .idle, .parkingTransition, .candidatePending, .parked, .departureCandidate:
+        case .departureCandidate:
+            return abandonDeparture(now: now)
+        case .parked:
+            // Got in, got out again. §11 never moved, so there is nothing to undo beyond
+            // releasing the capture this session opened.
+            guard driving != nil else { return [] }
+            driving = nil
+            return [.stopLocationCapture, persistedCheckpoint()]
+        case .idle, .parkingTransition, .candidatePending:
             return []
         }
     }

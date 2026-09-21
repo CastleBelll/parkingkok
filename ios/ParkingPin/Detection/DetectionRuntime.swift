@@ -131,7 +131,13 @@ final class DetectionRuntime {
             candidateStore: candidates,
             candidateHistory: history,
             candidateNotifier: candidateNotifier ?? UserNotificationCandidateDelivery(),
-            analytics: analytics
+            analytics: analytics,
+            // §11. Resolved at call time rather than captured: this runtime is built on a
+            // background wake that may precede the model container entirely, and only a
+            // confirmed departure ever reaches here.
+            endActiveParking: { at in
+                await MainActor.run { ParkingComposition.shared?.model.endActiveParking(at: at) ?? false }
+            }
         )
         locationAuthorization = monitor.authorization
         motionAuthorization = motionHistory.authorization
