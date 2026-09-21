@@ -9,6 +9,10 @@ import SwiftUI
 /// Features that do not exist yet are shown disabled and labelled `준비 중` rather than
 /// hidden or faked. A switch that does nothing would be worse than an honest gap — and
 /// hiding them would lose the section order the mock establishes.
+///
+/// The badge has to come **off** on the day the feature lands, and twice it did not:
+/// 주차 종료 자동 감지 and the widget both shipped while this screen still called them
+/// 준비 중. Only Plus and CSV export are placeholders now.
 struct SettingsView: View {
     private let appInfo: AppInfo
     private let parkingModel: ParkingModel?
@@ -142,10 +146,14 @@ struct SettingsView: View {
             )) {
                 SettingsLabel(title: "자동 주차 감지", subtitle: "주차한 순간을 앱이 먼저 알아차려요")
             }
-            // FR-010. Not built: the departure detector does not exist yet.
-            SettingsPlaceholderRow(
+            // FR-010, and it is built — docs/05 §11a. It has no switch of its own because
+            // it is the same state machine: `DEPARTURE_CANDIDATE` only exists inside a
+            // detection session, so the toggle above already turns it off. A second switch
+            // would be a second thing to get out of sync.
+            SettingsStateRow(
                 title: "주차 종료 자동 감지",
-                subtitle: "출차하면 주차를 자동으로 종료해요"
+                subtitle: "출차하면 주차를 자동으로 종료해요",
+                state: model.isSmartDetectionEnabled ? "켜짐" : "자동 감지 필요"
             )
             Toggle(isOn: Binding(
                 get: { model.isAnalyticsConsentGranted },
@@ -177,8 +185,13 @@ struct SettingsView: View {
                     model.openSystemSettings()
                 }
             }
-            // FR-011. No widget target in the build yet.
-            SettingsPlaceholderRow(title: "위젯", subtitle: "홈 화면에서 층을 바로 확인해요")
+            // FR-011, and the widget ships (docs/06 §7). No button can place one — only the
+            // person holding the phone can — so the row says where, rather than pretending
+            // to be an action or, as it did until now, claiming the feature does not exist.
+            SettingsLabel(
+                title: "위젯",
+                subtitle: "홈 화면을 길게 누르고 + 에서 주차핀을 추가하면 층이 바로 보여요"
+            )
         }
         .listRowBackground(PKColor.surface)
     }
@@ -332,6 +345,26 @@ private struct SettingsStatusRow: View {
 
 /// A feature the app does not have yet. Disabled and named as such — docs/19's quality
 /// bar is that the UI does not overstate what is there.
+/// A row for something that works and has no switch of its own — the state says so.
+///
+/// Not `SettingsPlaceholderRow`: that one means "does not exist yet", and wearing it while
+/// the feature shipped is how 주차 종료 자동 감지 spent a week telling users it was missing.
+private struct SettingsStateRow: View {
+    let title: String
+    let subtitle: String
+    let state: String
+
+    var body: some View {
+        HStack {
+            SettingsLabel(title: title, subtitle: subtitle)
+            Spacer(minLength: PKSpacing.s)
+            PKBadge(state, tone: .muted)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(state)
+    }
+}
+
 private struct SettingsPlaceholderRow: View {
     let title: String
     let subtitle: String
