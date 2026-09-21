@@ -155,8 +155,8 @@
     <!-- Elapsed time (docs/10_DESIGN_UX_SPEC.md §6 item 3) -->
     <string name="elapsed_just_now">방금 주차했어요</string>
     <!-- 홈 화면 위젯 (docs/06 §7a). 좌표/주소/사진은 어떤 문자열에도 담기지 않는다.
-         사용자에게 보이는 브랜드명은 "주차핀"이다. 패키지명/클래스명 등 내부 식별자는
-         parkingkok 그대로이고, 여기서 바꾸는 것은 표시 문자열뿐이다. -->
+         사용자에게 보이는 브랜드명은 "주차핀"이고, 2026-09-21 부터 패키지명도
+         com.parkingpin.app 이다. 클래스명의 Parkingkok 접두어는 일부러 그대로 뒀다. -->
     <string name="widget_label">주차핀 2x2</string>
     <string name="widget_label_wide">주차핀 4x2</string>
     <string name="widget_description">현재 주차한 층과 경과 시간</string>

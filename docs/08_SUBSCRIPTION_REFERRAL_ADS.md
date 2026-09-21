@@ -49,11 +49,11 @@ StoreKit or Play Billing. A banner slot with no SDK behind it and no caller is d
 
 ## 2. Product IDs
 ### iOS
-`com.<company>.parkingkok.plus.monthly`
+`com.parkingpin.app.plus.monthly`
 StoreKit auto-renewable subscription.
 
 ### Android
-`parkingkok_plus_monthly` or store naming equivalent.
+`parkingpin_plus_monthly` or store naming equivalent.
 Use one subscription with one monthly base plan at MVP.
 
 Keep only one tier to avoid upgrade/downgrade complexity.

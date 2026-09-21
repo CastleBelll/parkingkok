@@ -96,9 +96,24 @@ The user-facing brand is **주차핀**. Every string a user can read says 주차
 widget labels, notifications, settings, paywall, store copy ("주차핀 Plus", "주차핀 가족 공유",
 "주차핀에 주차 위치가 저장됐어요").
 
-Internal identifiers are **not** renamed and must not be: package names, Bundle IDs, the
-Firebase project, class names, directory names, module names all stay `parkingkok`. A PR
-that renames an identifier to match the brand is wrong.
+Identifiers were renamed to match, **once, on 2026-09-21, before the first store
+submission** — that being the only moment a package name can change. Play shows the package
+in its own URL, so it was not purely internal.
+
+| | value |
+|---|---|
+| Android `applicationId` and package | `com.parkingpin.app` |
+| iOS bundle prefix | `com.parkingpin.app` (`.dev`, `.staging` per xcconfig) |
+| iOS App Group | `group.com.parkingpin.app*`, derived from the bundle id |
+| Firebase project | `parkingpin-dev` / `parkingpin-staging` / `parkingpin-prod` |
+
+**That window is now closed.** Once a build reaches a store the package name and bundle ID
+are permanent, and a PR that changes either is wrong.
+
+Swift type and module names, Kotlin class names and the `ParkingKok`/`Parkingkok` prefixes
+on them were deliberately **left alone**. None of them reaches a user or a store listing,
+and renaming them would have been churn across several hundred files for no outcome. A file
+called `ParkingkokApp.kt` inside `com.parkingpin.app` is expected, not a leftover.
 
 ## Visual Reference Rule
 When building or revising UI, consult the packaged design screenshots in `design-references/`

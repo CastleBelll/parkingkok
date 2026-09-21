@@ -7,7 +7,7 @@ import OSLog
 /// construction — adapters map `CLLocation` to accuracy + timestamp before anything
 /// loggable sees it.
 enum AppLog {
-    private static let subsystem = Bundle.main.bundleIdentifier ?? "com.parkingkok.app"
+    private static let subsystem = Bundle.main.bundleIdentifier ?? "com.parkingpin.app"
 
     /// App/scene lifecycle and background relaunch bookkeeping.
     static let lifecycle = Logger(subsystem: subsystem, category: "lifecycle")

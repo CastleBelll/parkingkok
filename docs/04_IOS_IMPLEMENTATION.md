@@ -290,7 +290,7 @@ Plus gate checked before SDK ad request.
 ## 16. Deep Links
 
 Custom URL or universal link later:
-- `parkingkok://referral/PKXXXX`
+- `parkingpin://referral/PKXXXX`
 
 MVP may use share text with code to avoid universal-link infrastructure.
 
