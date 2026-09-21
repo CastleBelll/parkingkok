@@ -267,6 +267,16 @@ struct SettingsView: View {
             .tint(PKColor.textPrimary)
             LabeledContent("버전", value: appInfo.versionSummary)
                 .font(PKTypography.supporting)
+            #if PK_DEV
+                // What the Auth SDK on *this device* believes, verbatim, so it can be
+                // compared with `firebase auth:export`. The two disagreed on 2026-09-21 —
+                // the screen said linked and the project said anonymous — and with no way
+                // to read a device log without root there was nothing to check it against.
+                // A uid is not a coordinate and this is compiled out of STAGING and PROD.
+                LabeledContent("계정", value: model.accountDebugSummary)
+                    .font(PKTypography.supporting)
+                    .textSelection(.enabled)
+            #endif
         } header: {
             Text("개발자")
         }

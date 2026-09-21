@@ -51,6 +51,12 @@ final class SettingsModel {
         isAnalyticsConsentGranted = analyticsConsent.isGranted
         notificationAuthorization = await runtime.notificationAuthorization()
         accountState = account.state()
+        #if PK_DEV
+            // Refreshed here rather than only at launch, so a sign-in can be read off the
+            // device the moment it happens — the 2026-09-21 case needed the app's view and
+            // the project's view at the same instant to tell which one was lying.
+            FirebaseSelfCheck.writeAccountState()
+        #endif
     }
 
     var isSignedIn: Bool {
@@ -96,6 +102,17 @@ final class SettingsModel {
         isAccountBusy = false
         await refresh()
     }
+
+    #if PK_DEV
+        /// The uid and every provider attached to it, for the DEV-only row in Settings.
+        var accountDebugSummary: String {
+            switch accountState {
+            case .none: "no user"
+            case let .anonymous(uid): "\(uid) · anonymous"
+            case let .linked(uid, provider): "\(uid) · \(provider.rawValue)"
+            }
+        }
+    #endif
 
     private static let linkFailedMessage = "지금은 연결할 수 없어요. 잠시 후 다시 시도해 주세요."
 

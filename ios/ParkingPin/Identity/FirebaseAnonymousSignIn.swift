@@ -77,10 +77,48 @@ enum IdentityComposition {
             Task.detached {
                 let uid = await identity.uid()
                 AppLog.lifecycle.info("selfcheck anonymous uid: \(uid ?? "unavailable", privacy: .public)")
+                writeAccountState()
                 // Goes through the ordinary recorder, so the consent gate decides this
                 // exactly as it decides a real event — which is the half being verified.
                 analytics.record(.onboardingCompleted)
             }
+        }
+
+        /// Drops what Auth believes about this device into the App Group container, where
+        /// `devicectl device copy from` can read it.
+        ///
+        /// It exists because on 2026-09-21 the Settings screen said the account was linked
+        /// and `firebase auth:export` said it was anonymous, and there was no way to check
+        /// either: `log collect --device-udid` needs root, and `--console` does not carry
+        /// os_log. A uid and a provider id are neither coordinates nor credentials
+        /// (docs/09 §11), and this whole enum is compiled out of STAGING and PROD.
+        static func writeAccountState() {
+            guard let identifier = Bundle.main
+                .object(forInfoDictionaryKey: "PKAppGroupIdentifier") as? String,
+                let container = FileManager.default
+                .containerURL(forSecurityApplicationGroupIdentifier: identifier)
+            else { return }
+
+            let user = Auth.auth().currentUser
+            let state: [String: Any] = [
+                "uid": user?.uid ?? "none",
+                "isAnonymous": user?.isAnonymous ?? false,
+                "providers": user?.providerData.map(\.providerID) ?? [],
+                "capturedAt": ISO8601DateFormatter().string(from: Date()),
+            ]
+            // `Library/Application Support` for the same reason the widget projection uses
+            // it: it is the only part of a shared container `devicectl` will read.
+            let directory = container.appending(
+                path: "Library/Application Support/Diagnostics",
+                directoryHint: .isDirectory
+            )
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            guard let data = try? JSONSerialization.data(withJSONObject: state, options: .prettyPrinted)
+            else { return }
+            try? data.write(
+                to: directory.appending(path: "account.json", directoryHint: .notDirectory),
+                options: .atomic
+            )
         }
     }
 #endif
