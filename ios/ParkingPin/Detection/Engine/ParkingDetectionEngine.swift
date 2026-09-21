@@ -524,9 +524,31 @@ actor ParkingDetectionEngine {
             // is retired and its notification withdrawn before it is worth anything, and
             // the trip can still produce the real parking later.
             return retirePendingCandidate(now: now) + resumeDrivingFromCandidate(now: now)
-        case .drivingCandidate, .driving, .parkingTransition, .parked, .departureCandidate:
+        case .parked:
+            // §11b, and the mirror of the disconnect row below: the phone rejoining the car
+            // is the strongest departure signal there is, and waiting for 500 m of GPS to
+            // say the same thing is waiting for evidence that is already in.
+            //
+            // It opens the candidate and nothing more. `DEPARTURE_CANDIDATE` shows nothing
+            // and ends nothing until §7's guard is satisfied, so sitting in a parked car
+            // with the radio on costs the record nothing — the evidence goes stale and the
+            // machine returns to `PARKED`.
+            return openDepartureFromCarLink(now: now)
+        case .drivingCandidate, .driving, .parkingTransition, .departureCandidate:
             return []
         }
+    }
+
+    /// §11b. Opens a departure on the link, reusing whatever session `PARKED` already had.
+    ///
+    /// The session is the one the fold's `vehicle_enter` would have opened; there may be
+    /// none yet, in which case the link itself is the first vehicle evidence this departure
+    /// has and the evidence starts here.
+    private func openDepartureFromCarLink(now: Date) -> [DetectionEffect] {
+        if driving == nil {
+            driving = DrivingEvidence(startedAt: now, lastVehicleEvidenceAt: now)
+        }
+        return moveTo(.departureCandidate, now: now)
     }
 
     /// §3a "The car link", row 2: `DRIVING → CANDIDATE_PENDING`, skipping

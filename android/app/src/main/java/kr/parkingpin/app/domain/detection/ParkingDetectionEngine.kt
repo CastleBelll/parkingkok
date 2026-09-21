@@ -771,6 +771,16 @@ class ParkingDetectionEngine(
 
     private fun fromParked(state: DetectionEngineState, event: DetectionEvent): EngineStep {
         val session = state.session ?: return EngineStep(state)
+        // §11b. The mirror of §3a's disconnect row: the phone rejoining the car is the
+        // strongest departure signal there is, and waiting for 500 m of GPS to say the same
+        // thing is waiting for evidence that is already in.
+        //
+        // It opens the candidate and nothing more — `DEPARTURE_CANDIDATE` shows nothing and
+        // ends nothing until §7's guard is satisfied, so sitting in a parked car with the
+        // radio on costs the record nothing.
+        if (event is DetectionEvent.CarLinkConnected) {
+            return state.moveTo(DetectionState.DEPARTURE_CANDIDATE, event.atMillis)
+        }
         // §11: vehicle >= 90s **and** movement >= 500m. Both, because a phone that woke up
         // in a parked car satisfies the first on its own.
         val departing = session.hasSustainedVehicleActivity(event.atMillis) &&

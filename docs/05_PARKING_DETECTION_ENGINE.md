@@ -776,6 +776,35 @@ departure never confirmed — caught by the test written to prove it did.
 asks. Android never had this hazard because its `DrivingConfirmationGuard.evaluate` was
 already a function of the evidence rather than a flag on it.
 
+### 11b. The car link opens a departure (2026-09-21)
+
+**`PARKED` + `car_link_connected` → `DEPARTURE_CANDIDATE`.** §3a already calls the link the
+strongest signal this product can get, and the departure side was ignoring it: reconnecting
+to the car's Bluetooth or to Android Auto / CarPlay did nothing at all while parked, so a
+drive away still had to be re-derived from 90 s of motion and 500 m of GPS — the two bars
+§11 was built on before there was a link to ask.
+
+It is the mirror of the row §3a already has on the other side: a disconnect while `DRIVING`
+skips `PARKING_TRANSITION` and opens the candidate outright, because the phone leaving the
+car is the parking. A connect while `PARKED` is the same statement in reverse.
+
+**It opens the candidate; it does not end the parking.** The distinction is the whole of
+§11a: `DEPARTURE_CANDIDATE` shows nothing and ends nothing, and only `DrivingConfirmationGuard`
+— §7's guard in full — closes the record. Ending outright on the connect would delete the
+one thing the app is for whenever someone sits in a parked car with the radio on, which is
+exactly the false positive §3a's gating table already had to be narrowed for.
+
+**The end time is still right.** The record is closed at `DEPARTURE_CANDIDATE`'s entry time
+(§11a), which is now the moment the phone reconnected to the car — a better answer than the
+old one, which was whenever 90 s of vehicle motion and 500 m happened to be reached.
+
+**Sitting in the car and not driving costs nothing.** Vehicle evidence goes stale
+`recentVehicleWindow` after the connect, the lapse row returns the machine to `PARKED`, and
+the record was never touched.
+
+No fixture covers this: §3a forbids a fixture that depends on a link event being present, so
+it is held by per-platform engine tests on both sides.
+
 ## 12. Taxi/Bus Mitigation
 - short trip guards
 - one candidate per travel session

@@ -86,6 +86,55 @@ struct DepartureTests {
         #expect(endedAt(effects) == nil, "ending a parking the user is still inside is the unrecoverable move")
     }
 
+    @Test("Reconnecting to the car opens a departure, and ends nothing yet")
+    func carLinkOpensDeparture() async throws {
+        // §11b. The mirror of §3a's disconnect row: the phone rejoining the car is the
+        // strongest departure signal there is, and it used to do nothing at all here.
+        let engine = await parkedEngine()
+
+        let gotInAt = at(3600)
+        let effects = await engine.handle(.carLinkConnected(at: gotInAt, kind: .bluetoothAudio))
+
+        #expect(await engine.state == .departureCandidate)
+        // Opening is not ending: §11a's rule is that only §7's guard closes a record.
+        #expect(endedAt(effects) == nil, "a connect is not yet a drive")
+    }
+
+    @Test("Driving away after reconnecting ends the parking at the moment of the connect")
+    func carLinkDepartureEndsAtTheConnect() async throws {
+        let engine = await parkedEngine()
+
+        let gotInAt = at(3600)
+        var effects = await engine.handle(.carLinkConnected(at: gotInAt, kind: .bluetoothAudio))
+        for step in 1 ... 12 {
+            effects += await engine.handle(
+                .location(fix(at: gotInAt.addingTimeInterval(Double(step) * 30), north: Double(step) * 300))
+            )
+        }
+
+        #expect(await engine.state == .driving)
+        let ended = try #require(endedAt(effects))
+        // Better than the answer §11's bars gave: the record closes at the moment the phone
+        // rejoined the car, not whenever 90 s and 500 m happened to be reached afterwards.
+        #expect(ended == gotInAt)
+    }
+
+    @Test("Sitting in the car with the radio on returns to PARKED and ends nothing")
+    func carLinkWithoutDrivingEndsNothing() async throws {
+        // The false positive §3a's gating table was narrowed for, on the departure side:
+        // a link with no drive behind it must cost the record nothing.
+        let engine = await parkedEngine()
+
+        let gotInAt = at(3600)
+        var effects = await engine.handle(.carLinkConnected(at: gotInAt, kind: .bluetoothAudio))
+        effects += await engine.handle(
+            .timerTick(at: gotInAt.addingTimeInterval(DrivingConfirmationPolicy.drivingCandidateWindow + 60))
+        )
+
+        #expect(await engine.state == .parked)
+        #expect(endedAt(effects) == nil)
+    }
+
     @Test("A departure that turns back ends nothing")
     func abandonedDepartureEndsNothing() async throws {
         // Past §11's bars — 90 s and 500 m — but short of §7's, which wants 120 s or 800 m.

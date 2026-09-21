@@ -1,5 +1,6 @@
 package kr.parkingpin.app.domain.detection
 
+import kr.parkingpin.app.domain.location.DrivingConfirmationGuard
 import kr.parkingpin.app.domain.location.LocationSample
 import kr.parkingpin.app.domain.parking.ConfidenceBucket
 import org.junit.Assert.assertEquals
@@ -247,6 +248,64 @@ class ParkingDetectionEngineTest {
             .handle(DetectionEvent.Location(fix(T1 + SUSTAIN + 60_000, accuracyM = 5f, speedMps = 15f, north = 600.0)))
 
         assertEquals(DetectionState.DEPARTURE_CANDIDATE, moved.state)
+    }
+
+    @Test
+    fun `PARKED to DEPARTURE_CANDIDATE on a car link connect, ending nothing yet`() {
+        // §11b. The mirror of §3a's disconnect row: the phone rejoining the car is the
+        // strongest departure signal there is, and it used to do nothing at all here.
+        val parked = pendingCandidate().handle(DetectionEvent.UserConfirmedParking(T0 + 40_000))
+
+        val step = engine.handle(parked, DetectionEvent.CarLinkConnected(T1))
+
+        assertEquals(DetectionState.DEPARTURE_CANDIDATE, step.state.state)
+        // Opening is not ending: §11a says only §7's guard closes a record.
+        assertTrue(
+            "a connect is not yet a drive",
+            step.effects.none { it is DetectionEffect.EndActiveParking },
+        )
+    }
+
+    @Test
+    fun `a car link departure ends the parking at the moment of the connect`() {
+        val parked = pendingCandidate().handle(DetectionEvent.UserConfirmedParking(T0 + 40_000))
+        val gotIn = parked.handle(DetectionEvent.CarLinkConnected(T1))
+
+        // §7's guard in full: 120 s and 800 m. Six fixes, because distance accumulates
+        // between consecutive fixes — the first one only sets the anchor.
+        var confirmed = gotIn
+        var effects = emptyList<DetectionEffect>()
+        for (leg in 1..6) {
+            val step = engine.handle(
+                confirmed,
+                DetectionEvent.Location(
+                    fix(T1 + leg * 30_000L, accuracyM = 5f, speedMps = 15f, north = leg * 200.0),
+                ),
+            )
+            confirmed = step.state
+            effects = effects + step.effects
+        }
+
+        assertEquals(DetectionState.DRIVING, confirmed.state)
+        val ended = effects.filterIsInstance<DetectionEffect.EndActiveParking>().single()
+        // Better than what §11's bars answered: the record closes when the phone rejoined
+        // the car, not whenever 90 s and 500 m were reached afterwards.
+        assertEquals(T1, ended.endedAtMillis)
+    }
+
+    @Test
+    fun `sitting in a parked car with the radio on returns to PARKED and ends nothing`() {
+        // The false positive §3a's gating table was narrowed for, on the departure side.
+        val parked = pendingCandidate().handle(DetectionEvent.UserConfirmedParking(T0 + 40_000))
+        val gotIn = parked.handle(DetectionEvent.CarLinkConnected(T1))
+
+        val step = engine.handle(
+            gotIn,
+            DetectionEvent.TimerTick(T1 + DrivingConfirmationGuard.RECENT_VEHICLE_WINDOW_MILLIS + 60_000),
+        )
+
+        assertEquals(DetectionState.PARKED, step.state.state)
+        assertTrue(step.effects.none { it is DetectionEffect.EndActiveParking })
     }
 
     @Test
