@@ -64,6 +64,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
 import android.os.PowerManager
+import com.parkingkok.app.domain.parking.usecase.EndParkingUseCase
 import com.parkingkok.app.widget.CompositeWidgetProjectionStore
 import com.parkingkok.app.widget.GlanceWidgetProjectionStore
 import com.parkingkok.app.widget.LockScreenParkingNotice
@@ -412,6 +413,10 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
     val parkingDetectionRuntime: ParkingDetectionRuntime = ParkingDetectionRuntime(
         store = detectionStateStore,
         candidates = { parkingCandidateCoordinator },
+        // §11 departure. Providers, not values: a broadcast-started process that only sees
+        // a transition must not pay to open Room, and only a confirmed departure calls this.
+        endParking = { endedAtMillis -> EndParkingUseCase(parkingRepository, clock)(endedAtMillis) },
+        analytics = { analyticsRecorder },
     )
 
     val transitionEventIngestor: TransitionEventIngestor = TransitionEventIngestor(

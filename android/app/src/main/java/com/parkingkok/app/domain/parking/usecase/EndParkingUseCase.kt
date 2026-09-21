@@ -17,10 +17,18 @@ class EndParkingUseCase(
     private val clock: Clock,
 ) {
 
-    /** The closed record, or null when nothing was open. */
-    suspend operator fun invoke(): ParkingRecord? {
+    /**
+     * The closed record, or null when nothing was open.
+     *
+     * [endedAtMillis] is when the parking actually ended. The manual 주차 종료 button leaves
+     * it null and means "now"; §11's automatic departure passes the moment the car pulled
+     * away, which is minutes before the engine could be sure of it. Stamping "now" there
+     * would put the end of the parking somewhere down the road.
+     */
+    suspend operator fun invoke(endedAtMillis: Long? = null): ParkingRecord? {
         val active = repository.findActive() ?: return null
         val now = clock.nowEpochMillis()
+        val endedAt = endedAtMillis ?: now
         return repository.update(active.id) { record ->
             // Re-checked inside the transaction: a widget or a second screen may have
             // closed it between findActive and here, and the first end is the real one.
@@ -29,7 +37,7 @@ class EndParkingUseCase(
             } else {
                 record.copy(
                     // A clock that moved backwards must not produce a negative duration.
-                    endedAtMillis = maxOf(now, record.startedAtMillis),
+                    endedAtMillis = maxOf(endedAt, record.startedAtMillis),
                     updatedAtMillis = now,
                     revision = record.revision + 1,
                 )

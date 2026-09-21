@@ -652,6 +652,34 @@ Initial:
 
 If uncertain -> suggestion, not destructive silent end.
 
+### 11a. What a confirmed departure actually does (2026-09-21)
+
+Android's engine has had `PARKED → DEPARTURE_CANDIDATE → DRIVING` for some time. What it
+did not have was any **effect**, so the machine noticed the departure and the user's
+진행 중 주차 stayed open for ever — they still had to press 주차 종료 by hand. The last mile:
+
+`DEPARTURE_CANDIDATE → DRIVING` now emits `EndActiveParking(endedAtMillis)`, and the runtime
+closes the open record through the same `EndParkingUseCase` the manual button uses.
+
+**The end time is when the car pulled away, not when the engine was sure.** That transition
+is guarded by `DrivingConfirmationGuard` in full — §7's bar for a meaningful driving session
+— which is minutes of driving after the fact. The effect therefore carries
+`DEPARTURE_CANDIDATE`'s own entry time, the moment §11's two bars were first cleared.
+Stamping "now" would record the parking as ending somewhere down the road.
+
+**"If uncertain → suggestion" is honoured by the state below it.** Reaching
+`DEPARTURE_CANDIDATE` and never confirming ends nothing and shows nothing; the record stays
+open and the user is not told anything happened. Only the strict guard closes a record,
+because leaving one open is recoverable and ending one the user is still sitting in is not.
+
+`parking_auto_end` (docs/17) is reported only when a record was actually closed. A departure
+detected after the user already ended the parking by hand is not an automatic end.
+
+**OPEN: iOS has none of this.** `.parked` and `.departureCandidate` are no-op cases in its
+engine — the two states exist in the enum and nothing transitions into them. Until that is
+built the platforms diverge on §11, and no fixture can pin the rule because a fixture must
+pass on both. This is the next §11 task, not a decision left open.
+
 ## 12. Taxi/Bus Mitigation
 - short trip guards
 - one candidate per travel session

@@ -234,6 +234,20 @@ sealed interface DetectionEffect {
 
     /** §15 `markParkingActive`. The record itself is written by the confirmation flow. */
     data class MarkParkingActive(val candidateId: String) : DetectionEffect
+
+    /**
+     * §11 departure, confirmed: close the open parking record.
+     *
+     * [endedAtMillis] is when the car **started moving**, not when the engine finished
+     * deciding — `DrivingConfirmationGuard` needs a meaningful driving session before it
+     * will say so, which is minutes of driving after the fact. Stamping "now" would put the
+     * end of the parking somewhere down the road.
+     *
+     * Only emitted from `DEPARTURE_CANDIDATE → DRIVING`, which is §7's guard in full. §11's
+     * "if uncertain → suggestion, not destructive silent end" is honoured by the state
+     * *below* it: reaching `DEPARTURE_CANDIDATE` and not confirming ends nothing.
+     */
+    data class EndActiveParking(val endedAtMillis: Long) : DetectionEffect
 }
 
 /** One turn of the reducer. */
@@ -646,7 +660,14 @@ class ParkingDetectionEngine(
         // record open is recoverable; ending one the user is still inside is not, which is
         // why departure is the one place the stricter guard is the right guard.
         if (DrivingConfirmationGuard.evaluate(session.evidence, event.atMillis).confirmed) {
-            return state.moveTo(DetectionState.DRIVING, event.atMillis)
+            // The parking ended when the car pulled away — `stateEnteredAtMillis` is when
+            // §11's two bars were first cleared — not now, which is however long the strict
+            // guard took to be satisfied afterwards.
+            val step = state.moveTo(DetectionState.DRIVING, event.atMillis)
+            return EngineStep(
+                step.state,
+                listOf(DetectionEffect.EndActiveParking(state.stateEnteredAtMillis)) + step.effects,
+            )
         }
         val lapsed = event is DetectionEvent.VehicleExit ||
             (

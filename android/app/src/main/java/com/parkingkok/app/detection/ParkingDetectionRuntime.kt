@@ -1,6 +1,9 @@
 package com.parkingkok.app.detection
 
 import android.util.Log
+import com.parkingkok.app.analytics.AnalyticsEvent
+import com.parkingkok.app.analytics.AnalyticsRecording
+import com.parkingkok.app.domain.parking.ParkingRecord
 import com.parkingkok.app.analytics.DetectionProperties
 import com.parkingkok.app.analytics.DistanceBucket
 import com.parkingkok.app.analytics.DriveDurationBucket
@@ -54,6 +57,17 @@ class ParkingDetectionRuntime(
     private val store: DetectionStateStore,
     private val candidates: () -> ParkingCandidateCoordinator,
     private val engine: ParkingDetectionEngine = ParkingDetectionEngine { UUID.randomUUID().toString() },
+    /**
+     * §11 departure closes the open record. A provider for the same reason [candidates] is
+     * one: most events this runtime handles never touch Room, and it runs in whatever
+     * process a broadcast happened to start.
+     *
+     * Null in the tests that only care about state transitions; a departure then moves the
+     * machine and closes nothing, which is exactly what a build without a record store
+     * should do.
+     */
+    private val endParking: (suspend (Long) -> ParkingRecord?)? = null,
+    private val analytics: (() -> AnalyticsRecording)? = null,
 ) {
 
     private val mutex = Mutex()
@@ -141,6 +155,14 @@ class ParkingDetectionRuntime(
                 // that holds the floor the user typed. Reaching `PARKED` is the engine's
                 // half and it is already in the checkpoint written below.
                 is DetectionEffect.MarkParkingActive -> Unit
+
+                // §11 departure. The record is closed at the moment the car pulled away,
+                // and the report goes out only if a record was actually open — a departure
+                // detected for a parking the user already ended by hand is not an auto-end.
+                is DetectionEffect.EndActiveParking ->
+                    if (endParking?.invoke(effect.endedAtMillis) != null) {
+                        analytics?.invoke()?.record(AnalyticsEvent.ParkingAutoEnd)
+                    }
 
                 // Written together with the engine state at the end of the batch, not once
                 // per effect: §14 wants a durable checkpoint after a transition, not a file
