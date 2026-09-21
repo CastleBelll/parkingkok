@@ -53,12 +53,13 @@ struct FirebaseAccountLinking: AccountLinking {
         do {
             let result = try await user.link(with: authCredential)
             return .linked(uid: result.user.uid, previousUid: previousUid)
-        } catch let error as NSError where error.code == AuthErrorCode.credentialAlreadyInUse.rawValue
-            || error.code == AuthErrorCode.accountExistsWithDifferentCredential.rawValue
-            || error.code == AuthErrorCode.providerAlreadyLinked.rawValue {
-            // docs/07 §13b. Refused rather than switched: the alternative abandons this
-            // device's uid silently, and v1 has nothing on the server worth that.
-            return .alreadyLinkedElsewhere
+        } catch let error as NSError where Self.collisionResults[error.code] != nil {
+            // docs/07 §13b, and **three different situations** that were being reported as
+            // one. Telling a user their account is "in use on another device" when the real
+            // problem is that their Apple ID's email belongs to a Google sign-in sends them
+            // looking for a phone that has nothing to do with it.
+            AppLog.identity.info("link refused: \(error.code, privacy: .public)")
+            return Self.collisionResults[error.code] ?? .alreadyLinkedElsewhere
         } catch {
             // The domain and code only — an auth message can carry a token fragment or an
             // email, and docs/09 §11 keeps both out of the log.
@@ -67,6 +68,19 @@ struct FirebaseAccountLinking: AccountLinking {
             return .failed(reason: "\(nsError.domain)(\(nsError.code))")
         }
     }
+
+    /// The collisions `link(with:)` reports, each meaning something different to the user.
+    ///
+    /// `accountExistsWithDifferentCredential` is the one worth naming: it is not about this
+    /// credential at all but about the **email** behind it, and a project set to "one
+    /// account per email address" answers it whenever the same person uses Apple here and
+    /// Google elsewhere.
+    private static let collisionResults: [Int: AccountLinkResult] = [
+        AuthErrorCode.credentialAlreadyInUse.rawValue: .alreadyLinkedElsewhere,
+        AuthErrorCode.emailAlreadyInUse.rawValue: .emailBelongsToAnotherAccount,
+        AuthErrorCode.accountExistsWithDifferentCredential.rawValue: .emailBelongsToAnotherAccount,
+        AuthErrorCode.providerAlreadyLinked.rawValue: .alreadyLinkedToThisAccount
+    ]
 
     func signOut() async {
         guard bootstrap.isStarted else { return }

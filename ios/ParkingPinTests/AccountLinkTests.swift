@@ -59,9 +59,14 @@ final class FakeAuthStore: @unchecked Sendable {
         lock.withLock {
             linkAttempts += 1
             guard let uid else { return .failed(reason: "no current user") }
-            // Both §13b shapes: the credential belongs elsewhere, or this account already
-            // carries the provider.
-            guard !credentialIsTaken, provider == nil else { return .alreadyLinkedElsewhere }
+            // §13b's shapes are not one shape: a credential owned by someone else is a
+            // refusal, and a provider already on *this* account is nothing at all.
+            if provider != nil {
+                return .alreadyLinkedToThisAccount
+            }
+            if credentialIsTaken {
+                return .alreadyLinkedElsewhere
+            }
             provider = credential.provider
             // The uid is deliberately unchanged. A fake that minted a new one here would be
             // modelling `signIn(with:)`, which is the bug the real tests are about.
@@ -176,8 +181,8 @@ struct LinkingAccountIdentityTests {
         #expect(try store.state() == .anonymous(uid: #require(anonymousUid)))
     }
 
-    @Test("Linking twice is refused rather than silently re-linking")
-    func secondLinkIsRefused() async {
+    @Test("Linking the same provider twice says so, and does not read as someone else's account")
+    func secondLinkIsNotAConflict() async {
         let store = FakeAuthStore()
         _ = store.signInAnonymously()
         let identity = LinkingAccountIdentity(
@@ -188,7 +193,9 @@ struct LinkingAccountIdentityTests {
         _ = await identity.signIn(with: appleCredential())
         let second = await identity.signIn(with: appleCredential())
 
-        #expect(second == .alreadyLinkedElsewhere)
+        // The screen was simply behind. Telling this user their account is in use on
+        // another device would send them looking for a phone that does not exist.
+        #expect(second == .alreadyLinkedToThisAccount)
     }
 
     @Test("Signing out drops the provider without touching anything else")

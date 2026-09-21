@@ -42,12 +42,25 @@ enum AccountLinkResult: Sendable, Equatable {
     /// The provider is attached and the uid is unchanged from `previousUid`.
     case linked(uid: String, previousUid: String)
 
-    /// docs/07 §13b: the credential already belongs to another Firebase user.
+    /// docs/07 §13b: this Apple/Google account is already attached to another Firebase user.
     ///
     /// v1 refuses rather than switching. Switching abandons this device's anonymous uid and
     /// everything keyed to it, silently and unrecoverably, and the app has no server state
     /// yet that would make the trade worth it.
     case alreadyLinkedElsewhere
+
+    /// docs/07 §13b: **a different collision, and it was being reported as the one above.**
+    ///
+    /// The provider is attached to nobody — the *email address* behind it is already used by
+    /// another account with a different sign-in method. It is what a Firebase project with
+    /// "one account per email address" answers when the same person signs in with Apple on
+    /// one phone and Google on another, which is not an error the user can act on by
+    /// finding their other device.
+    case emailBelongsToAnotherAccount
+
+    /// The provider is already on *this* user. Nothing to do, and not a failure: the screen
+    /// is simply behind, so the caller refreshes and says 연결됨.
+    case alreadyLinkedToThisAccount
 
     /// Offline, cancelled at the provider sheet, anything else. Nothing changed.
     case failed(reason: String)

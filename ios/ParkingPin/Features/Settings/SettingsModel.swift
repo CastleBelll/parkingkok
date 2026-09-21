@@ -55,7 +55,7 @@ final class SettingsModel {
             // Refreshed here rather than only at launch, so a sign-in can be read off the
             // device the moment it happens — the 2026-09-21 case needed the app's view and
             // the project's view at the same instant to tell which one was lying.
-            FirebaseSelfCheck.writeAccountState()
+            FirebaseSelfCheck.writeAccountState(lastLinkOutcome: lastLinkOutcome)
         #endif
     }
 
@@ -87,6 +87,9 @@ final class SettingsModel {
             let outcome = await account.signIn(with: credential)
             isAccountBusy = false
             accountMessage = Self.message(for: outcome)
+            #if PK_DEV
+                lastLinkOutcome = "\(outcome)"
+            #endif
             await refresh()
         }
     }
@@ -104,6 +107,10 @@ final class SettingsModel {
     }
 
     #if PK_DEV
+        /// The last thing `link` answered, verbatim, for the diagnostics file. A message on
+        /// screen says what the user should do; this says which Firebase code produced it.
+        private var lastLinkOutcome: String?
+
         /// The uid and every provider attached to it, for the DEV-only row in Settings.
         var accountDebugSummary: String {
             switch accountState {
@@ -118,12 +125,17 @@ final class SettingsModel {
 
     private static func message(for result: AccountLinkResult) -> String? {
         switch result {
-        case .linked:
+        case .linked, .alreadyLinkedToThisAccount:
             nil
         case .alreadyLinkedElsewhere:
             // docs/07 §13b. The second sentence is the one that matters: a user who reads
             // "이미 사용 중" without it will assume this phone just lost its records.
             "이 Apple 계정은 다른 기기에서 이미 사용 중이에요. 이 기기의 주차 기록은 그대로 있어요."
+        case .emailBelongsToAnotherAccount:
+            // Deliberately not the sentence above. Nothing is wrong with the other device
+            // and there may not be one — the email behind this Apple ID is simply already
+            // signed in with a different method, and only that method can reach it.
+            "이 Apple ID의 이메일은 다른 로그인 방식으로 이미 쓰고 있어요. 이 기기의 주차 기록은 그대로 있어요."
         case .failed:
             linkFailedMessage
         }

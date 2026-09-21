@@ -105,7 +105,7 @@ enum IdentityComposition {
         /// either: `log collect --device-udid` needs root, and `--console` does not carry
         /// os_log. A uid and a provider id are neither coordinates nor credentials
         /// (docs/09 §11), and this whole enum is compiled out of STAGING and PROD.
-        static func writeAccountState() {
+        static func writeAccountState(lastLinkOutcome: String? = nil) {
             guard let identifier = Bundle.main
                 .object(forInfoDictionaryKey: "PKAppGroupIdentifier") as? String,
                 let container = FileManager.default
