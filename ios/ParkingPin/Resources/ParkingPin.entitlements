@@ -2,6 +2,13 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- docs/05 §10. The candidate notification is posted with
+	     `interruptionLevel = .timeSensitive`, and **without this entitlement iOS silently
+	     downgrades it** — no error, no log, it simply waits behind a Focus like any other
+	     alert. The one notification this app posts about something happening right now is
+	     the one that must not. -->
+	<key>com.apple.developer.usernotifications.time-sensitive</key>
+	<true/>
 	<!-- docs/07 §13a. Sign in with Apple. Required by App Store Guideline 4.8 once the app
 	     offers any third-party sign-in, and on iOS it is the *only* one offered. Like the
 	     group above it carries no team id and nothing secret. -->

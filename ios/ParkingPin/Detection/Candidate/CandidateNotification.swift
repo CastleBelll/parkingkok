@@ -85,6 +85,10 @@ struct UserNotificationCandidateDelivery: CandidateNotifying {
         // The user has just walked away from a car and has 45 minutes to answer; this is
         // worth breaking a Focus for, and it is the one notification the app posts that is
         // about something happening now.
+        //
+        // Needs `com.apple.developer.usernotifications.time-sensitive` in the entitlements
+        // and the matching capability on the App ID. Without them iOS downgrades this line
+        // to `.active` without saying so — it shipped that way until 2026-09-21.
         content.interruptionLevel = .timeSensitive
 
         let request = UNNotificationRequest(
