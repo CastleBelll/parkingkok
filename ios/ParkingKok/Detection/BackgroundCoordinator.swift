@@ -47,6 +47,10 @@ struct RehydrationSnapshot: Sendable, Equatable {
 
     // ── Bounded driving session (M0A-2) ──────────────────────────────────────
     var isCapturingDrivingLocation = false
+    /// docs/04_IOS §3a. When the engine last asked for a capture, as distinct from when the
+    /// adapter managed to start one — the 2026-09-20 drive could not tell those apart.
+    var captureRequestedAt: Date?
+    var captureHealth = BoundedCaptureHealth.none
     var drivingSessionStartedAt: Date?
     /// Sessions opened since launch. A count that climbs without any confirmation is the
     /// signature of a threshold that opens sessions too eagerly.
@@ -601,6 +605,7 @@ actor BackgroundCoordinator {
         case .stopLocationCapture:
             await locationCapture?.stop()
             snapshot.isCapturingDrivingLocation = await locationCapture?.isActive() ?? false
+            snapshot.captureHealth = await locationCapture?.health() ?? .none
             snapshot.drivingSessionStartedAt = nil
 
         case let .persistCheckpoint(checkpoint):
@@ -659,6 +664,9 @@ actor BackgroundCoordinator {
     }
 
     private func beginCapture(now: Date) async {
+        // Stamped before anything can fail, so a capture the engine asked for and never got
+        // is visible as a request with no matching `captureHealth.startedAt`.
+        snapshot.captureRequestedAt = now
         let wasOpen = snapshot.drivingSessionStartedAt != nil
         snapshot.drivingSessionStartedAt = await engine.snapshot().driving?.startedAt ?? now
         if !wasOpen {
@@ -668,6 +676,7 @@ actor BackgroundCoordinator {
         }
         await locationCapture?.start()
         snapshot.isCapturingDrivingLocation = await locationCapture?.isActive() ?? false
+        snapshot.captureHealth = await locationCapture?.health() ?? .none
     }
 
     /// Core Location must never be left running for a session the engine no longer has.
@@ -675,6 +684,7 @@ actor BackgroundCoordinator {
         guard await engine.snapshot().driving == nil else { return }
         await locationCapture?.stop()
         snapshot.isCapturingDrivingLocation = await locationCapture?.isActive() ?? false
+        snapshot.captureHealth = await locationCapture?.health() ?? .none
         snapshot.drivingSessionStartedAt = nil
     }
 

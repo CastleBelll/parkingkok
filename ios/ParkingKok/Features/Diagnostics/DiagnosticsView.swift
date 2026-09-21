@@ -177,6 +177,13 @@ struct DiagnosticsView: View {
     private var drivingSessionSection: some View {
         Section("주행 세션 (bounded)") {
             LabeledContent("캡처 중", value: model.snapshot.isCapturingDrivingLocation ? "ON" : "OFF")
+            // docs/04_IOS §3a. Read these three together: a request with no start means the
+            // adapter never ran; a start with no updates means Core Location said nothing;
+            // sessions released while capturing means it was torn down underneath us.
+            LabeledContent("캡처 요청", value: Self.optionalTime(model.snapshot.captureRequestedAt))
+            LabeledContent("캡처 시작", value: Self.optionalTime(model.snapshot.captureHealth.startedAt))
+            LabeledContent("세션 보유", value: model.snapshot.captureHealth.holdsSessions ? "YES" : "NO")
+            LabeledContent("업데이트 수신", value: "\(model.snapshot.captureHealth.updateCount)회")
             LabeledContent("세션 시작", value: Self.optionalTime(model.snapshot.drivingSessionStartedAt))
             LabeledContent("세션 수", value: "\(model.snapshot.drivingSessionCount)회")
             if model.snapshot.drivingSessionResumedFromCheckpoint {

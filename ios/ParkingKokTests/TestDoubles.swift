@@ -154,8 +154,23 @@ final class StubBoundedLocationCapture: BoundedLocationCapturing, @unchecked Sen
         lock.withLock { redundantStarts }
     }
 
+    /// The double reports the same shape the real capture does (docs/04_IOS §3a). It holds
+    /// no Core Location objects, so `holdsSessions` mirrors `isActive`.
+    func health() -> BoundedCaptureHealth {
+        lock.withLock {
+            BoundedCaptureHealth(
+                startedAt: lastStartedAt,
+                holdsSessions: active,
+                updateCount: starts
+            )
+        }
+    }
+
+    private var lastStartedAt: Date?
+
     func start() {
         lock.withLock {
+            lastStartedAt = Date.now
             if active {
                 redundantStarts += 1
             } else {

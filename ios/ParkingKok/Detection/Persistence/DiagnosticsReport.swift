@@ -15,9 +15,9 @@ import Foundation
 /// coordinate-bearing ones are deliberately absent, and a test on the encoded bytes
 /// enforces it. **Adding a coordinate here is never the fix for a failing test.**
 struct DiagnosticsReport: Sendable, Equatable, Codable {
-    /// Bumped to 5 by the §7 distance-clause instrumentation; 4 was the movement-evidence
-    /// counters before it.
-    static let schemaVersion = 8
+    /// Bumped to 9 by the §3a capture-health fields; 8 was the §7 distance-clause
+    /// instrumentation.
+    static let schemaVersion = 9
 
     var schemaVersion: Int = DiagnosticsReport.schemaVersion
     var generatedAt: Date
@@ -67,6 +67,12 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
 
     // Bounded driving session (docs/04 §3 DRIVING, docs/05 §7)
     var isCapturingDrivingLocation: Bool
+    /// docs/04_IOS §3a. Three fields that separate "the capture never started" from "it
+    /// started and Core Location said nothing" — the 2026-09-20 field data could not.
+    var captureRequestedAt: Date?
+    var captureStartedAt: Date?
+    var captureHoldsSessions: Bool
+    var captureUpdateCount: Int
     var drivingSessionStartedAt: Date?
     var drivingSessionCount: Int
     var drivingSessionResumedFromCheckpoint: Bool
@@ -200,6 +206,10 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
         motionSamples = snapshot.motionSamples
 
         isCapturingDrivingLocation = snapshot.isCapturingDrivingLocation
+        captureRequestedAt = snapshot.captureRequestedAt
+        captureStartedAt = snapshot.captureHealth.startedAt
+        captureHoldsSessions = snapshot.captureHealth.holdsSessions
+        captureUpdateCount = snapshot.captureHealth.updateCount
         drivingSessionStartedAt = snapshot.drivingSessionStartedAt
         drivingSessionCount = snapshot.drivingSessionCount
         drivingSessionResumedFromCheckpoint = snapshot.drivingSessionResumedFromCheckpoint

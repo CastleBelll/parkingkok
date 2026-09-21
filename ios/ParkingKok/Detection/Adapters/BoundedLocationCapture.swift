@@ -14,6 +14,33 @@ protocol BoundedLocationCapturing: Sendable {
     /// Idempotent. Must release *every* resource `start()` took.
     func stop() async
     func isActive() async -> Bool
+    /// What the capture itself knows about its own health (docs/04_IOS §3a).
+    func health() async -> BoundedCaptureHealth
+}
+
+/// Three facts the 2026-09-20 field data could not distinguish between
+/// (docs/04_IOS_IMPLEMENTATION.md §3a).
+///
+/// That drive showed `drivingConfirmedAt` nine minutes in — the engine asked for a capture —
+/// and fixes that stayed significant-change grade for another forty. Two explanations fit
+/// equally: the capture never started, or it started and Core Location delivered nothing.
+/// The report said only `isCapturingDrivingLocation: false` *after the fact*, which is
+/// consistent with both.
+///
+/// These separate them. `startedAt` says whether `start()` ran and when. `holdsSessions`
+/// says whether the two objects that keep background delivery alive are still held right
+/// now. `updateCount` says whether the async sequence ever yielded — including yields that
+/// carried no usable fix, which the `drivingFixCount` in the report does not count.
+struct BoundedCaptureHealth: Sendable, Equatable {
+    /// When `start()` last ran, or nil if it never has in this process.
+    var startedAt: Date?
+    /// Whether `CLServiceSession` **and** `CLBackgroundActivitySession` are both held.
+    /// False while capturing is the signature of a session that was released underneath us.
+    var holdsSessions: Bool
+    /// Iterations of `CLLocationUpdate.Updates`, whatever they contained.
+    var updateCount: Int
+
+    static let none = BoundedCaptureHealth(startedAt: nil, holdsSessions: false, updateCount: 0)
 }
 
 @MainActor
@@ -60,9 +87,24 @@ final class LiveDrivingLocationCapture: BoundedLocationCapturing {
 
     private(set) var isCapturing = false
 
+    /// See `BoundedCaptureHealth`. Kept across `stop()` on purpose: the question the field
+    /// data could not answer is "did it ever start", and zeroing these on teardown would
+    /// throw away the answer at exactly the moment the report is read.
+    private var lastStartedAt: Date?
+    private var updateCount = 0
+
+    func health() -> BoundedCaptureHealth {
+        BoundedCaptureHealth(
+            startedAt: lastStartedAt,
+            holdsSessions: serviceSession != nil && backgroundSession != nil,
+            updateCount: updateCount
+        )
+    }
+
     func start() {
         guard !isCapturing else { return }
         isCapturing = true
+        lastStartedAt = Date.now
 
         // Declares that the updates below need Always authorization. Created before the
         // sequence so the first update is never dropped for want of a session.
@@ -77,6 +119,7 @@ final class LiveDrivingLocationCapture: BoundedLocationCapturing {
                     if Task.isCancelled {
                         return
                     }
+                    await self?.countUpdate()
                     let denied = update.authorizationDenied || update.authorizationDeniedGlobally
                     let fix = update.location.map(LocationFix.init)
                     guard let self else { return }
@@ -100,6 +143,13 @@ final class LiveDrivingLocationCapture: BoundedLocationCapturing {
                 delegate?.captureWatchdogDidTick()
             }
         }
+    }
+
+    /// Counted before the fix is examined, so an update that carried nothing still shows
+    /// the sequence is alive. A capture with `updateCount == 0` never heard from Core
+    /// Location at all, which is a different bug from one whose fixes are all rejected.
+    private func countUpdate() {
+        updateCount += 1
     }
 
     func stop() {

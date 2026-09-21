@@ -96,10 +96,23 @@ delivery survives backgrounding. Either the capture was never started at 16:18, 
 started and produced nothing until the app came to the foreground. The diagnostics as they
 stand cannot tell those apart.
 
-Before the next instrumented drive, add to the diagnostics report: when
-`startBoundedLocationCapture` was last emitted, when `LiveDrivingLocationCapture.start()`
-last ran, and whether either session object is currently non-nil. Without those three the
-next drive produces the same ambiguity.
+**Added 2026-09-21, schema 9.** Four fields, in the report and on the diagnostics screen
+under 주행 세션:
+
+| field | 화면 | what it separates |
+|---|---|---|
+| `captureRequestedAt` | 캡처 요청 | the engine asked. Stamped in `beginCapture` before anything can fail |
+| `captureStartedAt` | 캡처 시작 | the adapter ran. A request with no start means `start()` never happened |
+| `captureHoldsSessions` | 세션 보유 | `CLServiceSession` **and** `CLBackgroundActivitySession` are held right now. False while capturing means they were released underneath us |
+| `captureUpdateCount` | 업데이트 수신 | iterations of `CLLocationUpdate.Updates`, counted before the fix is examined. Zero means Core Location never spoke at all — a different bug from fixes that arrive and are rejected |
+
+`startedAt` and `updateCount` deliberately survive `stop()`. The question the field data
+could not answer is "did it ever start", and zeroing them on teardown would discard the
+answer at the moment the report is read.
+
+Read together they close the ambiguity above: request-without-start is one bug,
+start-without-updates is another, and updates-without-fixes is the third. The next drive
+distinguishes them without another round trip.
 
 Android failed the same gate for a different reason and it is fixed there — see
 docs/04_ANDROID_IMPLEMENTATION.md §4a/§4b. The Android answer (a drive-scoped foreground
