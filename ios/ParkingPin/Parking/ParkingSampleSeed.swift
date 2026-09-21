@@ -12,7 +12,7 @@
     ///
     /// ```sh
     /// xcrun devicectl device process launch --device <udid> \
-    ///   --environment-variables '{"PK_SEED_SAMPLE_PARKING":"1"}' com.parkingpin.app.dev
+    ///   --environment-variables '{"PK_SEED_SAMPLE_PARKING":"1"}' kr.parkingpin.app.dev
     /// ```
     ///
     /// **Replaces** whatever is stored, so the screenshot is the same every run.

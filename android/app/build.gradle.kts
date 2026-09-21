@@ -19,11 +19,11 @@ if (file("google-services.json").exists()) {
 }
 
 android {
-    namespace = "com.parkingpin.app"
+    namespace = "kr.parkingpin.app"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.parkingpin.app"
+        applicationId = "kr.parkingpin.app"
         minSdk = 29
         // targetSdk 36 is the Google Play requirement from 2026-08-31. Do not lower.
         targetSdk = 36

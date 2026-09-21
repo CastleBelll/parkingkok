@@ -49,7 +49,7 @@ StoreKit or Play Billing. A banner slot with no SDK behind it and no caller is d
 
 ## 2. Product IDs
 ### iOS
-`com.parkingpin.app.plus.monthly`
+`kr.parkingpin.app.plus.monthly`
 StoreKit auto-renewable subscription.
 
 ### Android

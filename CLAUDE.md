@@ -102,10 +102,15 @@ in its own URL, so it was not purely internal.
 
 | | value |
 |---|---|
-| Android `applicationId` and package | `com.parkingpin.app` |
-| iOS bundle prefix | `com.parkingpin.app` (`.dev`, `.staging` per xcconfig) |
-| iOS App Group | `group.com.parkingpin.app*`, derived from the bundle id |
+| Android `applicationId` and package | `kr.parkingpin.app` |
+| iOS bundle prefix | `kr.parkingpin.app` (`.dev`, `.staging` per xcconfig) |
+| iOS App Group | `group.kr.parkingpin.app*`, derived from the bundle id |
 | Firebase project | `parkingpin-dev` / `parkingpin-staging` / `parkingpin-prod` |
+
+The prefix is `kr.` and not `com.` because `com.parkingpin.app` was already taken — bundle
+IDs and App Group IDs are globally unique across all of Apple, and a domain you own is not
+required, only a string nobody else has. `kr.` for a Korean app is both conventional and a
+far less contested namespace.
 
 **That window is now closed.** Once a build reaches a store the package name and bundle ID
 are permanent, and a PR that changes either is wrong.
