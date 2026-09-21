@@ -148,6 +148,16 @@ final class DetectionRuntime {
         preference.isEnabled
     }
 
+    /// docs/10 §2a. False exactly once per install, on the launch that asks.
+    var isFirstRunAnswered: Bool {
+        preference.isFirstRunAnswered
+    }
+
+    /// Records that the question was asked, whichever way it was answered.
+    func markFirstRunAnswered() {
+        preference.isFirstRunAnswered = true
+    }
+
     var isMonitoringSignificantChanges: Bool {
         monitor.isMonitoring
     }

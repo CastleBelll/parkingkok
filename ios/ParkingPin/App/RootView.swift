@@ -12,6 +12,8 @@ struct RootView: View {
     private let appInfo: AppInfo
     @State private var composition: ParkingComposition?
     @State private var path: [AppRoute] = []
+    /// docs/10 §2a. Read once on appear, so answering it cannot re-present it.
+    @State private var isAskingFirstRun = false
 
     init(appInfo: AppInfo = .current) {
         self.appInfo = appInfo
@@ -72,6 +74,40 @@ struct RootView: View {
             guard let route else { return }
             composition?.candidates.pendingNavigation = nil
             path.append(route)
+        }
+        // docs/10 §2a. The one question this app asks on its own.
+        //
+        // Automatic detection is the product, and until now it was reachable only through a
+        // switch in Settings that nobody would go looking for: install, drive, park, nothing
+        // happens. Defaulting the switch to on instead would be worse — a stored preference
+        // authorizes nothing, so the screen would claim to be detecting while Core Location
+        // had never been asked, and docs/04 §4 hangs the Always prompt off this opt-in
+        // precisely so the prompt has a reason the user recognises.
+        .onAppear { isAskingFirstRun = !DetectionRuntime.shared.isFirstRunAnswered }
+        .alert("주차한 순간을 자동으로 기록할까요?", isPresented: $isAskingFirstRun) {
+            Button("자동 기록 켜기") {
+                DetectionRuntime.shared.markFirstRunAnswered()
+                // This is what puts the system prompt on screen, and it arrives immediately
+                // after a sentence explaining why — which is the whole point of asking here
+                // rather than leaving it to a switch.
+                DetectionRuntime.shared.setSmartDetectionEnabled(true)
+                // The same event the Settings switch reports (docs/17 §2): the opt-in is a
+                // product signal wherever it happens, and two paths that disagreed about
+                // reporting would make the funnel unreadable.
+                AnalyticsComposition.recorder.record(.smartDetectionEnabled(true))
+            }
+            Button("나중에", role: .cancel) {
+                // Answered, and off. Settings is then the ordinary way in.
+                DetectionRuntime.shared.markFirstRunAnswered()
+            }
+        } message: {
+            Text(
+                """
+                차에서 내리면 주차핀이 위치와 시각을 알아서 남깁니다. 이를 위해 위치 권한이 필요해요.
+
+                주차 위치 좌표와 사진은 이 기기에만 저장되고 서버로 보내지 않습니다.
+                """
+            )
         }
     }
 

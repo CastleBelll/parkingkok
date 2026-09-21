@@ -17,6 +17,10 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.Text
+import androidx.compose.material3.AlertDialog
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -106,6 +110,8 @@ fun ParkingpinApp(
     }
 
     BackHandler(enabled = backStack.canGoBack) { backStack = backStack.pop() }
+
+    FirstRunPrompt(container)
 
     RouteTransition(backStack) { route ->
         when (route) {
@@ -455,6 +461,66 @@ private fun HistoryRoute(
  * for it in the same request as the foreground one, so it stays the row that opens system
  * Settings.
  */
+/**
+ * The one question this app asks on its own (docs/10 §2a).
+ *
+ * **Why it exists at all.** Automatic detection is the product, and it was reachable only
+ * through a switch in Settings that nobody would go looking for: install, drive, park,
+ * nothing happens, uninstall. There was no first-run flow — `OnboardingCompleted` was an
+ * analytics event with no screen behind it.
+ *
+ * **Why not simply default the switch to on.** A stored preference grants no permission. The
+ * app would say it was detecting while the transition registration failed for want of
+ * `ACTIVITY_RECOGNITION`, which is a state this project already shipped once and fixed.
+ * Play's policy points the same way: background location follows an explicit user action,
+ * never a pre-checked box. So the default a *user* experiences is "on", and the default in
+ * the store stays off until they say so.
+ *
+ * **Asked once, either way.** "Said no" and "has not been asked" are different states, which
+ * is why the flag is its own key rather than an inference from the switch. 나중에 leaves
+ * detection off and the Settings switch is then the ordinary way in.
+ *
+ * An `AlertDialog` rather than a designed onboarding: the design harness asks for
+ * platform-native dialogs, and there is no mock for a screen here to follow.
+ */
+@Composable
+private fun FirstRunPrompt(container: AppContainer) {
+    val answered by container.detectionStateStore.firstRunAnswered.collectAsStateWithLifecycle(initialValue = true)
+    val scope = rememberCoroutineScope()
+
+    // Asked for in the same dialog Settings uses, minus background location: Android 11+
+    // refuses to prompt for that alongside the foreground one, so it stays a Settings row.
+    val requestPermissions = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) {
+        scope.launch { container.registrationCoordinator.setDetectionEnabled(true) }
+    }
+
+    if (answered) return
+
+    AlertDialog(
+        onDismissRequest = { scope.launch { container.detectionStateStore.setFirstRunAnswered() } },
+        title = { Text(stringResource(R.string.first_run_title)) },
+        text = { Text(stringResource(R.string.first_run_body)) },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    scope.launch { container.detectionStateStore.setFirstRunAnswered() }
+                    // The switch is turned on by the launcher's callback, after the user has
+                    // answered the system dialog — turning it on first would light up a
+                    // switch for a registration that may never happen.
+                    requestPermissions.launch(detectionPermissions())
+                },
+            ) { Text(stringResource(R.string.first_run_confirm)) }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = { scope.launch { container.detectionStateStore.setFirstRunAnswered() } },
+            ) { Text(stringResource(R.string.first_run_dismiss)) }
+        },
+    )
+}
+
 private fun detectionPermissions(): Array<String> = buildList {
     add(Manifest.permission.ACCESS_FINE_LOCATION)
     add(Manifest.permission.ACCESS_COARSE_LOCATION)

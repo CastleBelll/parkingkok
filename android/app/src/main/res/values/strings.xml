@@ -264,6 +264,13 @@
 
     <!-- Settings (design-references/05-settings.png), section order per docs/19 -->
     <string name="settings_title">설정</string>
+    <!-- 첫 실행 한 번만 묻는 질문 (docs/10 §2a). 설정 깊숙한 토글을 찾아낼 사용자는 없고,
+         미리 켜두면 권한 없이 "감지 중"이라 말하는 거짓 상태가 된다. -->
+    <string name="first_run_title">주차한 순간을 자동으로 기록할까요?</string>
+    <string name="first_run_body">차에서 내리면 주차핀이 위치와 시각을 알아서 남깁니다. 이를 위해 위치와 동작 권한이 필요해요.\n\n주차 위치 좌표와 사진은 이 기기에만 저장되고 서버로 보내지 않습니다.</string>
+    <string name="first_run_confirm">자동 기록 켜기</string>
+    <string name="first_run_dismiss">나중에</string>
+
     <string name="settings_account_title">회원가입 없이 사용 중</string>
     <string name="settings_account_body">모든 주차 기록은 이 기기에만 저장됩니다</string>
     <!-- docs/07 §13a. Never 백업 or 복원: signing in does not move records to another

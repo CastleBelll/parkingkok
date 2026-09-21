@@ -24,10 +24,16 @@ struct FirebaseAccountLinking: AccountLinking {
         nonisolated(unsafe) static var lastRefusalCode: Int?
     #endif
 
-    private let bootstrap: FirebaseBootstrap
+    /// Whether Firebase is up, as a closure rather than the bootstrap itself.
+    ///
+    /// `FirebaseBootstrap.isStarted` reads `FirebaseApp.app()`, which is process-global, so
+    /// injecting a different bootstrap would change nothing. A closure is the seam that
+    /// actually isolates: the tests for the guard pass `{ false }` and hold on a phone where
+    /// the app has already started Firebase, which is where they first failed.
+    private let isStarted: @Sendable () -> Bool
 
-    init(bootstrap: FirebaseBootstrap = .shared) {
-        self.bootstrap = bootstrap
+    init(isStarted: @escaping @Sendable () -> Bool = { FirebaseBootstrap.shared.isStarted }) {
+        self.isStarted = isStarted
     }
 
     /// **Never touches `Auth` before Firebase is up.** `Auth.auth()` does not return nil on
@@ -38,7 +44,7 @@ struct FirebaseAccountLinking: AccountLinking {
     ///
     /// `.none` is the honest answer either way: no Firebase, no identity.
     func currentState() -> AccountState {
-        guard bootstrap.isStarted, let user = Auth.auth().currentUser else { return .none }
+        guard isStarted(), let user = Auth.auth().currentUser else { return .none }
         let provider = user.providerData
             .lazy
             .compactMap { AccountProvider(providerId: $0.providerID) }
@@ -51,7 +57,7 @@ struct FirebaseAccountLinking: AccountLinking {
         // Started by the anonymous sign-in that `LinkingAccountIdentity` does first, so this
         // is a guard rather than the ordinary path — but an unguarded `Auth.auth()` is a
         // crash, not a nil.
-        guard bootstrap.isStarted, let user = Auth.auth().currentUser else {
+        guard isStarted(), let user = Auth.auth().currentUser else {
             return .failed(reason: "no current user")
         }
         let previousUid = user.uid
@@ -105,7 +111,7 @@ struct FirebaseAccountLinking: AccountLinking {
     ]
 
     func signOut() async {
-        guard bootstrap.isStarted else { return }
+        guard isStarted() else { return }
         try? Auth.auth().signOut()
     }
 }

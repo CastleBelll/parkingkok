@@ -50,6 +50,15 @@ class DetectionStateStore(
 
     val desiredEnabled: Flow<Boolean> = dataStore.data.map { it[KEY_DESIRED_ENABLED] ?: false }
 
+    /**
+     * Whether the first-run question has been answered, either way
+     * (docs/10_DESIGN_UX_SPEC.md §2a).
+     *
+     * Separate from [desiredEnabled] on purpose: "said no" and "has not been asked" are
+     * different states, and collapsing them would ask again on every launch.
+     */
+    val firstRunAnswered: Flow<Boolean> = dataStore.data.map { it[KEY_FIRST_RUN_ANSWERED] ?: false }
+
     val recentEvents: Flow<List<MotionDomainEvent>> = dataStore.data.map { it.readEvents() }
 
     /**
@@ -98,6 +107,11 @@ class DetectionStateStore(
 
     suspend fun setDesiredEnabled(enabled: Boolean) {
         dataStore.edit { it[KEY_DESIRED_ENABLED] = enabled }
+    }
+
+    /** Recorded whichever way the user answered, so the question is asked exactly once. */
+    suspend fun setFirstRunAnswered() {
+        dataStore.edit { it[KEY_FIRST_RUN_ANSWERED] = true }
     }
 
     /**
@@ -437,6 +451,7 @@ class DetectionStateStore(
         val KEY_CONFIRMED_RECORD = stringPreferencesKey("parking_candidate_confirmed_record")
         val KEY_EVENT_LOG = stringPreferencesKey("event_log")
         val KEY_DESIRED_ENABLED = booleanPreferencesKey("registration_desired_enabled")
+        val KEY_FIRST_RUN_ANSWERED = booleanPreferencesKey("first_run_answered")
         val KEY_LOCK_SCREEN_NOTICE = booleanPreferencesKey("lock_screen_notice_enabled")
         val KEY_REGISTERED_SPEC_VERSION = intPreferencesKey("registration_spec_version")
         val KEY_REGISTERED_AT = longPreferencesKey("registration_registered_at")

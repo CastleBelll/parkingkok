@@ -233,25 +233,20 @@ struct FirebaseAccountLinkingTests {
         // nothing has started Firebase and this is the *first* thing the settings screen
         // asks: opening 설정 crashed the app on a real device until the guard existed.
         //
-        // Nothing in this suite starts Firebase, and the requirement says so out loud
-        // rather than letting the test go quietly vacuous if something ever does.
-        try #require(!FirebaseBootstrap.shared.isStarted)
-
-        #expect(FirebaseAccountLinking().currentState() == .none)
+        // `isStarted: { false }` rather than a real bootstrap: `FirebaseApp.app()` is
+        // process-global, and on a phone where the host app has already started Firebase
+        // this test used to fail for a reason that had nothing to do with the guard.
+        #expect(FirebaseAccountLinking(isStarted: { false }).currentState() == .none)
     }
 
     @Test("Signing out before Firebase has started is a no-op, not a crash")
-    func signOutBeforeStartIsSafe() async throws {
-        try #require(!FirebaseBootstrap.shared.isStarted)
-
-        await FirebaseAccountLinking().signOut()
+    func signOutBeforeStartIsSafe() async {
+        await FirebaseAccountLinking(isStarted: { false }).signOut()
     }
 
     @Test("Linking before Firebase has started fails instead of trapping")
-    func linkBeforeStartIsSafe() async throws {
-        try #require(!FirebaseBootstrap.shared.isStarted)
-
-        let result = await FirebaseAccountLinking().link(appleCredential())
+    func linkBeforeStartIsSafe() async {
+        let result = await FirebaseAccountLinking(isStarted: { false }).link(appleCredential())
 
         #expect(result == .failed(reason: "no current user"))
     }

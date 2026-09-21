@@ -69,6 +69,32 @@ Dark:
 
 Implement as semantic assets/theme tokens, never scatter hex values in feature code.
 
+### 2a. The one question the app asks on its own (2026-09-21)
+
+**First launch asks whether to record parking automatically, once.** 자동 기록 켜기 requests
+the permissions detection needs and turns the opt-in on; 나중에 records that it was asked and
+leaves it off, with Settings as the ordinary way in afterwards.
+
+It exists because the product was unreachable. Automatic detection is the whole app, and the
+only way to it was a switch in Settings that nobody goes looking for: install, drive, park,
+nothing happens, uninstall. `OnboardingCompleted` was an analytics event with no screen
+behind it.
+
+**It is not a default-on switch, and that distinction is the design.** A stored preference
+authorizes nothing: the app would claim to be detecting while the transition registration
+failed for want of `ACTIVITY_RECOGNITION`, which is a state this project shipped once and
+fixed. Play's policy points the same way — background location follows an explicit user
+action, never a pre-checked box. So the default a *user* experiences is on; the default in
+the store stays off until they say so.
+
+**Asked once, either way.** "Said no" and "has not been asked" are different states, so the
+flag is its own key rather than an inference from the switch.
+
+A platform dialog on both sides — `AlertDialog` and `.alert` — rather than a designed
+onboarding screen: the harness asks for platform-native dialogs, and there is no mock for a
+screen here to follow. If onboarding ever earns more than one question, this is where it
+grows.
+
 ## 3. Platform Adaptation
 Design language is shared, controls feel native.
 
