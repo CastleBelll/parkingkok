@@ -246,6 +246,11 @@ export   uid 8ksG8nZRP7RY7jj94Gco6i4MQv82  providerUserInfo []
 — while the Google user beside it exports its provider, email, display name and photo in
 full. The export is not lagging; it reads the same both before and long after.
 
+Confirmed a second time after the `com.sjstudioz.parkingpin` rename, and this reading settles
+it beyond argument: the same export that shows `providerUserInfo: []` shows
+`email: …@privaterelay.appleid.com` on the same row. A relay address has no way into that
+record except the Apple link, so the link is there and the provider list is what is missing.
+
 An hour went into that gap. The export said a link had never happened, so the screen that
 said it had was treated as the broken thing; the real state was that the link *had*
 succeeded, on an account that a second bug then orphaned, and every later attempt was
