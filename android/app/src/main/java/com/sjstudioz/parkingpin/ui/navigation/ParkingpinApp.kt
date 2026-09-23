@@ -17,6 +17,11 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
+import androidx.lifecycle.ViewModelStoreOwner
+import androidx.lifecycle.ViewModelStore
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
@@ -114,6 +119,7 @@ fun ParkingpinApp(
     FirstRunPrompt(container)
 
     RouteTransition(backStack) { route ->
+        RouteViewModelHost(backStack, route) {
         when (route) {
             ParkingpinRoute.Home -> HomeRoute(
                 container = container,
@@ -191,7 +197,59 @@ fun ParkingpinApp(
                 onBack = { backStack = backStack.pop() },
             )
         }
+        }
     }
+}
+
+/**
+ * Gives each route on the stack its own `ViewModelStore`, and throws it away when the route
+ * leaves (docs/10 §7c).
+ *
+ * **Without this every `viewModel()` in the app belongs to the Activity.** This shell has its
+ * own back stack rather than androidx Navigation, and nothing else provides a
+ * `LocalViewModelStoreOwner`, so a screen's ViewModel outlived the screen and was handed
+ * straight back the next time it opened — with the state that ended the *last* visit still
+ * in it.
+ *
+ * Three reports from the device were the same defect wearing different clothes:
+ *
+ * * 주차 위치 저장 did nothing after one save-and-end cycle. The form's `savedRecordId` was
+ *   still set, so the `LaunchedEffect` that leaves on a save fired on arrival and the screen
+ *   popped itself before it could be seen.
+ * * 알림을 눌러도 아무 일도 안 일어남 — the confirmation screen, the same way.
+ * * A form that opened still holding what was typed into it a visit ago.
+ *
+ * Keyed by the encoded route, which is what the saver already treats as a stack entry's
+ * identity, so the same screen reached twice in a row is one store and a popped screen is
+ * none.
+ */
+@Composable
+private fun RouteViewModelHost(
+    backStack: NavBackStack,
+    route: ParkingpinRoute,
+    content: @Composable () -> Unit,
+) {
+    val stores = remember { mutableMapOf<String, ViewModelStore>() }
+    val liveKeys = backStack.entries.map(ParkingpinRouteCodec::encode).toSet()
+
+    // Clearing on the way out, not on the way in: a `ViewModelStore` that is not cleared
+    // leaks every ViewModel it holds for as long as the Activity lives.
+    DisposableEffect(liveKeys) {
+        onDispose {
+            stores.keys.toList()
+                .filterNot { it in liveKeys }
+                .forEach { stores.remove(it)?.clear() }
+        }
+    }
+
+    val key = ParkingpinRouteCodec.encode(route)
+    val owner = remember(key) {
+        object : ViewModelStoreOwner {
+            override val viewModelStore: ViewModelStore = stores.getOrPut(key) { ViewModelStore() }
+        }
+    }
+
+    CompositionLocalProvider(LocalViewModelStoreOwner provides owner) { content() }
 }
 
 /**
