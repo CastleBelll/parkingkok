@@ -53,9 +53,11 @@ struct VisionPillarTextReader: PillarTextReading {
 
     func read(_ imageData: Data) async -> PillarReading {
         let lines = await withTimeout(timeout) { await Self.recognise(imageData) } ?? []
-        guard let floorText = PillarFloorSuggestion.floorText(fromLines: lines) else {
-            return .none
-        }
+        let floorText = PillarFloorSuggestion.floorText(fromLines: lines)
+        #if PK_DEV
+            PillarReadDiagnostics.record(lines: lines, chose: floorText)
+        #endif
+        guard let floorText else { return .none }
         return PillarReading(floorText: floorText)
     }
 

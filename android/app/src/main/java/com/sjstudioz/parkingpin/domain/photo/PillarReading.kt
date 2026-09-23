@@ -73,7 +73,7 @@ object PillarTextParser {
         // decides against one**. Falling through to a narrower window re-reads a fragment
         // of the same sign: `지하 15층` is rejected as a floor nobody has, and its second
         // word alone is `15층` — a basement turned into a storey, thirty floors away.
-        val floor = lines.firstNotNullOfOrNull(::floorInLine)
+        val floor = lines.firstNotNullOfOrNull(::floorInLine) ?: repeatedBadge(lines)
         return PillarSuggestion(
             floorRaw = floor,
             zone = windows.firstNotNullOfOrNull(::zoneOrNull),
@@ -97,6 +97,40 @@ object PillarTextParser {
             )
         }
     }
+
+    /**
+     * The floor badge every pillar carries, when the recogniser turned its `B` into an `8`.
+     *
+     * Measured on a phone photographing a B2 garage numbered B14-B17:
+     *
+     * ```text
+     * "10/ C13", "a", "82", "B17", "B", "82", "B16", "[", "82", "B B15", "814", "82"
+     * ```
+     *
+     * `B2` was never read — it came back as `82`, four times. `B`→`8` is the ordinary OCR
+     * confusion and on its own is not enough to act on: a bare number on a pillar is the
+     * bay, and rewriting every `82` into `B2` would invent a floor out of a bay number.
+     *
+     * **Repetition is what makes it safe.** The badge is identical on every pillar in frame
+     * while bay and pillar numbers all differ, so a digit run is re-read as a floor only
+     * when it appears more than once *and* the corrected value is a floor a garage has. A
+     * close-up of one pillar has no repetition and needs none: at that distance the badge
+     * reads as `B2` and the ordinary path takes it.
+     */
+    private fun repeatedBadge(lines: List<String>): String? =
+        lines.flatMap { it.split(WHITESPACE) }
+            .filter { it.length >= 2 && it.startsWith("8") && it.all(Char::isDigit) }
+            .groupingBy { it }
+            .eachCount()
+            .filterValues { it >= 2 }
+            // Most repeated first, then the shallower floor: `82` before `83` is a coin
+            // toss worth deciding the same way every time.
+            .entries
+            .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
+            .map { "B" + it.key.drop(1) }
+            .firstOrNull { text ->
+                FloorParser.parse(text)?.let(::isPlausibleFloor) == true
+            }
 
     private fun floorInLine(line: String): String? {
         val stated = windowsOf(line).firstNotNullOfOrNull { window ->

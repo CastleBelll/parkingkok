@@ -133,6 +133,29 @@ class PillarTextParserTest {
     }
 
     @Test
+    fun `a badge whose B was read as an 8 is still the floor, when it repeats`() {
+        // What a phone actually read of a B2 garage: `B2` never appeared, `82` did, four
+        // times — once per pillar in frame.
+        val suggestion = PillarTextParser.parse(
+            listOf("10/ C13", "a", "82", "B17", "B", "82", "B16", "[", "82", "B B15", "814", "82"),
+        )
+
+        assertEquals("B2", suggestion.floorRaw)
+    }
+
+    @Test
+    fun `a bay number that appears once is still a bay number`() {
+        // What keeps the correction honest: without repetition, `82` on a pillar is the bay
+        // it almost always is, and rewriting it would invent a floor.
+        assertNull(PillarTextParser.parse(listOf("82", "A구역")).floorRaw)
+    }
+
+    @Test
+    fun `a read that already says the floor does not need correcting`() {
+        assertEquals("B2", PillarTextParser.parse(listOf("B2", "82", "82")).floorRaw)
+    }
+
+    @Test
     fun `nothing recognised is nothing suggested`() {
         assertEquals(PillarSuggestion.NONE, PillarTextParser.parse(emptyList()))
         assertEquals(PillarSuggestion.NONE, PillarTextParser.parse(listOf("", "   ")))

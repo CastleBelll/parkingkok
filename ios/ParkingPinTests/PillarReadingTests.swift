@@ -100,6 +100,28 @@ struct PillarFloorSuggestionTests {
         #expect(PillarFloorSuggestion.floorText(fromLines: [input]) != nil)
     }
 
+    @Test("A badge whose B was read as an 8 is still the floor, when it repeats")
+    func repeatedBadgeIsTheFloor() {
+        // What the phone actually read of the B2 garage — `B2` never appeared, `82` did,
+        // four times, once per pillar in frame.
+        let lines = ["10/ C13", "a", "82", "B17", "B", "82", "B16", "[", "82", "B B15", "814", "82"]
+
+        #expect(PillarFloorSuggestion.floorText(fromLines: lines) == "B2")
+    }
+
+    @Test("A bay number that appears once is still a bay number")
+    func loneDigitsAreNotAFloor() {
+        // The rule that keeps the correction honest: without repetition, `82` on a pillar
+        // is the bay it almost always is, and rewriting it would invent a floor.
+        #expect(PillarFloorSuggestion.floorText(fromLines: ["82", "A구역"]) == nil)
+    }
+
+    @Test("A read that already says the floor does not need correcting")
+    func plainBadgeWinsOverCorrection() {
+        // Close up, the badge reads properly; the correction is for the wide shot only.
+        #expect(PillarFloorSuggestion.floorText(fromLines: ["B2", "82", "82"]) == "B2")
+    }
+
     @Test("The first floor-shaped line wins")
     func firstMatchWins() {
         // Arrange — a pillar paints the floor above the bay far more often than below.

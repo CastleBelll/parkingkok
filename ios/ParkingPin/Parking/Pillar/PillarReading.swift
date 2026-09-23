@@ -91,7 +91,45 @@ enum PillarFloorSuggestion {
     /// What separates them is not position but size — of the number, not of the text. See
     /// [isPlausibleFloor].
     static func floorText(fromLines lines: [String]) -> String? {
-        lines.lazy.compactMap(candidate(in:)).first
+        lines.lazy.compactMap(candidate(in:)).first ?? repeatedBadge(in: lines)
+    }
+
+    /// The floor badge that every pillar carries, when the recogniser turned its `B` into an
+    /// `8` (docs/02 §6a).
+    ///
+    /// Measured on the phone, photographing a B2 garage numbered B14–B17:
+    ///
+    /// ```text
+    /// "10/ C13", "a", "82", "B17", "B", "82", "B16", "[", "82", "B B15", "814", "82"
+    /// ```
+    ///
+    /// `B2` was never read — it came back as `82` four times. `B`→`8` is the ordinary OCR
+    /// confusion, and on its own it is not enough to act on: a bare number on a pillar is
+    /// the bay, and rewriting every `82` into `B2` would invent a floor out of a bay number.
+    ///
+    /// **Repetition is what makes it safe.** The floor badge is identical on every pillar in
+    /// frame; bay and pillar numbers are all different. So a digit run is only re-read as a
+    /// floor when it appears more than once *and* the corrected value is a floor a garage
+    /// has. A close-up of one pillar has no repetition and needs none: at that distance the
+    /// badge reads as `B2` and the ordinary path takes it.
+    private static func repeatedBadge(in lines: [String]) -> String? {
+        var counts: [String: Int] = [:]
+        for word in lines.flatMap({ $0.split(whereSeparator: \.isWhitespace) }) {
+            let token = String(word)
+            guard token.count >= 2, token.allSatisfy(\.isNumber), token.hasPrefix("8") else { continue }
+            counts[token, default: 0] += 1
+        }
+        return counts
+            .filter { $0.value >= 2 }
+            // Most repeated first, then the shallower floor: `82` before `83` is a coin
+            // toss worth deciding the same way every time.
+            .sorted { ($0.value, $1.key) > ($1.value, $0.key) }
+            .lazy
+            .map { "B" + $0.key.dropFirst() }
+            .first { text in
+                guard let parsed = FloorValue.parse(text) else { return false }
+                return isPlausibleFloor(parsed)
+            }
     }
 
     /// Deepest basement and highest storey a floor sign is believed to state.
