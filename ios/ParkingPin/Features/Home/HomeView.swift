@@ -26,9 +26,13 @@ struct HomeView: View {
     @State private var isCapturingPillar = false
     @State private var isPickingPillarFromLibrary = false
     @State private var pillarLibraryItem: PhotosPickerItem?
-    @State private var pillarPhotoData: Data?
-    @State private var pillarReading: PillarReading?
-    @State private var isReadingPillar = false
+    /// The photo and what was read from it, as **one** value.
+    ///
+    /// They were two `@State`s and a shared `isManualSheetPresented`, and the sheet opened
+    /// with the photo but without the reading: the diagnostics file showed the engine
+    /// choosing `B2` while the screen said 사진에서 층을 찾지 못했어요. Presenting from the
+    /// value itself removes the window in which only half of it is set.
+    @State private var pillarEntry: PillarEntry?
     private let pillarReader: any PillarTextReading = VisionPillarTextReader()
     /// Ticks once a minute so the elapsed line ages while the screen is open, without a
     /// timer that survives the screen.
@@ -133,12 +137,15 @@ struct HomeView: View {
             candidates.refresh()
             displayNow = model.now
         }
-        .sheet(isPresented: $isManualSheetPresented, onDismiss: clearPillarEntry) {
+        .sheet(isPresented: $isManualSheetPresented) {
+            ManualParkingSheet(model: model, editing: model.activeSession)
+        }
+        .sheet(item: $pillarEntry) { entry in
             ManualParkingSheet(
                 model: model,
                 editing: model.activeSession,
-                suggestion: pillarReading,
-                pillarPhoto: pillarPhotoData
+                suggestion: entry.reading,
+                pillarPhoto: entry.photo
             )
         }
         .confirmationDialog(
@@ -215,20 +222,21 @@ private extension HomeView {
     /// §6a: never throws, never explains. A floor, or nothing at all because there was no
     /// text or the read timed out — either way the same form opens.
     func readPillar(_ imageData: Data) {
-        isReadingPillar = true
-        pillarPhotoData = imageData
         Task {
-            pillarReading = await pillarReader.read(imageData)
-            isReadingPillar = false
-            isManualSheetPresented = true
+            // One assignment, which both presents the sheet and fills it. `.sheet(item:)`
+            // rather than a boolean beside two other pieces of state: SwiftUI builds the
+            // sheet from the value it was given, so there is no ordering left to get wrong.
+            pillarEntry = PillarEntry(photo: imageData, reading: await pillarReader.read(imageData))
         }
     }
+}
 
-    /// The photo belongs to the sheet that was opened with it, not to the next one.
-    func clearPillarEntry() {
-        pillarPhotoData = nil
-        pillarReading = nil
-    }
+/// A photo and what the pillar reader made of it, kept together so the sheet cannot be
+/// opened with one and not the other.
+private struct PillarEntry: Identifiable {
+    let id = UUID()
+    let photo: Data
+    let reading: PillarReading
 }
 
 /// The pending guess, on home.
