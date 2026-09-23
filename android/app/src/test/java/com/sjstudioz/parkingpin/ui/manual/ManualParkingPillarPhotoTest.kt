@@ -8,6 +8,7 @@ import com.sjstudioz.parkingpin.domain.parking.usecase.AttachParkingPhotoUseCase
 import com.sjstudioz.parkingpin.domain.parking.usecase.SaveManualParkingUseCase
 import com.sjstudioz.parkingpin.domain.photo.FakeParkingPhotoStore
 import com.sjstudioz.parkingpin.domain.photo.PhotoSource
+import com.sjstudioz.parkingpin.domain.photo.PillarLine
 import com.sjstudioz.parkingpin.domain.photo.PillarTextReader
 import com.sjstudioz.parkingpin.domain.photo.ReadPillarSuggestionUseCase
 import kotlinx.coroutines.Dispatchers
@@ -102,7 +103,7 @@ class ManualParkingPillarPhotoTest {
         val viewModel = viewModelReading(
             reader = {
                 kotlinx.coroutines.delay(10_000L)
-                listOf("B3")
+                listOf(PillarLine("B3"))
             },
             timeoutMillis = 50L,
         )
@@ -121,7 +122,7 @@ class ManualParkingPillarPhotoTest {
         val viewModel = viewModelReading(
             reader = {
                 kotlinx.coroutines.delay(100L)
-                listOf("B3")
+                listOf(PillarLine("B3"))
             },
             timeoutMillis = 10_000L,
         )
@@ -153,7 +154,7 @@ class ManualParkingPillarPhotoTest {
     private fun viewModelReading(
         lines: List<String>,
         timeoutMillis: Long = ReadPillarSuggestionUseCase.DEFAULT_TIMEOUT_MILLIS,
-    ): ManualParkingViewModel = viewModelReading({ lines }, timeoutMillis)
+    ): ManualParkingViewModel = viewModelReading({ lines.map(::PillarLine) }, timeoutMillis)
 
     private fun viewModelReading(
         reader: PillarTextReader,

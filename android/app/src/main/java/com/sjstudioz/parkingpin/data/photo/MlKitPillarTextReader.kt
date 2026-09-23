@@ -5,6 +5,7 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.korean.KoreanTextRecognizerOptions
 import com.sjstudioz.parkingpin.domain.photo.PhotoSource
+import com.sjstudioz.parkingpin.domain.photo.PillarLine
 import com.sjstudioz.parkingpin.domain.photo.PillarTextReader
 import kotlinx.coroutines.tasks.await
 
@@ -47,7 +48,7 @@ class MlKitPillarTextReader : PillarTextReader {
         }
     }
 
-    override suspend fun read(source: PhotoSource): List<String> {
+    override suspend fun read(source: PhotoSource): List<PillarLine> {
         // The same bounded decode the store uses, so a 12-megapixel camera file never
         // exists at full size (docs/11 §12). A pillar sign survives the downsample: it is
         // the largest thing in the frame.
@@ -56,7 +57,15 @@ class MlKitPillarTextReader : PillarTextReader {
             recognizer.process(InputImage.fromBitmap(bitmap, ROTATION_APPLIED))
                 .await()
                 .textBlocks
-                .flatMap { block -> block.lines.map { it.text } }
+                .flatMap { block -> block.lines }
+                .map { line ->
+                    // A fraction of the image, like Vision's, so the same margin means the
+                    // same thing on both platforms.
+                    PillarLine(
+                        text = line.text,
+                        height = (line.boundingBox?.height()?.toDouble() ?: 0.0) / bitmap.height,
+                    )
+                }
         } catch (_: Exception) {
             // Deliberately broad. ML Kit reports a missing model, a closed recogniser and
             // a device it cannot run on as different exceptions, and §6a gives all three

@@ -11,6 +11,7 @@ import com.sjstudioz.parkingpin.domain.parking.usecase.SaveManualParkingUseCase
 import com.sjstudioz.parkingpin.domain.parking.usecase.SuggestFromPillarPhotoUseCase
 import com.sjstudioz.parkingpin.domain.photo.PhotoSource
 import com.sjstudioz.parkingpin.domain.photo.PillarSuggestion
+import com.sjstudioz.parkingpin.domain.photo.PillarLine
 import com.sjstudioz.parkingpin.domain.photo.PillarTextReader
 import com.sjstudioz.parkingpin.domain.photo.ReadPillarSuggestionUseCase
 import kotlinx.coroutines.test.runTest
@@ -109,7 +110,7 @@ class PillarSuggestionUseCasesTest {
 
     private fun suggesting(vararg lines: String) = SuggestFromPillarPhotoUseCase(
         repository = repository,
-        readPillar = ReadPillarSuggestionUseCase(PillarTextReader { lines.toList() }),
+        readPillar = ReadPillarSuggestionUseCase(PillarTextReader { lines.map(::PillarLine) }),
     )
 
     private suspend fun save(floorRaw: String): String {

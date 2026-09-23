@@ -35,10 +35,19 @@ data class PillarSuggestion(
  * shown the same empty form in all three cases and "a feature that apologises every time
  * it cannot read a wall is worse than one that quietly helps when it can".
  */
+/**
+ * One painted row, and how tall it was drawn.
+ *
+ * The height is the only thing in a photo that says which pillar is nearest, and the
+ * nearest is the one the car is at. A fraction of the image height, so it is comparable
+ * within one photo and meaningless across two; zero means the reader did not measure.
+ */
+data class PillarLine(val text: String, val height: Double = 0.0)
+
 fun interface PillarTextReader {
 
     /** The lines recognised in [source], or empty. */
-    suspend fun read(source: PhotoSource): List<String>
+    suspend fun read(source: PhotoSource): List<PillarLine>
 
     /**
      * Load whatever the first read would otherwise load, somewhere the user is not
@@ -67,7 +76,21 @@ fun interface PillarTextReader {
  */
 object PillarTextParser {
 
-    fun parse(lines: List<String>): PillarSuggestion {
+    fun parse(lines: List<String>): PillarSuggestion =
+        parse(lines.map { PillarLine(it) })
+
+    @JvmName("parseLines")
+    fun parse(observed: List<PillarLine>): PillarSuggestion {
+        val lines = observed.map(PillarLine::text)
+        // Tallest wins per token: the same label can appear twice, and what matters is the
+        // biggest it was painted.
+        val heights = observed
+            .groupBy(PillarLine::text)
+            .mapValues { (_, seen) -> seen.maxOf(PillarLine::height) }
+        return parse(lines, heights)
+    }
+
+    private fun parse(lines: List<String>, heights: Map<String, Double>): PillarSuggestion {
         val windows = lines.flatMap(::windowsOf)
         // Per line, because **the first floor-shaped window decides that line even when it
         // decides against one**. Falling through to a narrower window re-reads a fragment
@@ -84,7 +107,7 @@ object PillarTextParser {
         val words = lines.flatMap { it.split(WHITESPACE) }.filter(String::isNotEmpty)
         return PillarSuggestion(
             floorRaw = floor,
-            zone = windows.firstNotNullOfOrNull(::zoneOrNull) ?: pillarLabel(words, used),
+            zone = windows.firstNotNullOfOrNull(::zoneOrNull) ?: pillarLabel(words, used, heights),
             spot = windows.filterNot(used::contains).firstNotNullOfOrNull(::spotOrNull),
         )
     }
@@ -194,7 +217,7 @@ object PillarTextParser {
      *   say which one the car is at, and a confident wrong pillar sends the user to the
      *   wrong end of the floor. Photographing the pillar in front of them leaves one.
      */
-    private fun pillarLabel(words: List<String>, used: Set<String>): String? {
+    private fun pillarLabel(words: List<String>, used: Set<String>, heights: Map<String, Double>): String? {
         val labels = words
             .filter { PILLAR_LABEL.matches(it) }
             .groupingBy { it }
@@ -202,7 +225,19 @@ object PillarTextParser {
             .filterValues { it == 1 }
             .keys
             .filterNot(used::contains)
-        return labels.singleOrNull()
+        labels.singleOrNull()?.let { return it }
+
+        // Several pillars in frame: the one the car is at is the one nearest the camera,
+        // and the nearest is painted largest. Ties are left alone — two pillars the same
+        // size are two pillars the photo cannot choose between, and a reader that measured
+        // nothing reports zero, which ties with everything.
+        val ranked = labels
+            // A height of zero is "not measured", not "flat": it must not rank.
+            .mapNotNull { label -> heights[label]?.takeIf { it > 0.0 }?.let { label to it } }
+            .sortedByDescending { it.second }
+        val nearest = ranked.firstOrNull() ?: return null
+        val next = ranked.getOrNull(1) ?: return nearest.first
+        return nearest.first.takeIf { nearest.second >= next.second * NEAREST_MARGIN }
     }
 
     private fun zoneOrNull(candidate: String): String? =
@@ -210,6 +245,15 @@ object PillarTextParser {
 
     private fun spotOrNull(candidate: String): String? =
         SPOT.matchEntire(candidate)?.groupValues?.get(1)
+
+    /**
+     * How much taller the nearest label has to be before it is believed to be nearest.
+     *
+     * Measured on the wide shot that raised this: `B17` at 0.061 of the image height
+     * against `BB15` at 0.050, a ratio of 1.22. Below this the photo is looking down a row
+     * of equally distant pillars and has no answer. Mirrored on iOS.
+     */
+    const val NEAREST_MARGIN = 1.15
 
     const val DEEPEST_BASEMENT = 10
     const val HIGHEST_STOREY = 20

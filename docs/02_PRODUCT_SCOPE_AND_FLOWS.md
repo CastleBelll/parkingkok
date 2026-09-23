@@ -156,15 +156,25 @@ said the contract had no grammar to follow. It does now.
 | field | accepted | rejected |
 |---|---|---|
 | zone | `A구역`, `A 구역`, `가구역` — up to six characters before the literal 구역; failing that, the pillar's own number (below) | a token with neither |
-| pillar number | `B17`, `C13`, `가12` — one or two letters then one to three digits, **exactly one** in the photo | several distinct ones, or the floor badge |
+| pillar number | `B17`, `C13`, `가12` — one or two letters then one to three digits; with several in frame, the **nearest** | the floor badge, and a tie between two equally distant pillars |
 | bay | `142`, `142번` — one to four digits, stored as digits | anything the floor already used (below) |
 
 The pillar number fills the zone because that is what a person writes down: in a garage
-whose pillars are labelled, "B17" *is* where the car is. It is offered **only when the photo
-settles which pillar is meant** — the badge repeats on every pillar and is excluded, and a
-wide shot catching B14 through B17 says nothing at all, because a confident wrong pillar
-sends the user to the wrong end of the floor. A photo of the pillar in front of them leaves
-one label, and one is answerable.
+whose pillars are labelled, "B17" *is* where the car is. It is offered when the photo
+settles which pillar is meant, and the photo usually does:
+
+* **The badge is excluded** — it repeats on every pillar in frame while pillar numbers all
+  differ, as are the digits the badge correction consumed.
+* **With several pillars in frame, the nearest one wins**, and the nearest is the one
+  painted largest. The recognisers both report a glyph height — `boundingBox` on Vision,
+  `Text.Line.boundingBox` on ML Kit — expressed as a fraction of the image so the two
+  platforms compare like with like.
+* **A tie is left alone.** The nearest label must be `nearestMargin` = **1.15×** taller than
+  the next, or the photo is looking down a row of equally distant pillars and has no
+  answer. Measured on the wide shot that raised this: `B17` at 0.061 against `BB15` at
+  0.050, a ratio of 1.22.
+* **A reader that measured nothing reports zero**, which ranks nowhere — a fake in a test
+  and a real camera then differ in what they know rather than in what they claim.
 
 #### Two rules the wall forced (2026-09-23)
 

@@ -52,7 +52,13 @@ struct VisionPillarTextReader: PillarTextReading {
     }
 
     func read(_ imageData: Data) async -> PillarReading {
-        let lines = await withTimeout(timeout) { await Self.recognise(imageData) } ?? []
+        let observations = await withTimeout(timeout) { await Self.recognise(imageData) } ?? []
+        let lines = observations.map(\.text)
+        // Tallest wins per token: the same label can appear twice, and what matters is the
+        // biggest it was painted.
+        let heights = observations.reduce(into: [String: Double]()) { heights, observation in
+            heights[observation.text] = max(heights[observation.text] ?? 0, observation.height)
+        }
         let floorText = PillarFloorSuggestion.floorText(fromLines: lines)
         // What the floor took: the text it chose, plus — when that text was corrected from
         // a misread badge — the digits it was corrected from. Neither may come back as the
@@ -61,7 +67,11 @@ struct VisionPillarTextReader: PillarTextReading {
         if let floorText, !lines.contains(floorText) {
             used.insert("8" + floorText.dropFirst())
         }
-        let (zone, spot) = PillarFloorSuggestion.zoneAndSpot(fromLines: lines, excluding: used)
+        let (zone, spot) = PillarFloorSuggestion.zoneAndSpot(
+            fromLines: lines,
+            excluding: used,
+            heights: heights
+        )
         #if PK_DEV
             PillarReadDiagnostics.record(lines: lines, chose: floorText, zone: zone, spot: spot)
         #endif
@@ -78,7 +88,16 @@ struct VisionPillarTextReader: PillarTextReading {
         }.jpegData(compressionQuality: 1)
     }()
 
-    private static func recognise(_ imageData: Data) async -> [String] {
+    /// One painted row, and how tall it was drawn — the only thing in a photo that says
+    /// which pillar is nearest.
+    private struct Observed: Sendable {
+        let text: String
+        /// A fraction of the image height, so it is comparable within one photo and
+        /// meaningless across two.
+        let height: Double
+    }
+
+    private static func recognise(_ imageData: Data) async -> [Observed] {
         var request = RecognizeTextRequest()
         // Korean is not in the `.fast` model's language list, so this is not a quality
         // preference — it is the only level that can read the wall at all.
@@ -93,7 +112,10 @@ struct VisionPillarTextReader: PillarTextReading {
             // One string per painted row. `topCandidate` alone: a second-choice reading
             // is precisely the `83` for `B3` that §6a says must never reach the record,
             // and offering it would be volunteering the misread.
-            return observations.compactMap { $0.topCandidates(1).first?.string }
+            return observations.compactMap { observation -> Observed? in
+                guard let text = observation.topCandidates(1).first?.string else { return nil }
+                return Observed(text: text, height: observation.boundingBox.height)
+            }
         } catch {
             // §6a: a model that is unavailable is the same outcome as a wall with no text
             // on it. Nothing is said to the user and nothing is reported.
@@ -105,9 +127,9 @@ struct VisionPillarTextReader: PillarTextReading {
     /// Races the read against §6a's deadline, returning `nil` if the deadline wins.
     private func withTimeout(
         _ duration: Duration,
-        _ work: @escaping @Sendable () async -> [String]
-    ) async -> [String]? {
-        await withTaskGroup(of: [String]?.self) { group in
+        _ work: @escaping @Sendable () async -> [Observed]
+    ) async -> [Observed]? {
+        await withTaskGroup(of: [Observed]?.self) { group in
             group.addTask { await work() }
             group.addTask {
                 try? await Task.sleep(for: duration)

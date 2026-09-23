@@ -33,7 +33,7 @@ class ReadPillarSuggestionUseCaseTest {
         val readPillar = ReadPillarSuggestionUseCase(
             reader = {
                 delay(timeout * 10)
-                listOf("B3")
+                listOf(PillarLine("B3"))
             },
             timeoutMillis = timeout,
         )
@@ -47,7 +47,7 @@ class ReadPillarSuggestionUseCaseTest {
 
     @Test
     fun `what was read is parsed with the existing rules`() = runTest {
-        val readPillar = ReadPillarSuggestionUseCase(reader = { listOf("B3", "A구역 142") })
+        val readPillar = ReadPillarSuggestionUseCase(reader = { listOf(PillarLine("B3"), PillarLine("A구역 142")) })
 
         assertEquals(PillarSuggestion("B3", "A구역", "142"), readPillar(photo))
     }

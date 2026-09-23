@@ -194,7 +194,11 @@ enum PillarFloorSuggestion {
     ///   cannot say which one the car is at, and a confident wrong pillar sends the user to
     ///   the wrong end of the floor. Photographing the pillar in front of them leaves one,
     ///   and one is answerable.
-    private static func pillarLabel(among words: [String], excluding used: Set<String>) -> String? {
+    private static func pillarLabel(
+        among words: [String],
+        excluding used: Set<String>,
+        heights: [String: Double]
+    ) -> String? {
         var counts: [String: Int] = [:]
         for word in words where word.wholeMatch(of: pillarLabelPattern) != nil {
             counts[word, default: 0] += 1
@@ -202,8 +206,26 @@ enum PillarFloorSuggestion {
         let labels = counts
             .filter { $0.value == 1 && !used.contains($0.key) }
             .map(\.key)
-        return labels.count == 1 ? labels.first : nil
+        if labels.count == 1 { return labels.first }
+
+        // Several pillars in frame: the one the car is at is the one nearest the camera,
+        // and the nearest is the one painted largest. Ties are left alone — two pillars the
+        // same size are two pillars the photo cannot choose between.
+        let ranked = labels
+            // A height of zero is "not measured", not "flat": it must not rank.
+            .compactMap { label in heights[label].flatMap { $0 > 0 ? (label, $0) : nil } }
+            .sorted { $0.1 > $1.1 }
+        guard let nearest = ranked.first else { return nil }
+        guard let next = ranked.dropFirst().first else { return nearest.0 }
+        return nearest.1 >= next.1 * nearestMargin ? nearest.0 : nil
     }
+
+    /// How much taller the nearest label has to be before it is believed to be nearest.
+    ///
+    /// Measured on the wide shot that raised this: `B17` at 0.061 against `BB15` at 0.050,
+    /// a ratio of 1.22. Below this the photo is looking down a row of equally distant
+    /// pillars and has no answer.
+    static let nearestMargin = 1.15
 
     /// One or two letters — Latin or Hangul — then one to three digits, and nothing else.
     private static var pillarLabelPattern: Regex<Substring> { /^[가-힣A-Za-z]{1,2}\d{1,3}$/ }
@@ -213,10 +235,14 @@ enum PillarFloorSuggestion {
     /// `used` is what the floor already took — the text it chose and, on a wide shot, the
     /// digit run that text was corrected from. Without it the same misread that becomes
     /// 지하 2층 is handed back as bay 82 or as the pillar's own number.
-    static func zoneAndSpot(fromLines lines: [String], excluding used: Set<String>) -> (String?, String?) {
+    static func zoneAndSpot(
+        fromLines lines: [String],
+        excluding used: Set<String>,
+        heights: [String: Double] = [:]
+    ) -> (String?, String?) {
         let words = lines.flatMap { $0.split(whereSeparator: \.isWhitespace) }.map(String.init)
         let zone = words.first { $0.wholeMatch(of: zonePattern) != nil }
-            ?? pillarLabel(among: words, excluding: used)
+            ?? pillarLabel(among: words, excluding: used, heights: heights)
         let spot = words
             .lazy
             .filter { !used.contains($0) }

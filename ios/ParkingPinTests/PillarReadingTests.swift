@@ -156,13 +156,37 @@ struct PillarFloorSuggestionTests {
         #expect(zone == "B17")
     }
 
-    @Test("A frame full of pillars names none of them")
-    func severalPillarLabelsAreAmbiguous() {
-        // The wide shot: B14 through B17 in one photo cannot say which one the car is at,
-        // and a confident wrong pillar sends the user to the wrong end of the floor.
+    @Test("A frame full of pillars picks the nearest one")
+    func nearestPillarWins() {
+        // The wide shot, with the glyph heights the phone actually measured: the pillar the
+        // car is at is the one nearest the camera, and the nearest is painted largest.
         let (zone, _) = PillarFloorSuggestion.zoneAndSpot(
             fromLines: ["82", "B17", "82", "B16", "82", "B15", "82"],
-            excluding: ["B2", "82"]
+            excluding: ["B2", "82"],
+            heights: ["B17": 0.061, "B16": 0.044, "B15": 0.050]
+        )
+
+        #expect(zone == "B17")
+    }
+
+    @Test("Two pillars the same size are two pillars the photo cannot choose between")
+    func equallyDistantPillarsAreAmbiguous() {
+        let (zone, _) = PillarFloorSuggestion.zoneAndSpot(
+            fromLines: ["B2", "B17", "B16"],
+            excluding: ["B2"],
+            heights: ["B17": 0.050, "B16": 0.049]
+        )
+
+        #expect(zone == nil)
+    }
+
+    @Test("With no sizes to compare, several pillars name none")
+    func noHeightsMeansNoGuess() {
+        // Every fake reader in these tests hands over text and no geometry, which is the
+        // honest shape of "we do not know how big it was".
+        let (zone, _) = PillarFloorSuggestion.zoneAndSpot(
+            fromLines: ["B2", "B17", "B16"],
+            excluding: ["B2"]
         )
 
         #expect(zone == nil)

@@ -164,21 +164,45 @@ class PillarTextParserTest {
     }
 
     @Test
-    fun `a frame full of pillars names none of them`() {
-        // B14-B17 in one photo cannot say which one the car is at, and a confident wrong
-        // pillar sends the user to the wrong end of the floor.
+    fun `a frame full of pillars picks the nearest one`() {
+        // The wide shot with the heights a recogniser measures: the pillar the car is at is
+        // the one nearest the camera, and the nearest is painted largest.
         val suggestion = PillarTextParser.parse(
-            listOf("82", "B17", "82", "B16", "82", "B15", "82"),
+            listOf(
+                PillarLine("82", 0.033),
+                PillarLine("B17", 0.061),
+                PillarLine("82", 0.028),
+                PillarLine("B16", 0.044),
+                PillarLine("82", 0.030),
+                PillarLine("B15", 0.050),
+                PillarLine("82", 0.031),
+            ),
         )
 
         assertEquals("B2", suggestion.floorRaw)
+        assertEquals("B17", suggestion.zone)
+    }
+
+    @Test
+    fun `two pillars the same size are two pillars the photo cannot choose between`() {
+        val suggestion = PillarTextParser.parse(
+            listOf(PillarLine("B2", 0.02), PillarLine("B17", 0.050), PillarLine("B16", 0.049)),
+        )
+
         assertNull(suggestion.zone)
-        assertNull(suggestion.spot)
+    }
+
+    @Test
+    fun `with no sizes to compare, several pillars name none`() {
+        // A reader that measured nothing reports zero, which ties with everything.
+        val suggestion = PillarTextParser.parse(listOf("B2", "B17", "B16"))
+
+        assertNull(suggestion.zone)
     }
 
     @Test
     fun `nothing recognised is nothing suggested`() {
-        assertEquals(PillarSuggestion.NONE, PillarTextParser.parse(emptyList()))
+        assertEquals(PillarSuggestion.NONE, PillarTextParser.parse(emptyList<String>()))
         assertEquals(PillarSuggestion.NONE, PillarTextParser.parse(listOf("", "   ")))
     }
 }
