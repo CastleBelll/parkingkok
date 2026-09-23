@@ -181,6 +181,26 @@ Inline text reply may be used for floor when UX is reliable, but must have an ap
 
 Android 13+ notification runtime permission must be handled contextually.
 
+
+### 9a. The candidate channel is `IMPORTANCE_HIGH`, at a second id (2026-09-23)
+
+`parking_detection` was created `IMPORTANCE_DEFAULT`, which makes a sound and nothing else:
+the prompt waits in the shade rather than appearing over what the user is doing. Reported
+from the device as "알림이 너무 늦게 뜬다" — not late, unseen. The user is walking away from
+the car and has 45 minutes to answer.
+
+**A channel's importance cannot be raised in place.** Android hands ownership to the user at
+creation and ignores it on later `createNotificationChannel` calls, so the new importance
+needs a new id: `parking_detection_v2`. The old one is deleted when the new one is created,
+so Settings lists one channel rather than two, and nothing is posted to it again.
+
+This is the Android half of iOS's `.timeSensitive` interruption level, which needed its own
+entitlement for the same reason — the system quietly downgrades a prompt that does not
+prove it is one.
+
+Measured on the Galaxy with the DEV drive replay: `channel=parking_detection_v2
+importance=4`, where it read `channel=parking_detection importance=3` before.
+
 ## 10. Widgets
 Use Jetpack Glance.
 Data source: local active parking snapshot.

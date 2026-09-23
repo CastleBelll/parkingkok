@@ -58,7 +58,17 @@ object NoOpCandidateNotifying : CandidateNotifying {
  */
 object ParkingCandidateChannel {
 
-    const val ID: String = "parking_detection"
+    /**
+     * docs/04_ANDROID_IMPLEMENTATION.md §9's product channel, **at its second id**.
+     *
+     * A channel's importance is fixed at creation: Android hands ownership to the user, and
+     * later `createNotificationChannel` calls cannot raise it. Raising it therefore means a
+     * new id, and [LEGACY_ID] is deleted on the way so Settings does not list two.
+     */
+    const val ID: String = "parking_detection_v2"
+
+    /** The `IMPORTANCE_DEFAULT` channel this replaced. Deleted, never posted to. */
+    const val LEGACY_ID: String = "parking_detection"
 
     const val ACTION_REJECT: String = "com.sjstudioz.parkingpin.CANDIDATE_REJECT"
 
@@ -78,8 +88,11 @@ object ParkingCandidateChannel {
  * The channel is created on the way in rather than in `Application.onCreate`, so the
  * feature is self-contained; `createNotificationChannel` is idempotent.
  *
- * `IMPORTANCE_DEFAULT`: the user is walking away from the car right now, and a silent
- * entry in the shade would be found long after the 45-minute window closed.
+ * **`IMPORTANCE_HIGH`, so it appears over whatever is on screen.** `IMPORTANCE_DEFAULT`
+ * makes a sound and nothing else: the prompt waits in the shade, and on the device it was
+ * reported as "알림이 너무 늦게 뜬다" — not late, unseen. The user is walking away from the
+ * car right now and has 45 minutes; a notification they find afterwards is worth nothing.
+ * It is the Android half of iOS's `.timeSensitive` interruption level.
  */
 class NotificationCandidateDelivery(context: Context) : CandidateNotifying {
 
@@ -99,7 +112,7 @@ class NotificationCandidateDelivery(context: Context) : CandidateNotifying {
                 // a floor, an address or a coordinate to reach the shade (docs/09 §9).
                 .setContentTitle(ParkingCandidateNotice.TITLE)
                 .setContentText(ParkingCandidateNotice.BODY)
-                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setCategory(NotificationCompat.CATEGORY_RECOMMENDATION)
                 .setContentIntent(openConfirmationIntent(candidate.id))
                 .addAction(0, ParkingCandidateNotice.ACTION_OPEN, openConfirmationIntent(candidate.id))
@@ -136,12 +149,16 @@ class NotificationCandidateDelivery(context: Context) : CandidateNotifying {
         val channel = NotificationChannel(
             ParkingCandidateChannel.ID,
             appContext.getString(R.string.candidate_channel_name),
-            NotificationManager.IMPORTANCE_DEFAULT,
+            NotificationManager.IMPORTANCE_HIGH,
         ).apply {
             description = appContext.getString(R.string.candidate_channel_description)
             setShowBadge(true)
         }
-        appContext.getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
+        val manager = appContext.getSystemService(NotificationManager::class.java) ?: return
+        manager.createNotificationChannel(channel)
+        // The old `IMPORTANCE_DEFAULT` channel, which cannot be raised in place. Deleting it
+        // keeps one row in Settings instead of two, and nothing is ever posted to it again.
+        manager.deleteNotificationChannel(ParkingCandidateChannel.LEGACY_ID)
     }
 
     /**
