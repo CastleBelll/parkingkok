@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -86,22 +88,28 @@ fun ManualParkingScreen(
                     label = stringResource(R.string.manual_floor_label),
                     placeholder = stringResource(R.string.manual_floor_placeholder),
                     supporting = stringResource(R.string.manual_floor_help),
+                    prominent = true,
                     focusRequester = floorFocus,
                 )
                 Spacer(Modifier.height(MaterialTheme.spacing.medium))
-                Field(
-                    value = state.zone,
-                    onValueChange = onZoneChange,
-                    label = stringResource(R.string.manual_zone_label),
-                    placeholder = stringResource(R.string.manual_zone_placeholder),
-                )
-                Spacer(Modifier.height(MaterialTheme.spacing.medium))
-                Field(
-                    value = state.spot,
-                    onValueChange = onSpotChange,
-                    label = stringResource(R.string.manual_spot_label),
-                    placeholder = stringResource(R.string.manual_spot_placeholder),
-                )
+                // Side by side: both hold two or three characters, and two full-width boxes
+                // made the form longer than the keyboard leaves room for.
+                Row(horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.medium)) {
+                    Field(
+                        value = state.zone,
+                        onValueChange = onZoneChange,
+                        label = stringResource(R.string.manual_zone_label),
+                        placeholder = stringResource(R.string.manual_zone_placeholder),
+                        modifier = Modifier.weight(1f),
+                    )
+                    Field(
+                        value = state.spot,
+                        onValueChange = onSpotChange,
+                        label = stringResource(R.string.manual_spot_label),
+                        placeholder = stringResource(R.string.manual_spot_placeholder),
+                        modifier = Modifier.weight(1f),
+                    )
+                }
                 Spacer(Modifier.height(MaterialTheme.spacing.medium))
                 Field(
                     value = state.memo,
@@ -168,6 +176,17 @@ fun ManualParkingScreen(
     }
 }
 
+/**
+ * One input, at the weight its value deserves.
+ *
+ * **The four fields used to be identical**, so the floor — the one value the whole app is
+ * built around, and the largest thing on the home screen — was typed into a box the same
+ * size as 메모. docs/10 §6's hierarchy rule applies to the screen that writes a value, not
+ * only to the screen that shows it.
+ *
+ * The radius is 12dp and not `shapes.small`'s 16: §5 puts small controls at 10–14, and 16 on
+ * a 56dp-tall box reads as a pill, which the harness rules out.
+ */
 @Composable
 private fun Field(
     value: String,
@@ -176,6 +195,8 @@ private fun Field(
     placeholder: String,
     supporting: String? = null,
     imeAction: ImeAction = ImeAction.Next,
+    prominent: Boolean = false,
+    modifier: Modifier = Modifier,
     /** Set only on the field a pillar read puts the cursor in (docs/02 §6a). */
     focusRequester: FocusRequester? = null,
 ) {
@@ -186,13 +207,21 @@ private fun Field(
         placeholder = { Text(placeholder) },
         supportingText = supporting?.let { { Text(it) } },
         singleLine = true,
-        shape = MaterialTheme.shapes.small,
+        textStyle = if (prominent) {
+            MaterialTheme.typography.headlineSmall
+        } else {
+            LocalTextStyle.current
+        },
+        shape = FIELD_SHAPE,
         keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = imeAction),
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier),
     )
 }
+
+/** docs/10 §5: 10–14 for a small control. */
+private val FIELD_SHAPE = RoundedCornerShape(12.dp)
 
 @Preview(name = "Manual entry", showBackground = true)
 @Composable
