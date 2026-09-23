@@ -12,7 +12,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
@@ -48,14 +47,6 @@ fun ParkingPhotoPicker(
     onDismiss: () -> Unit,
     onPhotoSelected: (PhotoSource) -> Unit,
     onCameraUnavailable: () -> Unit,
-    /**
-     * Skips the album-or-camera question and opens the camera (docs/02 §6a).
-     *
-     * `사진으로 입력` has already answered it: the user pressed a button that says camera,
-     * and asking again is a tap for nothing. 사진 추가 on home and detail keeps the choice,
-     * because there the photo may well be one already in the album.
-     */
-    cameraOnly: Boolean = false,
 ) {
     val context = LocalContext.current
     var captureUri by remember { mutableStateOf<Uri?>(null) }
@@ -74,26 +65,10 @@ fun ParkingPhotoPicker(
         if (written && uri != null) onPhotoSelected(contentPhotoSource(context, uri))
     }
 
-    // Launched from an effect rather than inline: composition must not have a side effect,
-    // and this one starts an Activity.
-    LaunchedEffect(visible, cameraOnly) {
-        if (!visible || !cameraOnly) return@LaunchedEffect
-        onDismiss()
-        val uri = captureFileUri(context)
-        captureUri = uri
-        if (uri == null) {
-            onCameraUnavailable()
-            return@LaunchedEffect
-        }
-        try {
-            takePhoto.launch(uri)
-        } catch (_: ActivityNotFoundException) {
-            captureUri = null
-            onCameraUnavailable()
-        }
-    }
-
-    if (!visible || cameraOnly) return
+    // The album-or-camera question is asked on every path, including `사진으로 입력`: the
+    // pillar may already have been photographed a minute ago, and a button that says camera
+    // is not the same as a promise never to offer the album.
+    if (!visible) return
 
     AlertDialog(
         onDismissRequest = onDismiss,

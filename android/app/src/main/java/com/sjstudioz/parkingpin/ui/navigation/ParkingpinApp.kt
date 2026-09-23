@@ -383,8 +383,6 @@ private fun ManualEntryRoute(
             capturing = false
             viewModel.onCaptureDismissed()
         },
-        // The button already said camera.
-        cameraOnly = true,
     )
 
     ManualParkingScreen(
