@@ -122,6 +122,40 @@ struct PillarFloorSuggestionTests {
         #expect(PillarFloorSuggestion.floorText(fromLines: ["B2", "82", "82"]) == "B2")
     }
 
+    @Test("The zone and the bay are read too, when the wall says them")
+    func zoneAndSpotAreRead() {
+        // §6a's opening sentence: a pillar carries "the floor, the zone and often the bay
+        // number". iOS read only the floor until 2026-09-23, while Android read all three.
+        let (zone, spot) = PillarFloorSuggestion.zoneAndSpot(
+            fromLines: ["B3", "A구역", "142번"],
+            consuming: nil
+        )
+
+        #expect(zone == "A구역")
+        #expect(spot == "142")
+    }
+
+    @Test("The digits the floor correction used are not also offered as the bay")
+    func correctedBadgeIsNotABay() {
+        // The wide shot again: `82` is the badge read badly, and offering it as bay 82
+        // would hand the user the same misread twice.
+        let (_, spot) = PillarFloorSuggestion.zoneAndSpot(
+            fromLines: ["82", "B17", "82", "82"],
+            consuming: "82"
+        )
+
+        #expect(spot == nil)
+    }
+
+    @Test("A wall with no 구역 on it offers no zone")
+    func zoneNeedsItsWord() {
+        // Without the literal word, every two-character token on a wall of signage is a
+        // zone. §6a's "leave the rest blank" is the better answer than a guess.
+        let (zone, _) = PillarFloorSuggestion.zoneAndSpot(fromLines: ["B3", "C13"], consuming: nil)
+
+        #expect(zone == nil)
+    }
+
     @Test("The first floor-shaped line wins")
     func firstMatchWins() {
         // Arrange — a pillar paints the floor above the bay far more often than below.
@@ -298,7 +332,7 @@ struct VisionPillarTextReaderTests {
         #expect(FloorValue.parse(reading.floorText ?? "")?.number == 3)
     }
 
-    @Test("A bay number alone is not offered as a floor")
+    @Test("A bay number alone is the bay, never the floor")
     func doesNotOfferABayNumber() async throws {
         // Arrange
         let data = try #require(TestPillarImage.jpeg(text: "142"))
@@ -306,8 +340,11 @@ struct VisionPillarTextReaderTests {
         // Act
         let reading = await VisionPillarTextReader().read(data)
 
-        // Assert
-        #expect(reading == .none)
+        // Assert — `FloorValue.parse` would read `142` as the 142nd storey, which is the
+        // right answer for someone typing into a field labelled 층 and the wrong one for a
+        // number painted on a wall. §6a puts it where it belongs instead.
+        #expect(reading.floorText == nil)
+        #expect(reading.spot == "142")
     }
 
     @Test("Preparing leaves the reader usable, and repeating it is harmless")

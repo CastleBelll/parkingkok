@@ -148,6 +148,34 @@ A *suggestion*, never a saved value. Recognised text is parsed with the existing
 floor by docs/02 §6, which already accepts `B3`, `지하 3층`, `3F` — and the result is
 pre-filled into the fields the user was going to fill anyway, focused and editable.
 
+**The grammar for the other two fields lives here**, because it exists nowhere else and the
+platforms drifted on exactly that: Android read the zone and the bay from the day the
+feature landed, iOS read only the floor for a fortnight, and the iOS comment explaining why
+said the contract had no grammar to follow. It does now.
+
+| field | accepted | rejected |
+|---|---|---|
+| zone | `A구역`, `A 구역`, `가구역` — up to six characters before the literal 구역 | `C13`, `B17`. Without the word, every token on a wall of signage is a zone |
+| bay | `142`, `142번` — one to four digits, stored as digits | anything the floor already used (below) |
+
+#### Two rules the wall forced (2026-09-23)
+
+Both come from one photo of a B2 garage whose pillars are numbered B14–B17, and both are
+mirrored on the two platforms.
+
+**A pillar number is not a floor.** `B17` parses perfectly as 지하 17층. Korean garages
+bottom out around B7 and a handful reach B10, so a suggestion is offered only within
+**B10 / 20F**; past that a `B`-number is a pillar id. A deeper garage gets no suggestion,
+which is what a failed read already does — and offering a wrong floor is worse than
+offering none, because the user has to notice it and undo it.
+
+**A badge whose `B` was read as an `8` is still the floor, when it repeats.** That photo
+never yielded `B2` on the phone; it yielded `82`, four times, once per pillar in frame.
+`B`→`8` is the ordinary confusion and correcting it blindly would invent a floor out of a
+bay number, so a digit run is re-read as a floor **only when it appears more than once** —
+the badge is identical on every pillar while bay and pillar numbers all differ. The digits
+that correction consumes are then not offered as the bay as well.
+
 The user always sees what was read before anything is stored. Nothing is auto-saved from a
 photo: a misread `B3` as `83` that silently became the record would be worse than typing.
 

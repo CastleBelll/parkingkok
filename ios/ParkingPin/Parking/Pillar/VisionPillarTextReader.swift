@@ -54,11 +54,16 @@ struct VisionPillarTextReader: PillarTextReading {
     func read(_ imageData: Data) async -> PillarReading {
         let lines = await withTimeout(timeout) { await Self.recognise(imageData) } ?? []
         let floorText = PillarFloorSuggestion.floorText(fromLines: lines)
+        // The digits the badge correction consumed, so the same `82` cannot also be
+        // offered as the bay (§6a).
+        let usedDigits = floorText.flatMap { text in
+            lines.contains(text) ? nil : "8" + text.dropFirst()
+        }
+        let (zone, spot) = PillarFloorSuggestion.zoneAndSpot(fromLines: lines, consuming: usedDigits)
         #if PK_DEV
-            PillarReadDiagnostics.record(lines: lines, chose: floorText)
+            PillarReadDiagnostics.record(lines: lines, chose: floorText, zone: zone, spot: spot)
         #endif
-        guard let floorText else { return .none }
-        return PillarReading(floorText: floorText)
+        return PillarReading(floorText: floorText, zone: zone, spot: spot)
     }
 
     /// A single blank pixel. Enough to make Vision load the recognisers, small enough to

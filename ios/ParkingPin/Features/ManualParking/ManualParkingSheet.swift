@@ -163,10 +163,13 @@ struct ManualParkingSheet: View {
     }
 
     private var pillarSummary: String {
-        guard let floorText = suggestion?.floorText, !floorText.isEmpty else {
-            return "사진에서 층을 찾지 못했어요. 직접 적어주세요."
+        let read = [suggestion?.floorText, suggestion?.zone, suggestion?.spot]
+            .compactMap { $0 }
+            .filter { !$0.isEmpty }
+        guard !read.isEmpty else {
+            return "사진에서 층·구역을 찾지 못했어요. 직접 적어주세요."
         }
-        return "사진에서 \(floorText)(을)를 읽었어요. 맞는지 확인해 주세요."
+        return "사진에서 \(read.joined(separator: " · "))(을)를 읽었어요. 맞는지 확인해 주세요."
     }
 
     /// FR-005's accepted spellings, plus what happens to anything else.
@@ -203,7 +206,17 @@ struct ManualParkingSheet: View {
     /// dropped, which is also why the detail screen does not re-ask with a photo it can
     /// add nothing to.
     private func applySuggestion() {
-        guard let floorText = suggestion?.suggestedFloorText(over: draft.floorText) else { return }
+        guard let suggestion else { return }
+        // Every field the wall stated and the form has not (§6a "partial read → fill what
+        // parsed, leave the rest blank"), each judged on its own: a pillar that names the
+        // zone but not the floor still saves the user a line of typing.
+        if let zone = suggestion.suggestedZone(over: draft.zone) {
+            draft.zone = zone
+        }
+        if let spot = suggestion.suggestedSpot(over: draft.spot) {
+            draft.spot = spot
+        }
+        guard let floorText = suggestion.suggestedFloorText(over: draft.floorText) else { return }
         draft.floorText = floorText
         // Focused, so the first thing the user can do is correct it.
         focusedField = .floor

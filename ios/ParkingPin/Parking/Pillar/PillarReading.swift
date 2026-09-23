@@ -18,17 +18,29 @@ struct PillarReading: Sendable, Equatable {
     /// the field shows what was on the wall rather than a normalisation of it.
     let floorText: String?
 
+    /// `A구역`, as written (§6a "the zone").
+    let zone: String?
+
+    /// `142` from `142번`, digits only, because that is what the field holds.
+    let spot: String?
+
+    init(floorText: String?, zone: String? = nil, spot: String? = nil) {
+        self.floorText = floorText
+        self.zone = zone
+        self.spot = spot
+    }
+
     /// The ordinary outcome. §6a: "Recognition failing is the normal case, not an error."
     static let none = PillarReading(floorText: nil)
 
     var isEmpty: Bool {
-        floorText == nil
+        floorText == nil && zone == nil && spot == nil
     }
 
     /// The draft a form opens with. Empty when nothing was read, which is byte for byte
     /// the draft the form opens with today.
     var draft: ManualParkingDraft {
-        ManualParkingDraft(floorText: floorText ?? "")
+        ManualParkingDraft(floorText: floorText ?? "", zone: zone ?? "", spot: spot ?? "")
     }
 
     /// What to put in a floor field that currently holds `current`, or `nil` for "leave
@@ -38,9 +50,21 @@ struct PillarReading: Sendable, Equatable {
     /// already filled is not one of them, so an existing value always wins over a photo.
     /// That is also why the detail screen does not re-ask on a record that names a floor.
     func suggestedFloorText(over current: String) -> String? {
-        guard let floorText else { return nil }
+        suggested(floorText, over: current)
+    }
+
+    func suggestedZone(over current: String) -> String? {
+        suggested(zone, over: current)
+    }
+
+    func suggestedSpot(over current: String) -> String? {
+        suggested(spot, over: current)
+    }
+
+    private func suggested(_ value: String?, over current: String) -> String? {
+        guard let value else { return nil }
         guard current.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-        return floorText
+        return value
     }
 }
 
@@ -145,6 +169,34 @@ enum PillarFloorSuggestion {
     /// when a read fails.
     static let deepestBasement = 10
     static let highestStorey = 20
+
+    /// `A구역`, `A 구역`, `가구역`. The label before 구역 is short by nature.
+    ///
+    /// The literal word is required. Without it every two-character token on a wall of
+    /// signage is a zone, and docs/02 §6a's "partial read → leave the rest blank" is the
+    /// better answer than a guess. Mirrored exactly in Android's `PillarTextParser`; the
+    /// grammar lives in docs/02 §6a so the two cannot drift.
+    private static var zonePattern: Regex<Substring> { /^[가-힣A-Za-z0-9]{1,6}\s*구역$/ }
+
+    /// `142`, `142번`. Kept as digits, because that is what the field holds.
+    private static var spotPattern: Regex<(Substring, Substring)> { /^(\d{1,4})번?$/ }
+
+    /// The zone and bay a pillar states, if it states them (§6a).
+    ///
+    /// `consuming` is the digit run the floor already used: on a wide shot the badge is
+    /// read as `82` several times, and without this the same misread that becomes 지하 2층
+    /// would also be offered as bay 82.
+    static func zoneAndSpot(fromLines lines: [String], consuming usedDigits: String?) -> (String?, String?) {
+        let words = lines.flatMap { $0.split(whereSeparator: \.isWhitespace) }.map(String.init)
+        let zone = words.first { $0.wholeMatch(of: zonePattern) != nil }
+        let spot = words
+            .lazy
+            .filter { $0 != usedDigits }
+            .compactMap { $0.wholeMatch(of: spotPattern)?.1 }
+            .first
+            .map(String.init)
+        return (zone, spot)
+    }
 
     private static func isPlausibleFloor(_ floor: FloorValue) -> Bool {
         guard let number = floor.number else { return false }

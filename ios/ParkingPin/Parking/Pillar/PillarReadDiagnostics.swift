@@ -22,7 +22,7 @@
     /// Text painted on a public wall, never a coordinate and never the photo. Compiled out
     /// of STAGING and PROD entirely.
     enum PillarReadDiagnostics {
-        static func record(lines: [String], chose floorText: String?) {
+        static func record(lines: [String], chose floorText: String?, zone: String?, spot: String?) {
             guard let identifier = Bundle.main
                 .object(forInfoDictionaryKey: "PKAppGroupIdentifier") as? String,
                 let container = FileManager.default
@@ -32,6 +32,8 @@
             let payload: [String: Any] = [
                 "lines": lines,
                 "chose": floorText ?? "none",
+                "zone": zone ?? "none",
+                "spot": spot ?? "none",
                 "readAt": ISO8601DateFormatter().string(from: Date()),
             ]
             let directory = container.appending(
