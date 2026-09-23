@@ -201,6 +201,33 @@ class PillarTextParserTest {
     }
 
     @Test
+    fun `a pillar label whose B was read as an 8 is not offered as the bay`() {
+        val suggestion = PillarTextParser.parse(
+            listOf(
+                // The badge twice, as it is on every pillar in frame — one occurrence is
+                // not a badge, and the correction rightly refuses it.
+                PillarLine("82", 0.033),
+                PillarLine("B17", 0.061),
+                PillarLine("82", 0.028),
+                PillarLine("B16", 0.044),
+                PillarLine("B15", 0.050),
+                PillarLine("814", 0.040),
+            ),
+        )
+
+        assertEquals("B2", suggestion.floorRaw)
+        assertEquals("B17", suggestion.zone)
+        assertNull("814 is B14, not bay 814", suggestion.spot)
+    }
+
+    @Test
+    fun `a bay number on a wall with no such labels is still the bay`() {
+        val suggestion = PillarTextParser.parse(listOf("B3", "A구역", "814"))
+
+        assertEquals("814", suggestion.spot)
+    }
+
+    @Test
     fun `nothing recognised is nothing suggested`() {
         assertEquals(PillarSuggestion.NONE, PillarTextParser.parse(emptyList<String>()))
         assertEquals(PillarSuggestion.NONE, PillarTextParser.parse(listOf("", "   ")))

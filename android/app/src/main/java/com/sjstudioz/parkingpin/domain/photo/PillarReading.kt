@@ -108,7 +108,10 @@ object PillarTextParser {
         return PillarSuggestion(
             floorRaw = floor,
             zone = windows.firstNotNullOfOrNull(::zoneOrNull) ?: pillarLabel(words, used, heights),
-            spot = windows.filterNot(used::contains).firstNotNullOfOrNull(::spotOrNull),
+            spot = windows
+                .filterNot(used::contains)
+                .filterNot { readsAsAPillarLabel(it, labelShapes(words)) }
+                .firstNotNullOfOrNull(::spotOrNull),
         )
     }
 
@@ -239,6 +242,27 @@ object PillarTextParser {
         val next = ranked.getOrNull(1) ?: return nearest.first
         return nearest.first.takeIf { nearest.second >= next.second * NEAREST_MARGIN }
     }
+
+    private fun labelShapes(words: List<String>): Set<String> =
+        words.filter { PILLAR_LABEL.matches(it) }.map(::shapeOf).toSet()
+
+    /**
+     * Whether a digit run is one of *this wall's* pillar labels with its `B` read as an `8`.
+     *
+     * `814` in a photo that also shows `B15`, `B16` and `B17` is `B14`, not bay 814 — the
+     * same `B`→`8` confusion the badge suffers, and it was reaching the 자리 field. The test
+     * is the shape the wall is already using: one letter and two digits here, so a
+     * three-digit run beginning `8` is one of them. In a photo with no such labels, `814`
+     * stays what it looks like.
+     */
+    private fun readsAsAPillarLabel(word: String, shapes: Set<String>): Boolean {
+        if (word.length < 2 || !word.startsWith("8") || !word.all(Char::isDigit)) return false
+        return shapeOf("B" + word.drop(1)) in shapes
+    }
+
+    /** `B17` and `C13` share a shape; `가12` does not, and neither does `B7`. */
+    private fun shapeOf(word: String): String =
+        word.map { if (it.isDigit()) '9' else if (it.code < 128) 'A' else '가' }.joinToString("")
 
     private fun zoneOrNull(candidate: String): String? =
         ZONE.matchEntire(candidate)?.let { candidate.replace(WHITESPACE, "") }

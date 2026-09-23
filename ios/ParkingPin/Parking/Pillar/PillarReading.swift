@@ -227,6 +227,23 @@ enum PillarFloorSuggestion {
     /// pillars and has no answer.
     static let nearestMargin = 1.15
 
+    /// Whether a digit run is one of *this wall's* pillar labels with its `B` read as an `8`.
+    ///
+    /// `814` in a photo that also shows `B15`, `B16` and `B17` is `B14`, not bay 814 — the
+    /// same `B`→`8` confusion the badge suffers, and it was being offered as the bay. The
+    /// test is the shape the wall is already using: one letter and two digits here, so a
+    /// three-digit run beginning `8` is one of them. In a photo with no such labels, `814`
+    /// stays what it looks like.
+    private static func readsAsAPillarLabel(_ word: String, shapes: Set<String>) -> Bool {
+        guard word.count >= 2, word.hasPrefix("8"), word.allSatisfy(\.isNumber) else { return false }
+        return shapes.contains(shape(of: "B" + word.dropFirst()))
+    }
+
+    /// `B17` and `C13` share a shape; `가12` does not, and neither does `B7`.
+    private static func shape(of word: String) -> String {
+        word.map { $0.isNumber ? "9" : ($0.isASCII ? "A" : "가") }.joined()
+    }
+
     /// One or two letters — Latin or Hangul — then one to three digits, and nothing else.
     private static var pillarLabelPattern: Regex<Substring> { /^[가-힣A-Za-z]{1,2}\d{1,3}$/ }
 
@@ -243,9 +260,13 @@ enum PillarFloorSuggestion {
         let words = lines.flatMap { $0.split(whereSeparator: \.isWhitespace) }.map(String.init)
         let zone = words.first { $0.wholeMatch(of: zonePattern) != nil }
             ?? pillarLabel(among: words, excluding: used, heights: heights)
+        let labelShapes = Set(
+            words.compactMap { $0.wholeMatch(of: pillarLabelPattern) != nil ? shape(of: $0) : nil }
+        )
         let spot = words
             .lazy
             .filter { !used.contains($0) }
+            .filter { !readsAsAPillarLabel($0, shapes: labelShapes) }
             .compactMap { $0.wholeMatch(of: spotPattern)?.1 }
             .first
             .map(String.init)

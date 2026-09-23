@@ -192,6 +192,31 @@ struct PillarFloorSuggestionTests {
         #expect(zone == nil)
     }
 
+    @Test("A pillar label whose B was read as an 8 is not offered as the bay")
+    func misreadLabelIsNotABay() {
+        // `814` in a photo that also shows B15, B16 and B17 is `B14`. It was reaching the
+        // 자리 field as bay 814.
+        let (_, spot) = PillarFloorSuggestion.zoneAndSpot(
+            fromLines: ["82", "B17", "B16", "B15", "814"],
+            excluding: ["B2", "82"],
+            heights: ["B17": 0.061, "B16": 0.044, "B15": 0.050]
+        )
+
+        #expect(spot == nil)
+    }
+
+    @Test("A bay number on a wall with no such labels is still the bay")
+    func realBayNumberSurvives() {
+        // The rule is about *this* wall's shapes: with nothing shaped like `B14` in frame,
+        // `814` is what it looks like.
+        let (_, spot) = PillarFloorSuggestion.zoneAndSpot(
+            fromLines: ["B3", "A구역", "814"],
+            excluding: ["B3"]
+        )
+
+        #expect(spot == "814")
+    }
+
     @Test("A wall with no 구역 on it offers no zone")
     func zoneNeedsItsWord() {
         // Without the literal word, every two-character token on a wall of signage is a
