@@ -41,8 +41,13 @@ struct ManualParkingSheet: View {
         case memo
     }
 
-    init(model: ParkingModel, editing: ParkingSession? = nil, suggestion: PillarReading? = nil) {
-        self.pillarPhoto = nil
+    init(
+        model: ParkingModel,
+        editing: ParkingSession? = nil,
+        suggestion: PillarReading? = nil,
+        pillarPhoto: Data? = nil
+    ) {
+        self.pillarPhoto = pillarPhoto
         self.model = model
         self.editing = editing
         self.suggestion = suggestion
@@ -187,6 +192,12 @@ struct ManualParkingSheet: View {
         // Creating needs the location lookup, which is async and best-effort.
         Task {
             let succeeded = await model.saveManualParking(draft)
+            // The pillar photo is kept, not read and thrown away (docs/02 §6a): it is the
+            // photo the user would otherwise have to take a second time from the detail
+            // screen. The record it belongs to is the one the save just made active.
+            if succeeded, let pillarPhoto, let id = model.activeSession?.id {
+                _ = await model.attachPhoto(pillarPhoto, to: id)
+            }
             finish(succeeded: succeeded)
         }
     }

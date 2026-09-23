@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 
 /// The app's root screen (`design-references/01-home-main.png`).
@@ -17,6 +18,18 @@ struct HomeView: View {
     @Binding private var path: [AppRoute]
 
     @State private var isManualSheetPresented = false
+    // docs/02 §6a, reachable by hand. The pillar reader was wired to the confirmation
+    // screen and nowhere else, so anyone who had never had a drive detected — everyone, at
+    // first — typed the floor and attached a photo afterwards, by which time the read could
+    // not help. The camera opens *before* the save from here.
+    @State private var isChoosingPillarSource = false
+    @State private var isCapturingPillar = false
+    @State private var isPickingPillarFromLibrary = false
+    @State private var pillarLibraryItem: PhotosPickerItem?
+    @State private var pillarPhotoData: Data?
+    @State private var pillarReading: PillarReading?
+    @State private var isReadingPillar = false
+    private let pillarReader: any PillarTextReading = VisionPillarTextReader()
     /// Ticks once a minute so the elapsed line ages while the screen is open, without a
     /// timer that survives the screen.
     @State private var displayNow = Date()
@@ -84,7 +97,10 @@ struct HomeView: View {
                     }
                     .pkEntrance(3)
                 } else if candidates.pending == nil {
-                    EmptyParkingCard { isManualSheetPresented = true }
+                    EmptyParkingCard(
+                        onSaveManually: { isManualSheetPresented = true },
+                        onPhotoEntry: beginPillarEntry
+                    )
                         .pkEntrance(1)
                 }
 
@@ -117,8 +133,48 @@ struct HomeView: View {
             candidates.refresh()
             displayNow = model.now
         }
-        .sheet(isPresented: $isManualSheetPresented) {
-            ManualParkingSheet(model: model, editing: model.activeSession)
+        .sheet(isPresented: $isManualSheetPresented, onDismiss: clearPillarEntry) {
+            ManualParkingSheet(
+                model: model,
+                editing: model.activeSession,
+                suggestion: pillarReading,
+                pillarPhoto: pillarPhotoData
+            )
+        }
+        .confirmationDialog(
+            "사진으로 입력",
+            isPresented: $isChoosingPillarSource,
+            titleVisibility: .visible
+        ) {
+            ForEach(ParkingPhotoSource.available) { source in
+                Button(source.title) { presentPillarSource(source) }
+            }
+            Button("취소", role: .cancel) {}
+        }
+        .fullScreenCover(isPresented: $isCapturingPillar) {
+            CameraPhotoPicker(
+                onPicked: { data in
+                    isCapturingPillar = false
+                    readPillar(data)
+                },
+                onCancel: { isCapturingPillar = false }
+            )
+            .ignoresSafeArea()
+        }
+        // Out of process, so no photo-library permission is requested or declared.
+        .photosPicker(
+            isPresented: $isPickingPillarFromLibrary,
+            selection: $pillarLibraryItem,
+            matching: .images,
+            photoLibrary: .shared()
+        )
+        .onChange(of: pillarLibraryItem) { _, item in
+            guard let item else { return }
+            Task {
+                defer { pillarLibraryItem = nil }
+                guard let data = try? await item.loadTransferable(type: Data.self) else { return }
+                readPillar(data)
+            }
         }
         .task {
             // One minute is the smallest unit the elapsed line shows, so anything finer
@@ -127,6 +183,51 @@ struct HomeView: View {
                 displayNow = model.now
             }
         }
+    }
+}
+
+private extension HomeView {
+    /// `사진으로 입력` on the empty card (docs/02 §6a).
+    ///
+    /// The album stays on offer beside the camera: the pillar may already have been
+    /// photographed a minute ago, and a button that names the camera is not a promise never
+    /// to show the library. Where there is no camera at all — the simulator, or access turned
+    /// off — the library is the only entry and the question is skipped.
+    func beginPillarEntry() {
+        // Loaded while the user frames the shot rather than after they take it: the first
+        // Korean recognition costs seconds (`PillarTextReading.prepare`).
+        Task { await pillarReader.prepare() }
+        let sources = ParkingPhotoSource.available
+        if sources.count == 1, let only = sources.first {
+            presentPillarSource(only)
+        } else {
+            isChoosingPillarSource = true
+        }
+    }
+
+    func presentPillarSource(_ source: ParkingPhotoSource) {
+        switch source {
+        case .camera: isCapturingPillar = true
+        case .library: isPickingPillarFromLibrary = true
+        }
+    }
+
+    /// §6a: never throws, never explains. A floor, or nothing at all because there was no
+    /// text or the read timed out — either way the same form opens.
+    func readPillar(_ imageData: Data) {
+        isReadingPillar = true
+        pillarPhotoData = imageData
+        Task {
+            pillarReading = await pillarReader.read(imageData)
+            isReadingPillar = false
+            isManualSheetPresented = true
+        }
+    }
+
+    /// The photo belongs to the sheet that was opened with it, not to the next one.
+    func clearPillarEntry() {
+        pillarPhotoData = nil
+        pillarReading = nil
     }
 }
 
@@ -170,6 +271,7 @@ private struct PendingCandidateCard: View {
 /// docs/02 §8's empty home.
 private struct EmptyParkingCard: View {
     let onSaveManually: () -> Void
+    let onPhotoEntry: () -> Void
 
     var body: some View {
         PKCard {
@@ -182,6 +284,15 @@ private struct EmptyParkingCard: View {
                     .foregroundStyle(PKColor.textSecondary)
                 Button("직접 저장", action: onSaveManually)
                     .buttonStyle(PKPrimaryButtonStyle())
+                // Secondary, under the one emphasised CTA: the design harness allows a
+                // single primary per screen, and this is the same pairing the confirmation
+                // screen uses.
+                Button {
+                    onPhotoEntry()
+                } label: {
+                    Label("사진으로 입력", systemImage: "camera")
+                }
+                .buttonStyle(PKOutlineButtonStyle())
             }
             .padding(PKSpacing.xl)
         }
