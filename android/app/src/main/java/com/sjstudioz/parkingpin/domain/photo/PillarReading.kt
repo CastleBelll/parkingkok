@@ -69,7 +69,11 @@ object PillarTextParser {
 
     fun parse(lines: List<String>): PillarSuggestion {
         val windows = lines.flatMap(::windowsOf)
-        val floor = windows.firstNotNullOfOrNull(::floorOrNull)
+        // Per line, because **the first floor-shaped window decides that line even when it
+        // decides against one**. Falling through to a narrower window re-reads a fragment
+        // of the same sign: `지하 15층` is rejected as a floor nobody has, and its second
+        // word alone is `15층` — a basement turned into a storey, thirty floors away.
+        val floor = lines.firstNotNullOfOrNull(::floorInLine)
         return PillarSuggestion(
             floorRaw = floor,
             zone = windows.firstNotNullOfOrNull(::zoneOrNull),
@@ -94,12 +98,44 @@ object PillarTextParser {
         }
     }
 
-    private fun floorOrNull(candidate: String): String? {
+    private fun floorInLine(line: String): String? {
+        val stated = windowsOf(line).firstNotNullOfOrNull { window ->
+            floorOrNull(window)?.let { window to it }
+        } ?: return null
+        val (window, floor) = stated
+        return window.takeIf { isPlausibleFloor(floor) }
+    }
+
+    private fun floorOrNull(candidate: String): Floor? {
         if (BARE_NUMBER.matches(candidate)) return null
         val floor = FloorParser.parse(candidate) ?: return null
         // Free text is "the parser could not read this", which on a wall of signage is
         // every other word. Only a floor it recognised is worth suggesting.
-        return candidate.takeIf { floor.kind != FloorKind.FREE_TEXT }
+        return floor.takeIf { it.kind != FloorKind.FREE_TEXT }
+    }
+
+    /**
+     * Whether a parsed floor is one a garage has.
+     *
+     * A pillar carries two `B`-numbers — `B2` for the floor and `B17` for the pillar — and
+     * on the wall the only thing that tells them apart is how big the number is. Measured
+     * on a real photo of a B2 garage numbered B14–B17: the recogniser returned `B17` with
+     * confidence 1.00 and `B2` with 0.30, and iOS offered 지하 17층 for a car parked on B2.
+     * Neither order nor confidence separates them; magnitude does.
+     *
+     * Korean garages bottom out around B7 and a handful reach B10. Past that a number is a
+     * bay or a pillar id, and offering it is worse than offering nothing — the user has to
+     * notice and undo it. A genuinely deeper garage gets no suggestion, which is exactly
+     * what a failed read already does. Field-tuning starting points, mirrored on iOS in
+     * `PillarFloorSuggestion`.
+     */
+    private fun isPlausibleFloor(floor: Floor): Boolean {
+        val number = floor.number ?: return false
+        return when (floor.kind) {
+            FloorKind.BASEMENT -> number <= DEEPEST_BASEMENT
+            FloorKind.GROUND -> number <= HIGHEST_STOREY
+            FloorKind.FREE_TEXT -> false
+        }
     }
 
     private fun zoneOrNull(candidate: String): String? =
@@ -107,6 +143,9 @@ object PillarTextParser {
 
     private fun spotOrNull(candidate: String): String? =
         SPOT.matchEntire(candidate)?.groupValues?.get(1)
+
+    const val DEEPEST_BASEMENT = 10
+    const val HIGHEST_STOREY = 20
 
     private val WHITESPACE = Regex("""\s+""")
 

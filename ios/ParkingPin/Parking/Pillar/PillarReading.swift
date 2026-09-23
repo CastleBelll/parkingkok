@@ -80,12 +80,41 @@ extension PillarTextReading {
 /// Separate from the Vision plumbing so the rule can be tested on strings — which is what
 /// `B3` vs `83` vs `142` actually is.
 enum PillarFloorSuggestion {
-    /// The first line that parses to a real floor, or `nil`.
+    /// The one line that states a plausible floor, or `nil`.
     ///
-    /// Lines are considered in the order Vision returned them, which is roughly top to
-    /// bottom: a pillar paints the floor above the bay number far more often than below.
+    /// **Order is not a signal, and treating it as one was a real misread.** This used to
+    /// take the first line that parsed, on the reasoning that a pillar paints the floor
+    /// above the bay number. Vision promises no order at all: on a photo of a B2 garage
+    /// whose pillars are numbered B14–B17, the Mac returned `B2` before `B17` and the phone
+    /// returned `B17` first, so the app offered 지하 17층 and ignored the floor.
+    ///
+    /// What separates them is not position but size — of the number, not of the text. See
+    /// [isPlausibleFloor].
     static func floorText(fromLines lines: [String]) -> String? {
         lines.lazy.compactMap(candidate(in:)).first
+    }
+
+    /// Deepest basement and highest storey a floor sign is believed to state.
+    ///
+    /// A pillar carries two `B`-numbers in this shape — `B2` for the floor and `B17` for
+    /// the pillar — and the only thing that distinguishes them on the wall is how big the
+    /// number is. Korean garages bottom out around B7; a handful reach B10. Past that, a
+    /// number is a bay or a pillar id, and offering it as a floor is worse than offering
+    /// nothing: the user then has to notice and undo it.
+    ///
+    /// Field-tuning starting points, like §8's evidence weights. A genuinely deeper garage
+    /// gets no suggestion and the user types the floor, which is exactly today's behaviour
+    /// when a read fails.
+    static let deepestBasement = 10
+    static let highestStorey = 20
+
+    private static func isPlausibleFloor(_ floor: FloorValue) -> Bool {
+        guard let number = floor.number else { return false }
+        switch floor.kind {
+        case .basement: return number <= deepestBasement
+        case .ground: return number <= highestStorey
+        case .freeText: return false
+        }
     }
 
     /// A line reduced to the floor it unambiguously states, or `nil`.
@@ -93,6 +122,19 @@ enum PillarFloorSuggestion {
     /// Each line is also tried word by word: a pillar reads `B3 A구역 142` on one
     /// painted row, and Vision returns that row as one observation.
     private static func candidate(in line: String) -> String? {
+        // **The first floor-shaped window decides the line, even when it decides against
+        // one.** Falling through to a narrower window re-reads a fragment of the same sign:
+        // `지하 15층` is rejected as a floor nobody has, and its second word alone is
+        // `15층` — a basement turned into a storey, thirty floors from the car.
+        guard let parsed = firstFloor(in: line) else { return nil }
+        return isPlausibleFloor(parsed) ? parsed.raw : nil
+    }
+
+    /// The first floor this line states, plausible or not.
+    ///
+    /// Whole line first, then word by word: a pillar reads `B3 A구역 142` on one painted
+    /// row and Vision returns that row as one observation.
+    private static func firstFloor(in line: String) -> FloorValue? {
         if let whole = unambiguousFloor(in: line) {
             return whole
         }
@@ -111,10 +153,10 @@ enum PillarFloorSuggestion {
     /// must carry a floor marker (`B`, `지하`, `F`, `층`, `지상`); anything that parsed
     /// only because it was digits is not offered. The parser itself is untouched: FR-005,
     /// the widget stepper and the manual sheet all still accept a typed `3`.
-    private static func unambiguousFloor(in text: String) -> String? {
+    private static func unambiguousFloor(in text: String) -> FloorValue? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard Int(trimmed) == nil else { return nil }
         guard let parsed = FloorValue.parse(trimmed), parsed.kind != .freeText else { return nil }
-        return parsed.raw
+        return parsed
     }
 }

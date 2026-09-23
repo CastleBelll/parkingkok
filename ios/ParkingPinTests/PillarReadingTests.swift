@@ -70,6 +70,36 @@ struct PillarFloorSuggestionTests {
         #expect(PillarFloorSuggestion.floorText(fromLines: lines) == nil)
     }
 
+    @Test("A pillar number is not a floor, however confidently it is read")
+    func pillarNumberIsNotAFloor() {
+        // The real read of a real B2 garage whose pillars are numbered B14–B17, verbatim
+        // from Vision, including what it made of the neighbouring pillar's badge:
+        let lines = ["C13 1", "B2", "B17", "B", "82", "B16", "BB15"]
+
+        // `B17` came back with confidence 1.00 and `B2` with 0.30, and on the phone `B17`
+        // came first — which is how 지하 17층 was offered for a car parked on B2. Order and
+        // confidence are both the wrong signal; the number's size is the right one.
+        #expect(PillarFloorSuggestion.floorText(fromLines: lines) == "B2")
+    }
+
+    @Test(
+        "Nothing deeper than a garage goes is offered",
+        arguments: ["B17", "B11", "지하 15층", "82", "82F"]
+    )
+    func implausibleFloorsAreNotOffered(input: String) {
+        // Offering one is worse than offering nothing: the user has to notice it and undo
+        // it, and a wrong floor is exactly what the read was supposed to save them from.
+        #expect(PillarFloorSuggestion.floorText(fromLines: [input]) == nil)
+    }
+
+    @Test(
+        "The floors a garage actually has are still offered",
+        arguments: ["B1", "B7", "B10", "지하 3층", "2F", "20F"]
+    )
+    func plausibleFloorsSurvive(input: String) {
+        #expect(PillarFloorSuggestion.floorText(fromLines: [input]) != nil)
+    }
+
     @Test("The first floor-shaped line wins")
     func firstMatchWins() {
         // Arrange — a pillar paints the floor above the bay far more often than below.

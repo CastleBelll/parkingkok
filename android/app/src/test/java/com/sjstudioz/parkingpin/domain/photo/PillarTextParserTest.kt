@@ -3,6 +3,7 @@ package com.sjstudioz.parkingpin.domain.photo
 import com.sjstudioz.parkingpin.domain.parking.FloorKind
 import com.sjstudioz.parkingpin.domain.parking.FloorParser
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -100,6 +101,35 @@ class PillarTextParserTest {
         assertEquals("B2", suggestion.floorRaw)
         assertNull(suggestion.zone)
         assertNull(suggestion.spot)
+    }
+
+    @Test
+    fun `a pillar number is not a floor, however confidently it is read`() {
+        // The real read of a real B2 garage whose pillars are numbered B14-B17, verbatim
+        // from the recogniser — including what it made of a neighbouring pillar's badge.
+        // `B17` came back at confidence 1.00 and `B2` at 0.30, and iOS offered 지하 17층
+        // for a car parked on B2.
+        val suggestion = PillarTextParser.parse(
+            listOf("C13 1", "B2", "B17", "B", "82", "B16", "BB15"),
+        )
+
+        assertEquals("B2", suggestion.floorRaw)
+    }
+
+    @Test
+    fun `nothing deeper than a garage goes is offered`() {
+        // Offering one is worse than offering nothing: the user has to notice it and undo
+        // it, and a wrong floor is what the read was supposed to save them from.
+        for (input in listOf("B17", "B11", "지하 15층", "82F")) {
+            assertNull(input, PillarTextParser.parse(listOf(input)).floorRaw)
+        }
+    }
+
+    @Test
+    fun `the floors a garage actually has are still offered`() {
+        for (input in listOf("B1", "B7", "B10", "지하 3층", "2F", "20F")) {
+            assertNotNull(input, PillarTextParser.parse(listOf(input)).floorRaw)
+        }
     }
 
     @Test
