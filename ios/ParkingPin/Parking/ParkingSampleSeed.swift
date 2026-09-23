@@ -36,6 +36,32 @@
             ProcessInfo.processInfo.environment["PK_SEED_WITHOUT_LOCATION"] == "1"
         }
 
+        /// Restores an active parking that a device test had to end (2026-09-23).
+        ///
+        /// **Additive, unlike [isRequested]**: it writes one active session and touches
+        /// nothing else, because the records on the phone are the owner's and a seed that
+        /// replaced them to put a floor back would cost more than it fixed.
+        ///
+        /// It exists because iOS cannot be driven from the command line at all — `devicectl`
+        /// has no input API, so a state reached by tapping can only be restored by tapping,
+        /// and asking someone to retype what a test cleared is a bad trade.
+        ///
+        /// ```sh
+        /// xcrun devicectl device process launch --device <udid> \
+        ///   --environment-variables '{"PK_SEED_ACTIVE_PARKING":"B5/01번"}' com.sjstudioz.parkingpin
+        /// ```
+        ///
+        /// The value is `floor` or `floor/spot`. A parking already in progress is left
+        /// alone: two active sessions is a state the product does not have.
+        static var requestedActiveParking: (floor: String, spot: String?)? {
+            guard let raw = ProcessInfo.processInfo.environment["PK_SEED_ACTIVE_PARKING"],
+                  !raw.isEmpty
+            else { return nil }
+            let parts = raw.split(separator: "/", maxSplits: 1).map(String.init)
+            guard let floor = parts.first else { return nil }
+            return (floor, parts.count > 1 ? parts[1] : nil)
+        }
+
         /// Opens the app on one screen rather than home, so every product surface can be
         /// photographed without a way to drive the touchscreen.
         ///
@@ -74,6 +100,32 @@
         ///
         /// `photoStore` is optional so the fixture still applies when photo storage is
         /// unavailable — the same degradation the product has.
+        /// Writes the active parking [requestedActiveParking] asks for, if there is none.
+        static func applyActiveParking(
+            _ requested: (floor: String, spot: String?),
+            to store: any ParkingStoring,
+            now: Date
+        ) throws {
+            guard try store.activeSession() == nil else { return }
+            try store.startSession(
+                ParkingSession(
+                    id: UUID(),
+                    startedAt: now,
+                    endedAt: nil,
+                    source: .manual,
+                    confidenceBucket: nil,
+                    location: nil,
+                    floor: FloorValue.parse(requested.floor),
+                    zone: nil,
+                    spot: requested.spot,
+                    memo: nil,
+                    photoRelativePath: nil,
+                    createdAt: now,
+                    updatedAt: now
+                )
+            )
+        }
+
         static func apply(
             to store: any ParkingStoring,
             photoStore: (any ParkingPhotoStoring)? = nil,

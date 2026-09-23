@@ -130,6 +130,16 @@ struct ParkingComposition {
     /// actor. Awaited from `RootView`'s composition task, never from `body`.
     func seedSampleDataIfRequested() async {
         #if PK_DEV
+            // Additive, and first: restoring one active parking must not depend on the
+            // replacing seed below being asked for.
+            if let requested = ParkingSampleSeed.requestedActiveParking {
+                do {
+                    try ParkingSampleSeed.applyActiveParking(requested, to: store, now: Date())
+                    model.refresh()
+                } catch {
+                    AppLog.lifecycle.error("active seed failed: \(String(describing: error), privacy: .public)")
+                }
+            }
             guard ParkingSampleSeed.isRequested else { return }
             do {
                 try await ParkingSampleSeed.apply(
