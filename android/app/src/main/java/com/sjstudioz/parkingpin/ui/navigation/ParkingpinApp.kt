@@ -22,6 +22,7 @@ import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.ViewModelStore
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.material3.TextButton
@@ -233,13 +234,22 @@ private fun RouteViewModelHost(
     val stores = remember { mutableMapOf<String, ViewModelStore>() }
     val liveKeys = backStack.entries.map(ParkingpinRouteCodec::encode).toSet()
 
-    // Clearing on the way out, not on the way in: a `ViewModelStore` that is not cleared
-    // leaks every ViewModel it holds for as long as the Activity lives.
-    DisposableEffect(liveKeys) {
+    // **After the composition, against the keys that are live now.** Doing this in a
+    // `DisposableEffect`'s `onDispose` was wrong in a way that cost a save: the disposal
+    // captures the *previous* key set, so pushing a screen cleared the store that had just
+    // been created for it, and the form rendered one ViewModel while the save button used
+    // another — the floor was on screen and absent from the record.
+    SideEffect {
+        stores.keys.toList()
+            .filterNot { it in liveKeys }
+            .forEach { stores.remove(it)?.clear() }
+    }
+
+    // Leaving the shell entirely: an uncleared `ViewModelStore` leaks every ViewModel in it.
+    DisposableEffect(Unit) {
         onDispose {
-            stores.keys.toList()
-                .filterNot { it in liveKeys }
-                .forEach { stores.remove(it)?.clear() }
+            stores.values.forEach(ViewModelStore::clear)
+            stores.clear()
         }
     }
 
