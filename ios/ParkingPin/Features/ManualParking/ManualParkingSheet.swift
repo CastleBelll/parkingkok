@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Manual parking entry — FR-001, and the screen that has to work when nothing else does.
 ///
@@ -72,6 +73,9 @@ struct ManualParkingSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                if let pillarPhoto, let image = UIImage(data: pillarPhoto) {
+                    pillarSection(image)
+                }
                 Section {
                     TextField("예: B3, 지하 3층, 3F", text: $draft.floorText)
                         .focused($focusedField, equals: .floor)
@@ -124,7 +128,45 @@ struct ManualParkingSheet: View {
         if confirmation != nil {
             return "주차 정보 입력"
         }
-        return editing == nil ? "주차 직접 저장" : "주차 정보 수정"
+        if editing != nil {
+            return "주차 정보 수정"
+        }
+        // Arriving from `사진으로 입력` and being met by a screen titled 직접 저장 reads as
+        // the photo having been ignored — it was, reported from the device as "사진 올렸는데
+        // 왜 직접 입력 화면이 나와?". The destination is right; it just never said so.
+        return pillarPhoto == nil ? "주차 직접 저장" : "사진으로 저장"
+    }
+
+    /// What the photo was, and what came of it.
+    ///
+    /// docs/02 §6a's "never explains" is about the *confirmation* screen, where the form was
+    /// opening anyway and a failed read is indistinguishable from an ordinary blank form. A
+    /// user who chose 사진으로 입력 is owed the other half: silence there cannot be told
+    /// apart from a feature that does nothing.
+    @ViewBuilder
+    private func pillarSection(_ image: UIImage) -> some View {
+        Section {
+            HStack(spacing: PKSpacing.l) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 64, height: 64)
+                    .clipShape(RoundedRectangle(cornerRadius: PKRadius.chip, style: .continuous))
+                Text(pillarSummary)
+                    .font(PKTypography.supporting)
+                    .foregroundStyle(PKColor.textSecondary)
+            }
+            .padding(.vertical, PKSpacing.xs)
+        } footer: {
+            Text("사진은 저장과 함께 이 기록에 남아요.")
+        }
+    }
+
+    private var pillarSummary: String {
+        guard let floorText = suggestion?.floorText, !floorText.isEmpty else {
+            return "사진에서 층을 찾지 못했어요. 직접 적어주세요."
+        }
+        return "사진에서 \(floorText)(을)를 읽었어요. 맞는지 확인해 주세요."
     }
 
     /// FR-005's accepted spellings, plus what happens to anything else.
