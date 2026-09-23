@@ -10,6 +10,10 @@ import com.sjstudioz.parkingpin.domain.parking.ParkingLocationProvider
 import com.sjstudioz.parkingpin.domain.parking.ParkingRecord
 import com.sjstudioz.parkingpin.domain.parking.ParkingRepository
 import com.sjstudioz.parkingpin.domain.parking.ParkingSource
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /** What the user typed on the manual entry form. Every field is optional. */
 data class ManualParkingInput(
@@ -53,6 +57,11 @@ class SaveManualParkingUseCase(
      * nothing rather than pretending to.
      */
     private val analytics: AnalyticsRecording = DisabledAnalyticsRecorder,
+    /**
+     * Outlives the screen, because the fix does. Defaults to a scope of its own so a test
+     * that does not care about the fix does not have to provide one.
+     */
+    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
 ) {
 
     suspend operator fun invoke(input: ManualParkingInput): SaveManualParkingResult {
@@ -80,7 +89,36 @@ class SaveManualParkingUseCase(
         // the feature. The payload is the event name and `platform` — floor, zone, spot and
         // memo are §3 forbidden and `AnalyticsEvent` gives them nowhere to go.
         analytics.record(AnalyticsEvent.ParkingManualSaved)
+        attachCurrentFix(record.id, record.location)
         return SaveManualParkingResult.Saved(record)
+    }
+
+    /**
+     * Asks the OS where the car is and writes it onto the record already saved.
+     *
+     * On [scope] and not the caller's: the save has returned and the screen is closing, so
+     * a job tied to it would be cancelled before the GPS answered. This is the part nobody
+     * waits for — the record exists, and the coordinate improves it a second or two later.
+     *
+     * A fix that arrives after the parking was ended or deleted updates nothing:
+     * [ParkingRepository.update] is a no-op for a record that is gone.
+     */
+    private fun attachCurrentFix(recordId: String, stored: ParkingLocation?) {
+        scope.launch {
+            val fix = runCatching { locationProvider.currentFix() }.getOrNull() ?: return@launch
+            // A stored location that is already more accurate stays. The fix is this
+            // moment's, so it wins ties on age.
+            // A stored accuracy of null is a location that never said how good it was, and
+            // a fix that states 20 m beats one that states nothing.
+            val storedAccuracy = stored?.horizontalAccuracyM
+            val fixAccuracy = fix.horizontalAccuracyM
+            if (storedAccuracy != null && fixAccuracy != null && storedAccuracy <= fixAccuracy) return@launch
+            repository.update(recordId) { current ->
+                // Still open, still this parking: a record the user has since ended keeps
+                // the coordinates it ended with.
+                if (current.endedAtMillis != null) current else current.copy(location = fix)
+            }
+        }
     }
 
     /**

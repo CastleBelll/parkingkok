@@ -162,11 +162,17 @@ final class ParkingModel {
         WidgetCenter.shared.reloadTimelines(ofKind: ActiveParkingSnapshot.widgetKind)
     }
 
-    /// FR-001. Succeeds with no permission of any kind: the location is whatever
-    /// `locationProvider` happens to have, and `nil` is a normal answer.
+    /// FR-001. Succeeds with no permission of any kind: the location is whatever is already
+    /// known, and `nil` is a normal answer.
+    ///
+    /// **The record is written before the GPS is asked.** Waiting for a fix first made the
+    /// button look broken — up to eight silent seconds with nothing on screen but a disabled
+    /// button, reported from the device as "저장 눌러도 반응은 없는데 저장은 되고". A parking
+    /// record is local and instant, and a coordinate is an improvement to it, so
+    /// [attachCurrentFix] catches up afterwards.
     @discardableResult
     func saveManualParking(_ draft: ManualParkingDraft) async -> Bool {
-        let location = await locationProvider.currentParkedLocation()
+        let location = await locationProvider.storedLocation()
         let now = clock.now
         let session = ParkingSession(
             id: UUID(),
@@ -193,8 +199,27 @@ final class ParkingModel {
         // gives them nowhere to go.
         if saved {
             analytics.record(.parkingManualSaved)
+            attachCurrentFix(to: session.id, improving: location)
         }
         return saved
+    }
+
+    /// Asks the OS where the car is and writes it onto a record already saved.
+    ///
+    /// Detached on purpose: the save has returned and the sheet has closed, so this is the
+    /// part the user never waits for. A fix that arrives after the parking was ended, or
+    /// after the record was deleted, updates nothing — `update` writes through the store,
+    /// which no longer has it.
+    private func attachCurrentFix(to sessionID: UUID, improving existing: ParkedLocation?) {
+        Task { [weak self, locationProvider] in
+            guard let fix = await locationProvider.currentFix() else { return }
+            // A stored location that is already better stays. `currentFix` is this moment's,
+            // so it wins ties on age; accuracy is the only reason to keep the old one.
+            if let existing, existing.horizontalAccuracy <= fix.horizontalAccuracy { return }
+            guard let self, var session = self.session(id: sessionID) else { return }
+            session.location = fix
+            self.update(session)
+        }
     }
 
     /// docs/05 §10a confirmation: a detected candidate becomes a parking record.

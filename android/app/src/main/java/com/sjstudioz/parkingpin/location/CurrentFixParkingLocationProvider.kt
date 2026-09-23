@@ -26,21 +26,26 @@ import kotlinx.coroutines.tasks.await
  * 가능" means the save must survive a refusal; it does not mean the app may never ask. And
  * pressing this button is the clearest location request a user can make.
  *
- * Order, and why:
- * 1. **A fix now.** The car is here, at this moment. Nothing else can say that.
- * 2. **The checkpoint** ([CheckpointParkingLocationProvider]) — underground, where a one-shot
- *    fix will not come, the drive that just ended is the better answer anyway.
- * 3. **Nothing**, and the record is saved without coordinates. FR-001 intact.
+ * **The record is written before this is asked.** Waiting for a fix inside the save made the
+ * button look broken — up to eight silent seconds with nothing on screen but a disabled
+ * button, reported from the device as "저장 눌러도 반응은 없는데 저장은 되고". So the save
+ * takes [lastReliableLocation], which is the checkpoint and returns at once, and the caller
+ * attaches [currentFix] to the record afterwards.
+ *
+ * What each answer is worth:
+ * * **A fix now** — the car is here, at this moment. Nothing else can say that.
+ * * **The checkpoint** ([CheckpointParkingLocationProvider]) — underground, where a one-shot
+ *   fix will not come, the drive that just ended is the better answer anyway.
+ * * **Nothing**, and the record keeps no coordinates. FR-001 intact.
  */
 class CurrentFixParkingLocationProvider(
     private val context: Context,
     private val fallback: ParkingLocationProvider,
 ) : ParkingLocationProvider {
 
-    override suspend fun lastReliableLocation(): ParkingLocation? =
-        currentFix() ?: fallback.lastReliableLocation()
+    override suspend fun lastReliableLocation(): ParkingLocation? = fallback.lastReliableLocation()
 
-    private suspend fun currentFix(): ParkingLocation? {
+    override suspend fun currentFix(): ParkingLocation? {
         if (!hasForegroundLocationPermission()) return null
         return try {
             val request = CurrentLocationRequest.Builder()

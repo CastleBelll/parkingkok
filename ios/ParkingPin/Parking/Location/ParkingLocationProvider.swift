@@ -8,9 +8,17 @@ import Foundation
 /// denied, Smart Detection off, a fresh install that has never seen a fix — all `nil`.
 @MainActor
 protocol ParkingLocationProviding: Sendable {
-    /// Best-effort, and never prompts. Returns `nil` whenever there is no location the
-    /// app can honestly attach to a parking.
-    func currentParkedLocation() async -> ParkedLocation?
+    /// What is already known, without waiting for anything. Returns immediately.
+    ///
+    /// This is what a save uses, because a save must not wait: the record is local and the
+    /// user is standing next to their car.
+    func storedLocation() async -> ParkedLocation?
+
+    /// One fix from the OS, which takes as long as a GPS takes.
+    ///
+    /// Never prompts (FR-001), and `nil` is an ordinary answer — no authorization, a
+    /// timeout, indoors. Called *after* a record exists, never before it.
+    func currentFix() async -> ParkedLocation?
 }
 
 /// Reads whatever the detection stack last trusted (docs/05 §7 `lastReliableLocation`).
@@ -35,7 +43,7 @@ struct DetectionParkingLocationProvider: ParkingLocationProviding {
         self.clock = clock
     }
 
-    func currentParkedLocation() async -> ParkedLocation? {
+    func storedLocation() async -> ParkedLocation? {
         guard let reliable = await runtime.snapshot().currentCheckpoint?.lastReliableLocation else {
             return nil
         }
@@ -44,6 +52,10 @@ struct DetectionParkingLocationProvider: ParkingLocationProviding {
         }
         return ParkedLocation(reliable)
     }
+
+    /// The detection stack does not hold a live GPS open, and a save must not open one
+    /// either — [CurrentFixParkingLocationProvider] is the half that asks.
+    func currentFix() async -> ParkedLocation? { nil }
 }
 
 /// Asks the OS for a fix, because the user just pressed 주차 위치 저장 (FR-001).
@@ -84,19 +96,21 @@ struct CurrentFixParkingLocationProvider: ParkingLocationProviding {
         self.fallback = fallback
     }
 
-    func currentParkedLocation() async -> ParkedLocation? {
-        if let fix = await locator.currentFix(timeout: CoreLocationOneShotLocator.defaultTimeout),
-           fix.horizontalAccuracy > 0,
-           fix.horizontalAccuracy <= Self.maximumHorizontalAccuracy
-        {
-            return ParkedLocation(
-                latitude: fix.coordinate.latitude,
-                longitude: fix.coordinate.longitude,
-                horizontalAccuracy: fix.horizontalAccuracy,
-                capturedAt: fix.timestamp
-            )
-        }
-        return await fallback.currentParkedLocation()
+    func storedLocation() async -> ParkedLocation? {
+        await fallback.storedLocation()
+    }
+
+    func currentFix() async -> ParkedLocation? {
+        guard let fix = await locator.currentFix(timeout: CoreLocationOneShotLocator.defaultTimeout),
+              fix.horizontalAccuracy > 0,
+              fix.horizontalAccuracy <= Self.maximumHorizontalAccuracy
+        else { return nil }
+        return ParkedLocation(
+            latitude: fix.coordinate.latitude,
+            longitude: fix.coordinate.longitude,
+            horizontalAccuracy: fix.horizontalAccuracy,
+            capturedAt: fix.timestamp
+        )
     }
 }
 
@@ -106,7 +120,6 @@ struct CurrentFixParkingLocationProvider: ParkingLocationProviding {
 /// location whatsoever still round-trips.
 @MainActor
 struct UnavailableParkingLocationProvider: ParkingLocationProviding {
-    func currentParkedLocation() async -> ParkedLocation? {
-        nil
-    }
+    func storedLocation() async -> ParkedLocation? { nil }
+    func currentFix() async -> ParkedLocation? { nil }
 }

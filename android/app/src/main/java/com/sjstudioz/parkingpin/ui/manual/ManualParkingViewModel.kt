@@ -258,6 +258,10 @@ class ManualParkingViewModel(
                             clock = container.clock,
                             idGenerator = { UUID.randomUUID().toString() },
                             analytics = container.analyticsRecorder,
+                            // The application's, not this ViewModel's: the fix arrives after
+                            // the screen has closed and a `viewModelScope` job would be
+                            // cancelled with it.
+                            scope = container.applicationScope,
                         ),
                         candidateId = candidateId,
                         coordinator = container.parkingCandidateCoordinator,

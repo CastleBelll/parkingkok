@@ -218,9 +218,8 @@ struct ManualParkingTests {
 private struct StubParkingLocationProvider: ParkingLocationProviding {
     let location: ParkedLocation?
 
-    func currentParkedLocation() async -> ParkedLocation? {
-        location
-    }
+    func storedLocation() async -> ParkedLocation? { location }
+    func currentFix() async -> ParkedLocation? { nil }
 }
 
 /// A fake Core Location, so the order of `CurrentFixParkingLocationProvider` is testable
@@ -255,7 +254,7 @@ private func stubFix(accuracy: CLLocationAccuracy) -> CLLocation {
 /// detection checkpoint and never asked the OS.
 @MainActor
 struct CurrentFixParkingLocationProviderTests {
-    @Test("Pressing save asks for a fix now, rather than reusing the drive's")
+    @Test("The fix comes from the OS, asked for after the record already exists")
     func asksForAFix() async {
         let locator = StubOneShotLocator(fix: stubFix(accuracy: 12))
         let provider = CurrentFixParkingLocationProvider(
@@ -263,14 +262,29 @@ struct CurrentFixParkingLocationProviderTests {
             fallback: UnavailableParkingLocationProvider()
         )
 
-        let location = await provider.currentParkedLocation()
+        let location = await provider.currentFix()
 
         #expect(locator.calls == 1)
         #expect(location?.horizontalAccuracy == 12)
     }
 
-    @Test("A fix too coarse to mean anything falls through to the checkpoint")
-    func coarseFixFallsBack() async {
+    @Test("The save path never waits for the GPS")
+    func storedLocationDoesNotAskTheOS() async {
+        // The whole reason the protocol has two methods: eight silent seconds on a disabled
+        // button is what "저장 눌러도 반응 없다" was.
+        let locator = StubOneShotLocator(fix: stubFix(accuracy: 12))
+        let provider = CurrentFixParkingLocationProvider(
+            locator: locator,
+            fallback: UnavailableParkingLocationProvider()
+        )
+
+        _ = await provider.storedLocation()
+
+        #expect(locator.calls == 0)
+    }
+
+    @Test("A fix too coarse to mean anything is not a fix at all")
+    func coarseFixIsRejected() async {
         // 2 km is what an indoor fix reports, and a pin drawn from it would claim a place
         // the car is not (FR-008).
         let fallbackLocation = ParkedLocation(
@@ -284,19 +298,21 @@ struct CurrentFixParkingLocationProviderTests {
             fallback: StubParkingLocationProvider(location: fallbackLocation)
         )
 
-        #expect(await provider.currentParkedLocation() == fallbackLocation)
+        // Nothing to attach, so the record keeps whatever the save already stored.
+        #expect(await provider.currentFix() == nil)
     }
 
     @Test("No fix and no checkpoint still saves, without coordinates")
     func noFixIsANormalAnswer() async {
-        // FR-001: 위치 권한 없이도 저장 가능. The whole point of the fallback chain ending
-        // in nothing rather than in a failure.
+        // FR-001: 위치 권한 없이도 저장 가능. Both halves answer nil and the record is
+        // written regardless.
         let provider = CurrentFixParkingLocationProvider(
             locator: StubOneShotLocator(fix: nil),
             fallback: UnavailableParkingLocationProvider()
         )
 
-        #expect(await provider.currentParkedLocation() == nil)
+        #expect(await provider.storedLocation() == nil)
+        #expect(await provider.currentFix() == nil)
     }
 }
 
@@ -305,7 +321,7 @@ struct CurrentFixParkingLocationProviderTests {
 struct ParkingLocationProviderTests {
     @Test("The permission-less provider returns nothing, which is a normal answer")
     func unavailableProviderReturnsNil() async {
-        #expect(await UnavailableParkingLocationProvider().currentParkedLocation() == nil)
+        #expect(await UnavailableParkingLocationProvider().storedLocation() == nil)
     }
 
     @Test("The freshness window is the one the detection stack's capture cadence implies")
