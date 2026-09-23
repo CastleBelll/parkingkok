@@ -156,6 +156,27 @@ class PillarTextParserTest {
     }
 
     @Test
+    fun `the pillar's own number is the zone, when the photo says which pillar`() {
+        val suggestion = PillarTextParser.parse(listOf("B2", "B17"))
+
+        assertEquals("B2", suggestion.floorRaw)
+        assertEquals("B17", suggestion.zone)
+    }
+
+    @Test
+    fun `a frame full of pillars names none of them`() {
+        // B14-B17 in one photo cannot say which one the car is at, and a confident wrong
+        // pillar sends the user to the wrong end of the floor.
+        val suggestion = PillarTextParser.parse(
+            listOf("82", "B17", "82", "B16", "82", "B15", "82"),
+        )
+
+        assertEquals("B2", suggestion.floorRaw)
+        assertNull(suggestion.zone)
+        assertNull(suggestion.spot)
+    }
+
+    @Test
     fun `nothing recognised is nothing suggested`() {
         assertEquals(PillarSuggestion.NONE, PillarTextParser.parse(emptyList()))
         assertEquals(PillarSuggestion.NONE, PillarTextParser.parse(listOf("", "   ")))

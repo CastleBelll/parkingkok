@@ -155,8 +155,16 @@ said the contract had no grammar to follow. It does now.
 
 | field | accepted | rejected |
 |---|---|---|
-| zone | `A구역`, `A 구역`, `가구역` — up to six characters before the literal 구역 | `C13`, `B17`. Without the word, every token on a wall of signage is a zone |
+| zone | `A구역`, `A 구역`, `가구역` — up to six characters before the literal 구역; failing that, the pillar's own number (below) | a token with neither |
+| pillar number | `B17`, `C13`, `가12` — one or two letters then one to three digits, **exactly one** in the photo | several distinct ones, or the floor badge |
 | bay | `142`, `142번` — one to four digits, stored as digits | anything the floor already used (below) |
+
+The pillar number fills the zone because that is what a person writes down: in a garage
+whose pillars are labelled, "B17" *is* where the car is. It is offered **only when the photo
+settles which pillar is meant** — the badge repeats on every pillar and is excluded, and a
+wide shot catching B14 through B17 says nothing at all, because a confident wrong pillar
+sends the user to the wrong end of the floor. A photo of the pillar in front of them leaves
+one label, and one is answerable.
 
 #### Two rules the wall forced (2026-09-23)
 

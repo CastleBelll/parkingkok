@@ -128,7 +128,7 @@ struct PillarFloorSuggestionTests {
         // number". iOS read only the floor until 2026-09-23, while Android read all three.
         let (zone, spot) = PillarFloorSuggestion.zoneAndSpot(
             fromLines: ["B3", "A구역", "142번"],
-            consuming: nil
+            excluding: ["B3"]
         )
 
         #expect(zone == "A구역")
@@ -141,18 +141,43 @@ struct PillarFloorSuggestionTests {
         // would hand the user the same misread twice.
         let (_, spot) = PillarFloorSuggestion.zoneAndSpot(
             fromLines: ["82", "B17", "82", "82"],
-            consuming: "82"
+            excluding: ["B2", "82"]
         )
 
         #expect(spot == nil)
+    }
+
+    @Test("The pillar's own number is the zone, when the photo says which pillar")
+    func lonePillarLabelIsTheZone() {
+        // A close-up of the pillar the car is at: one label, and it is what the user would
+        // write down.
+        let (zone, _) = PillarFloorSuggestion.zoneAndSpot(fromLines: ["B2", "B17"], excluding: ["B2"])
+
+        #expect(zone == "B17")
+    }
+
+    @Test("A frame full of pillars names none of them")
+    func severalPillarLabelsAreAmbiguous() {
+        // The wide shot: B14 through B17 in one photo cannot say which one the car is at,
+        // and a confident wrong pillar sends the user to the wrong end of the floor.
+        let (zone, _) = PillarFloorSuggestion.zoneAndSpot(
+            fromLines: ["82", "B17", "82", "B16", "82", "B15", "82"],
+            excluding: ["B2", "82"]
+        )
+
+        #expect(zone == nil)
     }
 
     @Test("A wall with no 구역 on it offers no zone")
     func zoneNeedsItsWord() {
         // Without the literal word, every two-character token on a wall of signage is a
         // zone. §6a's "leave the rest blank" is the better answer than a guess.
-        let (zone, _) = PillarFloorSuggestion.zoneAndSpot(fromLines: ["B3", "C13"], consuming: nil)
+        let (zone, _) = PillarFloorSuggestion.zoneAndSpot(
+            fromLines: ["B3", "C13", "D14"],
+            excluding: ["B3"]
+        )
 
+        // Two pillar labels and no 구역: nothing is answerable.
         #expect(zone == nil)
     }
 

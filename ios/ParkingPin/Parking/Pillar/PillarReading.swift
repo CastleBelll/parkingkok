@@ -181,17 +181,45 @@ enum PillarFloorSuggestion {
     /// `142`, `142번`. Kept as digits, because that is what the field holds.
     private static var spotPattern: Regex<(Substring, Substring)> { /^(\d{1,4})번?$/ }
 
+    /// `B17`, `C13`, `가12` — the number painted on the pillar itself.
+    ///
+    /// Not a zone in the `A구역` sense, and it is what the user would write down anyway:
+    /// in a garage whose pillars are labelled, "B17" *is* where the car is. It is offered
+    /// only when the photo settles which pillar is meant:
+    ///
+    /// * **The floor badge is excluded.** It repeats on every pillar in frame while pillar
+    ///   numbers all differ, so anything appearing more than once is the badge, not a
+    ///   pillar — and so are the digits the floor correction already consumed.
+    /// * **Several distinct labels means none.** A wide shot catching B14 through B17
+    ///   cannot say which one the car is at, and a confident wrong pillar sends the user to
+    ///   the wrong end of the floor. Photographing the pillar in front of them leaves one,
+    ///   and one is answerable.
+    private static func pillarLabel(among words: [String], excluding used: Set<String>) -> String? {
+        var counts: [String: Int] = [:]
+        for word in words where word.wholeMatch(of: pillarLabelPattern) != nil {
+            counts[word, default: 0] += 1
+        }
+        let labels = counts
+            .filter { $0.value == 1 && !used.contains($0.key) }
+            .map(\.key)
+        return labels.count == 1 ? labels.first : nil
+    }
+
+    /// One or two letters — Latin or Hangul — then one to three digits, and nothing else.
+    private static var pillarLabelPattern: Regex<Substring> { /^[가-힣A-Za-z]{1,2}\d{1,3}$/ }
+
     /// The zone and bay a pillar states, if it states them (§6a).
     ///
-    /// `consuming` is the digit run the floor already used: on a wide shot the badge is
-    /// read as `82` several times, and without this the same misread that becomes 지하 2층
-    /// would also be offered as bay 82.
-    static func zoneAndSpot(fromLines lines: [String], consuming usedDigits: String?) -> (String?, String?) {
+    /// `used` is what the floor already took — the text it chose and, on a wide shot, the
+    /// digit run that text was corrected from. Without it the same misread that becomes
+    /// 지하 2층 is handed back as bay 82 or as the pillar's own number.
+    static func zoneAndSpot(fromLines lines: [String], excluding used: Set<String>) -> (String?, String?) {
         let words = lines.flatMap { $0.split(whereSeparator: \.isWhitespace) }.map(String.init)
         let zone = words.first { $0.wholeMatch(of: zonePattern) != nil }
+            ?? pillarLabel(among: words, excluding: used)
         let spot = words
             .lazy
-            .filter { $0 != usedDigits }
+            .filter { !used.contains($0) }
             .compactMap { $0.wholeMatch(of: spotPattern)?.1 }
             .first
             .map(String.init)

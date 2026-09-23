@@ -74,10 +74,18 @@ object PillarTextParser {
         // of the same sign: `지하 15층` is rejected as a floor nobody has, and its second
         // word alone is `15층` — a basement turned into a storey, thirty floors away.
         val floor = lines.firstNotNullOfOrNull(::floorInLine) ?: repeatedBadge(lines)
+        // What the floor took: the text it chose, and — when that text was corrected from a
+        // misread badge — the digits it came from. Neither may come back as the bay or as
+        // the pillar's own number.
+        val used = buildSet {
+            floor?.let(::add)
+            if (floor != null && lines.none { it == floor }) add("8" + floor.drop(1))
+        }
+        val words = lines.flatMap { it.split(WHITESPACE) }.filter(String::isNotEmpty)
         return PillarSuggestion(
             floorRaw = floor,
-            zone = windows.firstNotNullOfOrNull(::zoneOrNull),
-            spot = windows.firstNotNullOfOrNull(::spotOrNull),
+            zone = windows.firstNotNullOfOrNull(::zoneOrNull) ?: pillarLabel(words, used),
+            spot = windows.filterNot(used::contains).firstNotNullOfOrNull(::spotOrNull),
         )
     }
 
@@ -172,6 +180,31 @@ object PillarTextParser {
         }
     }
 
+    /**
+     * `B17`, `C13`, `가12` — the number painted on the pillar itself.
+     *
+     * Not a zone in the `A구역` sense, and it is what the user would write down anyway: in a
+     * garage whose pillars are labelled, "B17" *is* where the car is. Offered only when the
+     * photo settles which pillar is meant:
+     *
+     * * **The floor badge is excluded.** It repeats on every pillar in frame while pillar
+     *   numbers all differ, so anything appearing more than once is the badge — as are the
+     *   digits the floor correction already consumed.
+     * * **Several distinct labels means none.** A wide shot catching B14 through B17 cannot
+     *   say which one the car is at, and a confident wrong pillar sends the user to the
+     *   wrong end of the floor. Photographing the pillar in front of them leaves one.
+     */
+    private fun pillarLabel(words: List<String>, used: Set<String>): String? {
+        val labels = words
+            .filter { PILLAR_LABEL.matches(it) }
+            .groupingBy { it }
+            .eachCount()
+            .filterValues { it == 1 }
+            .keys
+            .filterNot(used::contains)
+        return labels.singleOrNull()
+    }
+
     private fun zoneOrNull(candidate: String): String? =
         ZONE.matchEntire(candidate)?.let { candidate.replace(WHITESPACE, "") }
 
@@ -187,6 +220,9 @@ object PillarTextParser {
 
     /** `A구역`, `A 구역`, `가구역`. The label before 구역 is short by nature. */
     private val ZONE = Regex("""^[가-힣A-Za-z0-9]{1,6}\s*구역$""")
+
+    /** One or two letters — Latin or Hangul — then one to three digits, and nothing else. */
+    private val PILLAR_LABEL = Regex("""^[가-힣A-Za-z]{1,2}\d{1,3}$""")
 
     /** `142`, `142번`. Kept as digits, because that is what the field holds. */
     private val SPOT = Regex("""^(\d{1,4})번?$""")

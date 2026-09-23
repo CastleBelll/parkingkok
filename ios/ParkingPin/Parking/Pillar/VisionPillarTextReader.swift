@@ -54,12 +54,14 @@ struct VisionPillarTextReader: PillarTextReading {
     func read(_ imageData: Data) async -> PillarReading {
         let lines = await withTimeout(timeout) { await Self.recognise(imageData) } ?? []
         let floorText = PillarFloorSuggestion.floorText(fromLines: lines)
-        // The digits the badge correction consumed, so the same `82` cannot also be
-        // offered as the bay (§6a).
-        let usedDigits = floorText.flatMap { text in
-            lines.contains(text) ? nil : "8" + text.dropFirst()
+        // What the floor took: the text it chose, plus — when that text was corrected from
+        // a misread badge — the digits it was corrected from. Neither may come back as the
+        // bay or as the pillar's own number (§6a).
+        var used = Set(floorText.map { [$0] } ?? [])
+        if let floorText, !lines.contains(floorText) {
+            used.insert("8" + floorText.dropFirst())
         }
-        let (zone, spot) = PillarFloorSuggestion.zoneAndSpot(fromLines: lines, consuming: usedDigits)
+        let (zone, spot) = PillarFloorSuggestion.zoneAndSpot(fromLines: lines, excluding: used)
         #if PK_DEV
             PillarReadDiagnostics.record(lines: lines, chose: floorText, zone: zone, spot: spot)
         #endif
