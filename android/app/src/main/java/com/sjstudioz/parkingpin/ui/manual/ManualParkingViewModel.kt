@@ -124,8 +124,34 @@ class ManualParkingViewModel(
     private val _uiState = MutableStateFlow(ManualParkingUiState())
     val uiState: StateFlow<ManualParkingUiState> = _uiState.asStateFlow()
 
-    init {
-        if (pillarPhoto != null) viewModelScope.launch { prefillFromPillar(pillarPhoto) }
+    /**
+     * Whether the camera still has to be opened for this screen (docs/02 §6a).
+     *
+     * `사진으로 입력` used to navigate here and read [CameraCaptureFile]'s *last* capture —
+     * a file that only the 사진 추가 flows on home and detail ever write. Nothing on this
+     * path had taken a photo, so the reader read a stale file or none at all and the form
+     * opened empty. The screen opens the camera now, and this is what tells it to.
+     */
+    val needsCapture: Boolean get() = pillarPhoto != null && !captureHandled
+
+    private var captureHandled = false
+
+    /**
+     * The photo the user just took, read for a floor before anything is saved.
+     *
+     * Called by the screen once the picker returns. A dismissed camera calls
+     * [onCaptureDismissed] instead and the form stays exactly as it is — empty, and no
+     * worse than 직접 입력.
+     */
+    fun onPhotoCaptured() {
+        if (captureHandled) return
+        captureHandled = true
+        val entry = pillarPhoto ?: return
+        viewModelScope.launch { prefillFromPillar(entry) }
+    }
+
+    fun onCaptureDismissed() {
+        captureHandled = true
     }
 
     /**

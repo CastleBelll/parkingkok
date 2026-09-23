@@ -17,6 +17,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.activity.compose.rememberLauncherForActivityResult
+import com.sjstudioz.parkingpin.ui.photo.ParkingPhotoPicker
 import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.ViewModelStore
@@ -314,6 +315,9 @@ private fun HomeRoute(container: AppContainer, onNavigate: (ParkingpinRoute) -> 
         onStepFloor = viewModel::onStepFloor,
         onEndParking = viewModel::onEndParking,
         onSaveParking = { onNavigate(ParkingpinRoute.ManualEntry()) },
+        // docs/02 §6a: the same form, opened with the camera already firing, so the floor
+        // arrives read rather than typed.
+        onPhotoEntry = { onNavigate(ParkingpinRoute.ManualEntry(fromPillarPhoto = true)) },
         onOpenCandidate = { onNavigate(ParkingpinRoute.Confirm(it)) },
         onOpenDetail = { onNavigate(ParkingpinRoute.Detail(it)) },
         onOpenHistory = { onNavigate(ParkingpinRoute.History) },
@@ -349,6 +353,27 @@ private fun ManualEntryRoute(
     LaunchedEffect(state.savedRecordId, state.candidateGone) {
         if (state.savedRecordId != null || state.candidateGone) onSaved()
     }
+
+    // docs/02 §6a. `사진으로 입력` means the camera opens *here*, before anything is saved,
+    // and what it reads fills the form. Until now this route only read the last capture
+    // file — which nothing on this path ever wrote — so the form opened empty and the OCR
+    // never saw the pillar in time to help.
+    var capturing by rememberSaveable(candidateId, fromPillarPhoto) { mutableStateOf(fromPillarPhoto) }
+    ParkingPhotoPicker(
+        visible = capturing && viewModel.needsCapture,
+        onDismiss = {
+            capturing = false
+            viewModel.onCaptureDismissed()
+        },
+        onPhotoSelected = {
+            capturing = false
+            viewModel.onPhotoCaptured()
+        },
+        onCameraUnavailable = {
+            capturing = false
+            viewModel.onCaptureDismissed()
+        },
+    )
 
     ManualParkingScreen(
         state = state,

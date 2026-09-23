@@ -147,6 +147,9 @@
     <string name="home_empty_title">지금은 주차 중이 아니에요</string>
     <string name="home_empty_body">주차한 곳의 층과 구역을 적어두면 돌아올 때 바로 찾을 수 있어요.</string>
     <string name="home_save_parking">주차 위치 저장</string>
+    <!-- docs/02 §6a. 기둥 사진을 먼저 찍어 층을 채우는 경로. 확인 화면에만 있던 것을
+         수동 저장에도 둔다 — 감지가 한 번도 안 뜬 사용자에게는 여기가 유일한 입구다. -->
+    <string name="home_photo_entry">사진으로 입력</string>
     <string name="home_settings">설정</string>
     <string name="home_notifications">알림</string>
     <!-- The bell's dot is state, so the label says it too (docs/01 §8). -->

@@ -96,6 +96,7 @@ fun HomeScreen(
     onStepFloor: (Int) -> Unit,
     onEndParking: () -> Unit,
     onSaveParking: () -> Unit,
+    onPhotoEntry: () -> Unit,
     onOpenDetail: (String) -> Unit,
     onOpenHistory: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -137,6 +138,7 @@ fun HomeScreen(
                 nowMillis = state.nowMillis,
                 onStepFloor = onStepFloor,
                 onSaveParking = onSaveParking,
+                onPhotoEntry = onPhotoEntry,
             )
         }
         val candidateId = state.pendingCandidateId
@@ -260,6 +262,7 @@ private fun HeroSlot(
     nowMillis: Long,
     onStepFloor: (Int) -> Unit,
     onSaveParking: () -> Unit,
+    onPhotoEntry: () -> Unit,
 ) {
     val motionEnabled = LocalMotionEnabled.current
     AnimatedContent(
@@ -281,7 +284,7 @@ private fun HeroSlot(
         label = "hero",
     ) { record ->
         if (record == null) {
-            NotParkedCard(onSaveParking = onSaveParking)
+            NotParkedCard(onSaveParking = onSaveParking, onPhotoEntry = onPhotoEntry)
         } else {
             ActiveParkingCard(
                 record = record,
@@ -667,8 +670,19 @@ private fun NoticeCard(notice: UiNotice, onDismiss: () -> Unit) {
 }
 
 /** Nothing is parked: one card, one job — start a record (FR-001). */
+/**
+ * The empty state, and the only place a manual save can start from.
+ *
+ * **`사진으로 입력` is here because otherwise the pillar reader is unreachable by hand**
+ * (docs/02 §6a). It was wired to the auto-detection confirmation screen and nowhere else, so
+ * a user who saves manually — which is everyone, before a drive has ever been detected —
+ * typed the floor and attached a photo afterwards, and the OCR never saw it in time to help.
+ *
+ * Secondary, under the filled button: the design harness allows one emphasised CTA per
+ * screen, and this is the same pairing the confirmation screen already uses.
+ */
 @Composable
-private fun NotParkedCard(onSaveParking: () -> Unit) {
+private fun NotParkedCard(onSaveParking: () -> Unit, onPhotoEntry: () -> Unit) {
     ParkingpinCard {
         Text(
             text = stringResource(R.string.home_empty_title),
@@ -705,6 +719,23 @@ private fun NotParkedCard(onSaveParking: () -> Unit) {
             Spacer(Modifier.width(MaterialTheme.spacing.small))
             Text(
                 text = stringResource(R.string.home_save_parking),
+                style = MaterialTheme.typography.titleMedium,
+            )
+        }
+        TextButton(
+            onClick = onPhotoEntry,
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = MaterialTheme.spacing.touchTarget),
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_camera),
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.width(MaterialTheme.spacing.small))
+            Text(
+                text = stringResource(R.string.home_photo_entry),
                 style = MaterialTheme.typography.titleMedium,
             )
         }
@@ -808,6 +839,7 @@ private fun HomeParkedPreview() {
             onStepFloor = {},
             onEndParking = {},
             onSaveParking = {},
+            onPhotoEntry = {},
             onOpenDetail = {},
             onOpenHistory = {},
             onOpenSettings = {},
@@ -832,6 +864,7 @@ private fun HomeEmptyPreview() {
             onStepFloor = {},
             onEndParking = {},
             onSaveParking = {},
+            onPhotoEntry = {},
             onOpenDetail = {},
             onOpenHistory = {},
             onOpenSettings = {},
@@ -884,6 +917,7 @@ private fun HomeCandidatePreview() {
             onStepFloor = {},
             onEndParking = {},
             onSaveParking = {},
+            onPhotoEntry = {},
             onOpenDetail = {},
             onOpenHistory = {},
             onOpenSettings = {},

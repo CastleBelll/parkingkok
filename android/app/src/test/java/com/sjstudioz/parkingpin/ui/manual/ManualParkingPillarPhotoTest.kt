@@ -171,5 +171,10 @@ class ManualParkingPillarPhotoTest {
             attachPhoto = AttachParkingPhotoUseCase(repository, photoStore, clock),
         ),
         clock = clock,
-    )
+    ).also {
+        // docs/02 §6a: the read starts when the camera comes back, not when the screen
+        // opens. Before that it read whatever capture file happened to be on disk — which
+        // on this path was none, so the form opened empty and the OCR was never used.
+        it.onPhotoCaptured()
+    }
 }
