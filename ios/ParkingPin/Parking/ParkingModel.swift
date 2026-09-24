@@ -400,27 +400,32 @@ final class ParkingModel {
     /// The file is written before the row is updated. The other order can leave a record
     /// naming a file that was never written; this order can only leave an unreferenced
     /// file, which `removeOrphanPhotos` sweeps.
+    ///
+    /// **The record is read again after the file is written**, and only the photo is
+    /// changed on it. Encoding a pillar photo takes long enough for the one-shot location
+    /// fix to be written in the meantime; putting back the copy read before the `await`
+    /// erased that fix, and hand-saved parkings on the iPhone kept no location at all
+    /// (2026-09-24).
     @discardableResult
     func attachPhoto(_ imageData: Data, to sessionID: UUID) async -> Bool {
-        guard var session = session(id: sessionID) else {
+        guard session(id: sessionID) != nil else {
             failure = Self.message(for: ParkingStoreError.notFound(sessionID))
             return false
         }
+        let relativePath: String
         do {
-            session.photoRelativePath = try await photoStore.save(imageData, for: sessionID)
+            relativePath = try await photoStore.save(imageData, for: sessionID)
         } catch {
             note(error)
             return false
         }
-        #if PK_DEV
-            // Whether this write is about to replace a location that arrived while the
-            // photo was being saved — `session` was read before the `await`.
-            SaveLocationDiagnostics.note(
-                "photo",
-                "snapshotHasLocation=\(session.location != nil) "
-                    + "currentHasLocation=\(self.session(id: sessionID)?.location != nil)"
-            )
-        #endif
+        // Deleted while the file was being written: the file is now an orphan, which
+        // `removeOrphanPhotos` sweeps.
+        guard var session = session(id: sessionID) else {
+            failure = Self.message(for: ParkingStoreError.notFound(sessionID))
+            return false
+        }
+        session.photoRelativePath = relativePath
         return update(session)
     }
 
