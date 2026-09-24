@@ -58,6 +58,7 @@ import com.sjstudioz.parkingpin.ui.UiNotice
 import com.sjstudioz.parkingpin.ui.components.DetailHeader
 import com.sjstudioz.parkingpin.ui.components.IconChip
 import com.sjstudioz.parkingpin.ui.components.LocationPreviewCard
+import com.sjstudioz.parkingpin.ui.components.toMapPoint
 import com.sjstudioz.parkingpin.ui.components.ParkingpinCard
 import com.sjstudioz.parkingpin.ui.components.ParkingpinScreen
 import com.sjstudioz.parkingpin.ui.components.PrimaryCtaButton
@@ -74,9 +75,9 @@ import com.sjstudioz.parkingpin.ui.photo.PillarSuggestionCard
  *
  * Two places differ from the mockup, both on purpose.
  *
- * The map block is drawn, not fetched — Android's FR-008 is an external maps intent and
- * nothing that would put the coordinate on the network (docs/04_ANDROID_IMPLEMENTATION.md
- * §12); see `StaticLocationArtwork`. Its caption is `마지막으로 확인된 위치`, which is the only
+ * The map block is a lite-mode map, not an interactive one — `길찾기` hands the coordinate
+ * to the user's own map app (docs/04_ANDROID_IMPLEMENTATION.md §12, revised 2026-09-24);
+ * see `ParkingLocationMap`. Its caption is `마지막으로 확인된 위치`, which is the only
  * claim the app can make honestly when the car is three floors underground
  * (docs/04_IOS_IMPLEMENTATION.md §9).
  *
@@ -245,6 +246,7 @@ private fun LocationBlock(record: ParkingRecord) {
 
     val accuracy = location.horizontalAccuracyM
     LocationPreviewCard(
+        point = location.toMapPoint(),
         pinLabel = record.floor?.displayLabel,
         zoneLabel = record.zone,
         caption = if (accuracy != null) {

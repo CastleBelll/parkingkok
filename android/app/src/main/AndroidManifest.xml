@@ -83,6 +83,13 @@
             android:name="google_analytics_ssaid_collection_enabled"
             android:value="false" />
 
+        <!-- docs/04_ANDROID §12. Injected from PK_MAPS_API_KEY at build time and never
+             committed; empty in a build without one, which `ParkingLocationMap` reads as
+             "draw the block plan instead". -->
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="${mapsApiKey}" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

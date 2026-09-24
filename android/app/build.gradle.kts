@@ -30,6 +30,15 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // docs/04_ANDROID §12: the Maps SDK key, from outside the repository — a Gradle
+        // property (`~/.gradle/gradle.properties`) locally, an environment variable in CI.
+        // Never committed. Empty is a working build: the map falls back to the drawn
+        // block plan (`ParkingLocationMap`), as a checkout without `google-services.json`
+        // falls back to no analytics transport.
+        manifestPlaceholders["mapsApiKey"] = providers.gradleProperty("PK_MAPS_API_KEY")
+            .orElse(providers.environmentVariable("PK_MAPS_API_KEY"))
+            .getOrElse("")
     }
 
     // Room writes the schema of every version here. The files are committed so a schema
@@ -96,6 +105,8 @@ dependencies {
     // this is the bundled Korean model rather than the Play-services one that downloads
     // on first use. The APK cost is the price of the feature working underground.
     implementation(libs.mlkit.text.recognition.korean)
+    // docs/04_ANDROID §12 (2026-09-24): a real map of the parked location, in lite mode.
+    implementation(libs.maps.compose)
 
     // docs/07 §2: Analytics and Auth only. No Storage — the contract forbids it — and no
     // Firestore/Functions/App Check/Remote Config until the feature that needs them lands.

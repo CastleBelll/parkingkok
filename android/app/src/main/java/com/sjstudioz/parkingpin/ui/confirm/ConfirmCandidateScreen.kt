@@ -31,7 +31,7 @@ import com.sjstudioz.parkingpin.theme.ParkingpinTheme
 import com.sjstudioz.parkingpin.theme.spacing
 import com.sjstudioz.parkingpin.ui.components.DetailHeader
 import com.sjstudioz.parkingpin.ui.components.ParkingpinScreen
-import com.sjstudioz.parkingpin.ui.components.StaticLocationArtwork
+import com.sjstudioz.parkingpin.ui.components.ParkingLocationMap
 import com.sjstudioz.parkingpin.ui.format.timeOfDayText
 
 /**
@@ -130,9 +130,8 @@ fun ConfirmCandidateScreen(
 /**
  * §7a "where". FR-008's wording above whatever the platform can honestly draw.
  *
- * The artwork carries no coordinate — it is the same block plan for every parking
- * (see [StaticLocationArtwork]) — so the radius beside it is the part that actually says
- * anything, and it is the part the user is standing there to check.
+ * The map shows where the fix is (see `ParkingLocationMap`); the radius beside it says how
+ * far to trust that, and it is the part the user is standing there to check.
  */
 @Composable
 private fun LastKnownLocation(location: ConfirmLocation?) {
@@ -156,7 +155,8 @@ private fun LastKnownLocation(location: ConfirmLocation?) {
             horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.medium),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            StaticLocationArtwork(
+            ParkingLocationMap(
+                point = location.point,
                 modifier = Modifier.size(LOCATION_PREVIEW_SIDE),
                 pinSize = 24.dp,
             )

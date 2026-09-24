@@ -3,9 +3,11 @@ package com.sjstudioz.parkingpin.ui.components
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
@@ -31,7 +33,11 @@ import com.sjstudioz.parkingpin.theme.spacing
 /**
  * The map block of `01-home-main.png` and `03-parking-detail.png`, drawn rather than fetched.
  *
- * ## Why this is not a map
+ * **Since 2026-09-24 this is the fallback, not the map.** [ParkingLocationMap] draws a real
+ * one when the build has a Maps key and the record has a coordinate; this plan is what a
+ * keyless build (CI, forks) and the previews show. What follows is why it was first chosen.
+ *
+ * ## Why this was not a map
  *
  * Android's FR-008 is an external maps intent (docs/04_ANDROID_IMPLEMENTATION.md §12,
  * 2026-09-18): no Maps SDK, no API key, no Data Safety disclosure. That decision also says
@@ -78,29 +84,53 @@ fun StaticLocationArtwork(
             drawBlocks(blocks, park, blockEdge, blockRadius)
         }
 
-        BrandPin(modifier = Modifier.align(Alignment.Center), height = pinSize)
+        MapPinOverlay(pinLabel, zoneLabel, pinSize, tipAtCenter = false)
+    }
+}
 
-        if (pinLabel != null) {
-            MapChip(
-                text = pinLabel,
-                containerColor = MaterialTheme.colorScheme.surface,
-                contentColor = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .padding(start = pinSize * LABEL_OFFSET),
-            )
-        }
+/**
+ * The pin and the two labels, laid over the block plan or over a real map.
+ *
+ * On the plan the pin is simply centred — nothing under it is a place. On a map
+ * ([tipAtCenter]) the camera is centred on the coordinate, so the pin's *tip* has to sit
+ * on the centre, or the pin points half its height below the car.
+ */
+@Composable
+internal fun BoxScope.MapPinOverlay(
+    pinLabel: String?,
+    zoneLabel: String?,
+    pinSize: Dp,
+    tipAtCenter: Boolean,
+) {
+    val lift = if (tipAtCenter) -pinSize / 2 else 0.dp
+    BrandPin(
+        modifier = Modifier
+            .align(Alignment.Center)
+            .offset(y = lift),
+        height = pinSize,
+    )
 
-        if (zoneLabel != null) {
-            MapChip(
-                text = zoneLabel,
-                containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(MaterialTheme.spacing.small),
-            )
-        }
+    if (pinLabel != null) {
+        MapChip(
+            text = pinLabel,
+            containerColor = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier
+                .align(Alignment.Center)
+                .offset(y = lift)
+                .padding(start = pinSize * LABEL_OFFSET),
+        )
+    }
+
+    if (zoneLabel != null) {
+        MapChip(
+            text = zoneLabel,
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+            contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(MaterialTheme.spacing.small),
+        )
     }
 }
 
@@ -181,16 +211,18 @@ private fun DrawScope.drawBlocks(
     }
 }
 
-/** The detail screen's map block: the artwork, full width, at the mockup's proportions. */
+/** The detail screen's map block, full width, at the mockup's proportions. */
 @Composable
 fun LocationPreviewCard(
+    point: MapPoint?,
     pinLabel: String?,
     zoneLabel: String?,
     caption: String,
     modifier: Modifier = Modifier,
 ) {
     ParkingpinCard(modifier = modifier, contentPadding = MaterialTheme.spacing.medium) {
-        StaticLocationArtwork(
+        ParkingLocationMap(
+            point = point,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(PREVIEW_HEIGHT),

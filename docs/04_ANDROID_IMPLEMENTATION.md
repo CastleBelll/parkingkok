@@ -263,6 +263,19 @@ Maps SDK를 쓰면 API 키 관리와 Data Safety 공시가 늘어나는데 얻�
 좌표를 지도 타일 요청으로 내보내지 않는 편이 `docs/00` Privacy에도 맞는다.
 iOS는 MapKit이 OS 기본 제공이라 키도 공시도 늘지 않으므로 그대로 쓴다.
 
+**개정 (2026-09-24): 홈·상세·후보 확인의 지도는 Google Maps SDK lite mode.**
+정적 표현은 지도처럼 보이지만 어떤 장소도 가리키지 않았다 — 사용자가 실기기에서 "정확한
+지도가 아니고 9개로 나눠진 사각형 가운데로 표시된다"고 지적했다. 지도도 아니고 "위치 없음"도
+아닌 것이 둘 중 어느 쪽보다 나쁘다는 판단으로 제품 오너가 A→B 전환을 결정했다.
+- **lite mode**: 비트맵 한 장, 제스처 없음. 탭은 삼킨다 — 앱 밖으로 나가는 길은 여전히
+  `주차 위치 보기`/`길찾기`의 external intent 하나다.
+- **비용(수용됨)**: 지도를 그릴 때 좌표 주변 타일 요청이 Google로 나간다. docs/09 §Maps와
+  Play Data Safety에 공시한다. 좌표를 **저장**하는 곳은 여전히 기기뿐이다.
+- **키**: `PK_MAPS_API_KEY` — 로컬은 `~/.gradle/gradle.properties`, CI는 secret. 커밋 금지.
+  Google Cloud 콘솔에서 Maps SDK for Android 전용으로 만들고 패키지명 + 서명 SHA-1로 제한한다.
+  키가 없는 빌드(CI, fork)는 정적 표현으로 대체되어 그대로 빌드된다(`ParkingLocationMap`).
+- **버전**: maps-compose 8.3.0 — compileSdk 36에 맞는 마지막 판. 8.4.0+는 core-ktx 1.19를 끈다.
+
 ## 13. Car Connection Optional Signal
 `androidx.car.app.connection.CarConnection` can report:
 - NOT_CONNECTED

@@ -122,6 +122,15 @@ Product education explains:
 ## 15. iOS Review
 Explain Always/background purpose, bounded strategy, local-only sensitive data.
 
+### 15a. The in-app map sends the area to Google (2026-09-24)
+Android draws the parked location with the Google Maps SDK in lite mode
+(docs/04_ANDROID §12). Rendering it requests tiles for that area from Google each time a
+map is shown. This is the one place a parking coordinate leaves the device, and it is
+accepted because a map that points nowhere misleads. It is never stored, logged or sent
+to Firebase by the app. iOS MapKit has the same shape and was already accepted. The Maps
+key (`PK_MAPS_API_KEY`) is restricted to the package and signing SHA-1, and is never
+committed.
+
 ## 16. Google Play Review
 Background location must be core functionality and prominently disclosed before permission.
 Prepare Play Console declaration/video/screens as required by current policy.
