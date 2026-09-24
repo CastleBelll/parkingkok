@@ -322,8 +322,11 @@ to justify, nothing to leak. Doze does not apply while a foreground service runs
 the other reason it belongs there. One minute against a shortest window of 180 s gives three
 chances at each boundary.
 
-iOS needs no equivalent: its adapters wake on Core Motion and `CLServiceSession`, and the
-engine ticks at `now` on each of those.
+iOS has the same shape: `LiveDrivingLocationCapture` ticks the coordinator every 60 s for as
+long as — and only as long as — the bounded capture runs, and background location updates
+keep the process alive for exactly that span (docs/04_IOS §3a, 2026-09-24). Before that the
+capture could not keep the process alive from a background start, so this sentence claimed a
+wake that was not happening.
 
 ##### The windows are judged before the edge too (2026-09-21)
 
