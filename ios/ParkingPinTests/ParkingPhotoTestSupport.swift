@@ -180,11 +180,15 @@ final class GatedParkingPhotoStore: ParkingPhotoStoring, @unchecked Sendable {
     func waitUntilSaving() async {
         await withCheckedContinuation { continuation in
             let alreadyStarted = lock.withLock {
-                if hasStarted { return true }
+                if hasStarted {
+                    return true
+                }
                 started = continuation
                 return false
             }
-            if alreadyStarted { continuation.resume() }
+            if alreadyStarted {
+                continuation.resume()
+            }
         }
     }
 
