@@ -297,4 +297,36 @@ struct ParkingPhotoModelTests {
         #expect(model.session(id: sessionID)?.photoRelativePath == "\(sessionID.uuidString).heic")
         #expect(model.completedSessions.first?.id == sessionID)
     }
+
+    /// The pillar photo is attached right after the save, and the one-shot fix lands while
+    /// the photo is still being written. Found on an iPhone on 2026-09-24: the fix was
+    /// written at 9 m, then the photo write put back the location-less copy it had read
+    /// before its `await`, and the record kept no location at all.
+    @Test("A location written while the photo is being saved survives the photo")
+    func photoKeepsLocationWrittenMeanwhile() async throws {
+        // Arrange
+        let photoStore = GatedParkingPhotoStore()
+        let model = try makeModel(photoStore: photoStore)
+        let sessionID = try await startParking(model)
+        let attaching = Task { await model.attachPhoto(Data("pillar".utf8), to: sessionID) }
+        await photoStore.waitUntilSaving()
+
+        // Act — what `attachCurrentFix` does when the fix arrives
+        var located = try #require(model.session(id: sessionID))
+        located.location = ParkedLocation(
+            latitude: 37.5,
+            longitude: 127.0,
+            horizontalAccuracy: 9,
+            capturedAt: Self.start
+        )
+        #expect(model.update(located))
+        photoStore.finishSaving()
+        let attached = await attaching.value
+
+        // Assert
+        #expect(attached)
+        let session = try #require(model.session(id: sessionID))
+        #expect(session.location?.horizontalAccuracy == 9)
+        #expect(session.photoRelativePath == "\(sessionID.uuidString).heic")
+    }
 }

@@ -165,3 +165,58 @@ final class SpyParkingPhotoStore: ParkingPhotoStoring, @unchecked Sendable {
         }
     }
 }
+
+/// A photo store whose `save` waits until the test lets it finish.
+///
+/// Stands in for encoding a 12-megapixel pillar photo, which takes long enough on a phone
+/// for the one-shot location fix to land in the middle of it (2026-09-24).
+final class GatedParkingPhotoStore: ParkingPhotoStoring, @unchecked Sendable {
+    private let lock = NSLock()
+    private var started: CheckedContinuation<Void, Never>?
+    private var hasStarted = false
+    private var release: CheckedContinuation<Void, Never>?
+
+    /// Returns once a `save` is suspended inside the store.
+    func waitUntilSaving() async {
+        await withCheckedContinuation { continuation in
+            let alreadyStarted = lock.withLock {
+                if hasStarted { return true }
+                started = continuation
+                return false
+            }
+            if alreadyStarted { continuation.resume() }
+        }
+    }
+
+    /// Lets the suspended `save` return.
+    func finishSaving() {
+        let pending = lock.withLock {
+            let pending = release
+            release = nil
+            return pending
+        }
+        pending?.resume()
+    }
+
+    func save(_ imageData: Data, for recordID: UUID) async throws -> String {
+        await withCheckedContinuation { continuation in
+            let waiter = lock.withLock {
+                release = continuation
+                hasStarted = true
+                let waiter = started
+                started = nil
+                return waiter
+            }
+            waiter?.resume()
+        }
+        return FileSystemParkingPhotoStore.relativePath(for: recordID)
+    }
+
+    func load(_ relativePath: String) async throws -> ParkingPhoto {
+        throw ParkingPhotoError.notFound(relativePath)
+    }
+
+    func remove(_ relativePath: String) async throws {}
+
+    func removeOrphans(keeping keptPaths: Set<String>) async throws {}
+}
