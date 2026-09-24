@@ -161,12 +161,22 @@ final class StubBoundedLocationCapture: BoundedLocationCapturing, @unchecked Sen
             BoundedCaptureHealth(
                 startedAt: lastStartedAt,
                 holdsSessions: active,
-                updateCount: starts
+                updateCount: deliveredUpdates,
+                startedInForeground: lastStartedAt == nil ? nil : startsInForeground
             )
         }
     }
 
     private var lastStartedAt: Date?
+    private var deliveredUpdates = 0
+
+    /// What the real capture reads from `UIApplication` when it starts.
+    var startsInForeground = true
+
+    /// One iteration of the update sequence, as Core Location would deliver it.
+    func deliverUpdate() {
+        lock.withLock { deliveredUpdates += 1 }
+    }
 
     func start() {
         lock.withLock {

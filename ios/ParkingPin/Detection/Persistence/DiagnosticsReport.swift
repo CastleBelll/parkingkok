@@ -17,7 +17,7 @@ import Foundation
 struct DiagnosticsReport: Sendable, Equatable, Codable {
     /// Bumped to 9 by the §3a capture-health fields; 8 was the §7 distance-clause
     /// instrumentation.
-    static let schemaVersion = 9
+    static let schemaVersion = 10
 
     var schemaVersion: Int = DiagnosticsReport.schemaVersion
     var generatedAt: Date
@@ -73,6 +73,8 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
     var captureStartedAt: Date?
     var captureHoldsSessions: Bool
     var captureUpdateCount: Int
+    /// Schema 10. Whether the capture began with the app active — see `BoundedCaptureHealth`.
+    var captureStartedInForeground: Bool?
     var drivingSessionStartedAt: Date?
     var drivingSessionCount: Int
     var drivingSessionResumedFromCheckpoint: Bool
@@ -210,6 +212,7 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
         captureStartedAt = snapshot.captureHealth.startedAt
         captureHoldsSessions = snapshot.captureHealth.holdsSessions
         captureUpdateCount = snapshot.captureHealth.updateCount
+        captureStartedInForeground = snapshot.captureHealth.startedInForeground
         drivingSessionStartedAt = snapshot.drivingSessionStartedAt
         drivingSessionCount = snapshot.drivingSessionCount
         drivingSessionResumedFromCheckpoint = snapshot.drivingSessionResumedFromCheckpoint

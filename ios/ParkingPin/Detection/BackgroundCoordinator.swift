@@ -720,6 +720,9 @@ actor BackgroundCoordinator {
     private func refreshDrivingDiagnostics() async {
         let state = await engine.snapshot()
         snapshot.currentCheckpoint = state.checkpoint
+        // Live, not only at start and stop: copied at those two moments, a running capture
+        // read "0 updates" for the whole drive (docs/04_IOS §3a, 2026-09-24).
+        snapshot.captureHealth = await locationCapture?.health() ?? .none
         snapshot.parkingTransitionEnteredAt = state.parkingTransitionEnteredAt
         snapshot.connectedCarLinks = state.connectedCarLinks
         snapshot.reliableLocationUpdateCount = state.reliableLocationUpdateCount

@@ -44,12 +44,19 @@ struct DetectionParkingLocationProvider: ParkingLocationProviding {
     }
 
     func storedLocation() async -> ParkedLocation? {
-        guard let reliable = await runtime.snapshot().currentCheckpoint?.lastReliableLocation else {
+        let checkpoint = await runtime.snapshot().currentCheckpoint
+        guard let reliable = checkpoint?.lastReliableLocation else {
+            #if PK_DEV
+                SaveLocationDiagnostics.note("stored", checkpoint == nil ? "noCheckpoint" : "noReliable")
+            #endif
             return nil
         }
-        guard clock.now.timeIntervalSince(reliable.capturedAt) <= Self.maximumAge else {
-            return nil
-        }
+        let age = clock.now.timeIntervalSince(reliable.capturedAt)
+        #if PK_DEV
+            let detail = "age=\(Int(age))s accuracy=\(Int(reliable.horizontalAccuracy))m"
+            SaveLocationDiagnostics.note("stored", age <= Self.maximumAge ? "used \(detail)" : "tooOld \(detail)")
+        #endif
+        guard age <= Self.maximumAge else { return nil }
         return ParkedLocation(reliable)
     }
 
@@ -105,6 +112,9 @@ struct CurrentFixParkingLocationProvider: ParkingLocationProviding {
               fix.horizontalAccuracy > 0,
               fix.horizontalAccuracy <= Self.maximumHorizontalAccuracy
         else { return nil }
+        #if PK_DEV
+            SaveLocationDiagnostics.note("fix", "ok accuracy=\(Int(fix.horizontalAccuracy))m")
+        #endif
         return ParkedLocation(
             latitude: fix.coordinate.latitude,
             longitude: fix.coordinate.longitude,
