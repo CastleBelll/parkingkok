@@ -279,6 +279,7 @@ private struct StubParkingLocationProvider: ParkingLocationProviding {
 private final class StubOneShotLocator: OneShotLocating {
     private let fix: CLLocation?
     private(set) var calls = 0
+    private(set) var lastTimeout: TimeInterval?
 
     init(fix: CLLocation?) {
         self.fix = fix
@@ -286,6 +287,7 @@ private final class StubOneShotLocator: OneShotLocating {
 
     func currentFix(timeout: TimeInterval) async -> CLLocation? {
         calls += 1
+        lastTimeout = timeout
         return fix
     }
 }
@@ -305,6 +307,25 @@ private func stubFix(accuracy: CLLocationAccuracy) -> CLLocation {
 /// detection checkpoint and never asked the OS.
 @MainActor
 struct CurrentFixParkingLocationProviderTests {
+    /// Measured on an iPhone on 2026-09-24: a 10 m fix arrived 10 s after the save, 2 s
+    /// past the old 8 s deadline, and the record kept no location.
+    @Test("The fix is given longer than a cold fix measured on a real phone takes")
+    func deadlineOutlastsAMeasuredColdFix() async {
+        // Arrange
+        let measuredColdFix: TimeInterval = 10
+        let locator = StubOneShotLocator(fix: stubFix(accuracy: 10))
+        let provider = CurrentFixParkingLocationProvider(
+            locator: locator,
+            fallback: UnavailableParkingLocationProvider()
+        )
+
+        // Act
+        _ = await provider.currentFix()
+
+        // Assert
+        #expect((locator.lastTimeout ?? 0) > measuredColdFix)
+    }
+
     @Test("The fix comes from the OS, asked for after the record already exists")
     func asksForAFix() async {
         let locator = StubOneShotLocator(fix: stubFix(accuracy: 12))
