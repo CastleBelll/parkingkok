@@ -26,10 +26,14 @@ protocol OneShotLocating: Sendable {
 /// and stops on its own, which is exactly the lifetime of a save.
 @MainActor
 final class CoreLocationOneShotLocator: NSObject, OneShotLocating {
-    /// Long enough for a cold GPS fix outdoors, short enough that the save does not feel
-    /// stuck. The save proceeds without a location when it expires, so this bounds the
-    /// waiting rather than the success.
-    static let defaultTimeout: TimeInterval = 8
+    /// How long a save's location may take to arrive. Nobody waits on it: the record is
+    /// written first and the fix is attached afterwards (`ParkingModel.attachCurrentFix`).
+    ///
+    /// It was 8 s, sized for when the save *did* wait. Measured on an iPhone on 2026-09-24:
+    /// a 10 m fix arrived 10 s after a save, 2 s after the deadline, and was thrown away,
+    /// so the record kept no location. The bound that still matters is the walk: a fix
+    /// taken later is where the phone is, not the car, and 20 s of walking is about 25 m.
+    static let defaultTimeout: TimeInterval = 20
 
     private let manager = CLLocationManager()
     private var continuation: CheckedContinuation<CLLocation?, Never>?

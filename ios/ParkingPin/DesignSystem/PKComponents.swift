@@ -228,6 +228,10 @@ struct PKOutlineButtonStyle: ButtonStyle {
                 RoundedRectangle(cornerRadius: PKRadius.button)
                     .strokeBorder(PKColor.divider, lineWidth: PKSize.hairline)
             }
+            // A stroke has no inside, so without this only the glyphs took a tap — the
+            // sides of 사진으로 입력 did nothing on an iPhone (2026-09-24). The whole drawn
+            // control is the target, as it is on the filled styles.
+            .contentShape(.rect(cornerRadius: PKRadius.button))
             .pkPressFeedback(configuration.isPressed)
     }
 }
