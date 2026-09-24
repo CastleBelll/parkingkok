@@ -37,6 +37,12 @@ Declare actual SDK behavior:
 
 Parking coordinate/photo are local-only; verify no SDK custom event sends them.
 
+- **Google Maps SDK (2026-09-24, docs/04_ANDROID §12).** Drawing the in-app map requests
+  map tiles for the area around the parked location from Google. Declare it as Google Maps
+  Platform's collection under its terms (approximate/precise location, app functionality,
+  not shared by the app, not stored by the app off device). The coordinate itself is still
+  stored only on the device.
+
 ## 6. Billing
 Digital Plus features use Google Play Billing.
 - no external payment link inside app for same digital subscription unless allowed under current regional program/policy and intentionally implemented

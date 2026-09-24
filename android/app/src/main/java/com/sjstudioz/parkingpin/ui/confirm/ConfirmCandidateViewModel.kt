@@ -12,19 +12,20 @@ import com.sjstudioz.parkingpin.domain.detection.DetectionEvent
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import com.sjstudioz.parkingpin.ui.components.MapPoint
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
  * The fix behind §7a's `마지막으로 확인된 위치`.
  *
- * **The radius, never the coordinate.** Android draws no tiles — FR-008 here is an
- * external maps intent (docs/04_ANDROID_IMPLEMENTATION.md §12) — so the screen has no use
- * for a latitude, and a coordinate that never enters UI state cannot leak out of it.
+ * [point] is the coordinate, for the map and nothing else: until 2026-09-24 Android drew
+ * no tiles and this held the radius only (docs/04_ANDROID_IMPLEMENTATION.md §12). It is a
+ * [MapPoint], whose `toString` is redacted, so carrying it in UI state cannot leak it.
  * [accuracyM] is null when the fix carried no usable accuracy, which reads as
  * `마지막으로 확인된 위치` with no radius beside it rather than as no location at all.
  */
-data class ConfirmLocation(val accuracyM: Int?)
+data class ConfirmLocation(val accuracyM: Int?, val point: MapPoint? = null)
 
 /** What `docs/10_DESIGN_UX_SPEC.md` §7a renders. */
 data class ConfirmCandidateUiState(
@@ -101,7 +102,10 @@ class ConfirmCandidateViewModel(
                     loaded = true,
                     parkedAtMillis = candidate.parkedAtMillis,
                     location = candidate.lastReliableLocation?.let { fix ->
-                        ConfirmLocation(accuracyM = fix.horizontalAccuracyM.takeIf { m -> m > 0f }?.toInt())
+                        ConfirmLocation(
+                            accuracyM = fix.horizontalAccuracyM.takeIf { m -> m > 0f }?.toInt(),
+                            point = MapPoint(fix.latitude, fix.longitude),
+                        )
                     },
                 )
             }

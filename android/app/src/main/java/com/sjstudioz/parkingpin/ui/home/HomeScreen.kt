@@ -69,7 +69,8 @@ import com.sjstudioz.parkingpin.ui.components.ParkingpinCard
 import com.sjstudioz.parkingpin.ui.components.PrimaryCtaButton
 import com.sjstudioz.parkingpin.ui.components.ParkingpinRow
 import com.sjstudioz.parkingpin.ui.components.ParkingpinScreen
-import com.sjstudioz.parkingpin.ui.components.StaticLocationArtwork
+import com.sjstudioz.parkingpin.ui.components.ParkingLocationMap
+import com.sjstudioz.parkingpin.ui.components.toMapPoint
 import com.sjstudioz.parkingpin.ui.components.RowChevron
 import com.sjstudioz.parkingpin.ui.components.NotificationsAction
 import com.sjstudioz.parkingpin.ui.components.SettingsAction
@@ -299,11 +300,9 @@ private fun HeroSlot(
 /**
  * The hero. Floor first and largest, then zone/spot, then elapsed — §6 items 1 to 3.
  *
- * The mockup puts a map thumbnail beside the hero. It is drawn, never fetched: Android's
- * FR-008 is an external maps intent and the 2026-09-18 decision in
- * docs/04_ANDROID_IMPLEMENTATION.md §12 replaces this preview with a static
- * representation, so that opening the app does not put the parked coordinate on the
- * network. See `StaticLocationArtwork`.
+ * The mockup puts a map thumbnail beside the hero: a real lite-mode map of the parked
+ * location since 2026-09-24 (docs/04_ANDROID_IMPLEMENTATION.md §12), the drawn block plan
+ * in a build with no Maps key. See `ParkingLocationMap`.
  */
 @Composable
 private fun ActiveParkingCard(
@@ -375,7 +374,8 @@ private fun ActiveParkingCard(
 
             if (record.location != null) {
                 Spacer(Modifier.width(MaterialTheme.spacing.medium))
-                StaticLocationArtwork(
+                ParkingLocationMap(
+                    point = record.location.toMapPoint(),
                     modifier = Modifier.size(width = 136.dp, height = 116.dp),
                     pinLabel = record.floor?.displayLabel,
                     zoneLabel = record.zone,
