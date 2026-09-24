@@ -114,6 +114,23 @@ Read together they close the ambiguity above: request-without-start is one bug,
 start-without-updates is another, and updates-without-fixes is the third. The next drive
 distinguishes them without another round trip.
 
+**2026-09-24: the fields read wrong, and a lead.** Two more real drives, the same shape:
+sparse kilometre-grade fixes while driving, a dense run only from the moment the user
+opened the app (11:42 to save the parking; 12:40 for the second drive). The report said
+`captureUpdateCount: 0` beside `drivingFixCount: 62` — impossible, since
+`handleDrivingFix` has no caller but the capture. The count was copied into the snapshot
+only at start and stop, so a running capture always read its start-time zero. It is now
+refreshed with the rest of the driving diagnostics, on every fix and every watchdog tick.
+
+The lead is Apple DTS, on the developer forums (thread 767460): **"A new
+CLBackgroundActivitySession can only be started from Foreground. From background only an
+existing running CLBAS session can be continued."** This app starts the capture when the
+engine decides a drive began — which is almost always during a significant-change or
+motion wake, in the background. If that is the cause, every background-started capture
+is a foreground-only stream, which is exactly the field shape above. Schema 10 adds
+`captureStartedInForeground` (화면: 포그라운드 시작) so the next drive confirms or kills
+this, instead of it being acted on as a guess.
+
 Android failed the same gate for a different reason and it is fixed there — see
 docs/04_ANDROID_IMPLEMENTATION.md §4a/§4b. The Android answer (a drive-scoped foreground
 service) has no iOS equivalent; the session objects above are already meant to be it.

@@ -190,6 +190,9 @@ final class ParkingModel {
     /// [attachCurrentFix] catches up afterwards.
     @discardableResult
     func saveManualParking(_ draft: ManualParkingDraft) async -> Bool {
+        #if PK_DEV
+            SaveLocationDiagnostics.begin(at: clock.now)
+        #endif
         let location = await locationProvider.storedLocation()
         let now = clock.now
         let session = ParkingSession(
@@ -246,10 +249,23 @@ final class ParkingModel {
             guard let fix = await locationProvider.currentFix() else { return }
             // A stored location that is already better stays. `currentFix` is this moment's,
             // so it wins ties on age; accuracy is the only reason to keep the old one.
-            if let existing, existing.horizontalAccuracy <= fix.horizontalAccuracy { return }
-            guard let self, var session = self.session(id: sessionID) else { return }
+            if let existing, existing.horizontalAccuracy <= fix.horizontalAccuracy {
+                #if PK_DEV
+                    SaveLocationDiagnostics.note("attach", "keptStored")
+                #endif
+                return
+            }
+            guard let self, var session = self.session(id: sessionID) else {
+                #if PK_DEV
+                    SaveLocationDiagnostics.note("attach", "sessionGone")
+                #endif
+                return
+            }
             session.location = fix
-            self.update(session)
+            let written = self.update(session)
+            #if PK_DEV
+                SaveLocationDiagnostics.note("attach", written ? "written" : "writeFailed")
+            #endif
         }
     }
 
@@ -396,6 +412,15 @@ final class ParkingModel {
             note(error)
             return false
         }
+        #if PK_DEV
+            // Whether this write is about to replace a location that arrived while the
+            // photo was being saved — `session` was read before the `await`.
+            SaveLocationDiagnostics.note(
+                "photo",
+                "snapshotHasLocation=\(session.location != nil) "
+                    + "currentHasLocation=\(self.session(id: sessionID)?.location != nil)"
+            )
+        #endif
         return update(session)
     }
 

@@ -184,6 +184,7 @@ struct DiagnosticsView: View {
             LabeledContent("캡처 시작", value: Self.optionalTime(model.snapshot.captureHealth.startedAt))
             LabeledContent("세션 보유", value: model.snapshot.captureHealth.holdsSessions ? "YES" : "NO")
             LabeledContent("업데이트 수신", value: "\(model.snapshot.captureHealth.updateCount)회")
+            LabeledContent("포그라운드 시작", value: model.snapshot.captureHealth.startedInForeground.map { $0 ? "YES" : "NO" } ?? "-")
             LabeledContent("세션 시작", value: Self.optionalTime(model.snapshot.drivingSessionStartedAt))
             LabeledContent("세션 수", value: "\(model.snapshot.drivingSessionCount)회")
             if model.snapshot.drivingSessionResumedFromCheckpoint {

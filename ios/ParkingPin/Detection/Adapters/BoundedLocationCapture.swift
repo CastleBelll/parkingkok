@@ -1,5 +1,6 @@
 import CoreLocation
 import Foundation
+import UIKit
 
 /// The bounded driving session, as the domain sees it
 /// (docs/05_PARKING_DETECTION_ENGINE.md §15 `startBoundedLocationCapture` /
@@ -39,8 +40,20 @@ struct BoundedCaptureHealth: Sendable, Equatable {
     var holdsSessions: Bool
     /// Iterations of `CLLocationUpdate.Updates`, whatever they contained.
     var updateCount: Int
+    /// Whether the app was active when `start()` last ran; nil if it never has.
+    ///
+    /// A `CLBackgroundActivitySession` begun in the background grants nothing — Apple DTS:
+    /// "A new CLBackgroundActivitySession can only be started from Foreground." A capture
+    /// started from a significant-change or motion wake is therefore the prime suspect for
+    /// §3a's late capture, and this is the field that says whether one did.
+    var startedInForeground: Bool?
 
-    static let none = BoundedCaptureHealth(startedAt: nil, holdsSessions: false, updateCount: 0)
+    static let none = BoundedCaptureHealth(
+        startedAt: nil,
+        holdsSessions: false,
+        updateCount: 0,
+        startedInForeground: nil
+    )
 }
 
 @MainActor
@@ -92,12 +105,14 @@ final class LiveDrivingLocationCapture: BoundedLocationCapturing {
     /// throw away the answer at exactly the moment the report is read.
     private var lastStartedAt: Date?
     private var updateCount = 0
+    private var startedInForeground: Bool?
 
     func health() -> BoundedCaptureHealth {
         BoundedCaptureHealth(
             startedAt: lastStartedAt,
             holdsSessions: serviceSession != nil && backgroundSession != nil,
-            updateCount: updateCount
+            updateCount: updateCount,
+            startedInForeground: startedInForeground
         )
     }
 
@@ -105,6 +120,7 @@ final class LiveDrivingLocationCapture: BoundedLocationCapturing {
         guard !isCapturing else { return }
         isCapturing = true
         lastStartedAt = Date.now
+        startedInForeground = UIApplication.shared.applicationState == .active
 
         // Declares that the updates below need Always authorization. Created before the
         // sequence so the first update is never dropped for want of a session.

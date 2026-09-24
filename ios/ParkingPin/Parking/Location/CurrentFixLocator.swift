@@ -43,16 +43,29 @@ final class CoreLocationOneShotLocator: NSObject, OneShotLocating {
 
     func currentFix(timeout: TimeInterval = defaultTimeout) async -> CLLocation? {
         let status = manager.authorizationStatus
-        guard status == .authorizedWhenInUse || status == .authorizedAlways else { return nil }
+        guard status == .authorizedWhenInUse || status == .authorizedAlways else {
+            #if PK_DEV
+                SaveLocationDiagnostics.note("fix", "unauthorized status=\(status.rawValue)")
+            #endif
+            return nil
+        }
         // One at a time. A second tap while the first is in flight would otherwise leave a
         // continuation nobody resumes.
-        guard continuation == nil else { return nil }
+        guard continuation == nil else {
+            #if PK_DEV
+                SaveLocationDiagnostics.note("fix", "busy")
+            #endif
+            return nil
+        }
 
         return await withCheckedContinuation { continuation in
             self.continuation = continuation
             timeoutTask = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(timeout))
                 guard !Task.isCancelled else { return }
+                #if PK_DEV
+                    SaveLocationDiagnostics.note("fix", "timeout")
+                #endif
                 self?.finish(nil)
             }
             manager.requestLocation()
@@ -74,6 +87,11 @@ final class CoreLocationOneShotLocator: NSObject, OneShotLocating {
 /// assumed.
 extension CoreLocationOneShotLocator: @MainActor CLLocationManagerDelegate {
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        #if PK_DEV
+            if let last = locations.last {
+                SaveLocationDiagnostics.note("fixRaw", "accuracy=\(Int(last.horizontalAccuracy))m")
+            }
+        #endif
         finish(locations.last)
     }
 
@@ -81,6 +99,9 @@ extension CoreLocationOneShotLocator: @MainActor CLLocationManagerDelegate {
         // The code only. A Core Location error carries no coordinate, but its description
         // has carried region identifiers before, and docs/09 §11 keeps those out.
         AppLog.detection.info("one-shot fix failed: \((error as NSError).code, privacy: .public)")
+        #if PK_DEV
+            SaveLocationDiagnostics.note("fix", "failed code=\((error as NSError).code)")
+        #endif
         finish(nil)
     }
 }

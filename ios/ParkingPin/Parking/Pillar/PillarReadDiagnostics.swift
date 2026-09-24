@@ -23,30 +23,13 @@
     /// of STAGING and PROD entirely.
     enum PillarReadDiagnostics {
         static func record(lines: [String], chose floorText: String?, zone: String?, spot: String?) {
-            guard let identifier = Bundle.main
-                .object(forInfoDictionaryKey: "PKAppGroupIdentifier") as? String,
-                let container = FileManager.default
-                .containerURL(forSecurityApplicationGroupIdentifier: identifier)
-            else { return }
-
-            let payload: [String: Any] = [
+            DevDiagnosticsFile.write([
                 "lines": lines,
                 "chose": floorText ?? "none",
                 "zone": zone ?? "none",
                 "spot": spot ?? "none",
-                "readAt": ISO8601DateFormatter().string(from: Date()),
-            ]
-            let directory = container.appending(
-                path: "Library/Application Support/Diagnostics",
-                directoryHint: .isDirectory
-            )
-            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            guard let data = try? JSONSerialization.data(withJSONObject: payload, options: .prettyPrinted)
-            else { return }
-            try? data.write(
-                to: directory.appending(path: "pillar.json", directoryHint: .notDirectory),
-                options: .atomic
-            )
+                "readAt": ISO8601DateFormatter().string(from: Date())
+            ], to: "pillar.json")
         }
     }
 #endif
