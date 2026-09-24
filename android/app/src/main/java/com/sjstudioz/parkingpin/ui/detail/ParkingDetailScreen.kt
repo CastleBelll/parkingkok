@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.sjstudioz.parkingpin.R
+import com.sjstudioz.parkingpin.ui.format.bayLabel
 import com.sjstudioz.parkingpin.data.photo.ParkingPhotoImage
 import com.sjstudioz.parkingpin.domain.parking.ElapsedTime
 import com.sjstudioz.parkingpin.domain.parking.FloorParser
@@ -292,7 +293,7 @@ private fun SummaryCard(record: ParkingRecord, nowMillis: Long) {
                 when {
                     zone != null && spot != null -> "$zone · $spot"
                     zone != null -> zone
-                    spot != null -> stringResource(R.string.home_spot_only, spot)
+                    spot != null -> bayLabel(spot)
                     else -> null
                 },
             )

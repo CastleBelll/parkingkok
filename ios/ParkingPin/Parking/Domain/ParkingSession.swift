@@ -61,9 +61,17 @@ struct ParkingSession: Sendable, Equatable, Identifiable {
         switch (zone, spot) {
         case let (zone?, spot?): "\(zone) · \(spot)"
         case let (zone?, nil): zone
-        case let (nil, spot?): "\(spot)번"
+        case let (nil, spot?): spotAlone(spot)
         case (nil, nil): nil
         }
+    }
+
+    /// The bay with the word that says what it is — unless the user already wrote it.
+    ///
+    /// FR-006 lets the field hold any text, and a person copying a wall writes `01번` as
+    /// often as `01`. Appending unconditionally rendered that as `01번번`.
+    private func spotAlone(_ spot: String) -> String {
+        spot.hasSuffix("번") ? spot : "\(spot)번"
     }
 
     /// FR-006: zone and spot are capped at 40 characters each.

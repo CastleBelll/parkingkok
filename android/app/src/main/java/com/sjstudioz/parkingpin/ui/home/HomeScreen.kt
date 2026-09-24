@@ -52,6 +52,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.sjstudioz.parkingpin.R
+import com.sjstudioz.parkingpin.ui.format.bayLabel
 import com.sjstudioz.parkingpin.domain.detection.ParkingCandidateNotice
 import com.sjstudioz.parkingpin.domain.parking.ElapsedTime
 import com.sjstudioz.parkingpin.domain.parking.Floor
@@ -352,7 +353,7 @@ private fun ActiveParkingCard(
                 val supporting = when {
                     zone != null && spot != null -> "$zone · $spot"
                     zone != null -> zone
-                    spot != null -> stringResource(R.string.home_spot_only, spot)
+                    spot != null -> bayLabel(spot)
                     else -> null
                 }
                 if (supporting != null) {
