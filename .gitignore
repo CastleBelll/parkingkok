@@ -82,3 +82,6 @@ coverage/
 
 # Apple Team ID for local Xcode builds (docs/18: never committed).
 ios/Config/Local.xcconfig
+
+# ── Personal test photos (fixtures use OCR dumps, not the images) ───────────
+예시 주차장 기둥/

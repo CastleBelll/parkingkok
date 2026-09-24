@@ -64,7 +64,6 @@ import com.sjstudioz.parkingpin.ui.manual.ManualParkingScreen
 import com.sjstudioz.parkingpin.ui.manual.ManualParkingViewModel
 import com.sjstudioz.parkingpin.ui.notifications.NotificationHistoryScreen
 import com.sjstudioz.parkingpin.ui.notifications.NotificationHistoryViewModel
-import com.sjstudioz.parkingpin.ui.photo.rememberCameraCapture
 import com.sjstudioz.parkingpin.identity.CredentialResult
 import com.sjstudioz.parkingpin.identity.GoogleCredentialRequest
 import com.sjstudioz.parkingpin.ui.settings.SettingsScreen
@@ -371,18 +370,12 @@ private fun ManualEntryRoute(
     var capturing by rememberSaveable(candidateId, fromPillarPhoto) { mutableStateOf(fromPillarPhoto) }
     ParkingPhotoPicker(
         visible = capturing && viewModel.needsCapture,
-        onDismiss = {
-            capturing = false
-            viewModel.onCaptureDismissed()
-        },
-        onPhotoSelected = {
-            capturing = false
-            viewModel.onPhotoCaptured()
-        },
-        onCameraUnavailable = {
-            capturing = false
-            viewModel.onCaptureDismissed()
-        },
+        // Hiding the dialog is not an answer: the album and the camera both close it and
+        // then take a second. Only `onCancelled` says the photo is not coming.
+        onHide = { capturing = false },
+        onPhotoSelected = viewModel::onPhotoCaptured,
+        onCameraUnavailable = viewModel::onCaptureDismissed,
+        onCancelled = viewModel::onCaptureDismissed,
     )
 
     ManualParkingScreen(
@@ -469,18 +462,13 @@ private fun ConfirmRoute(
         if (state.gone || state.rejected) onDone(state.openRecordId)
     }
 
-    val takePillarPhoto = rememberCameraCapture(
-        onCaptured = onPhotoEntry,
-        // No camera app, or no file to write to. §6a makes a failed read silent, and a
-        // camera that never opened is the same thing one step earlier: the user is left
-        // on the screen with 직접 입력 beside the button they pressed.
-        onCameraUnavailable = {},
-    )
-
     ConfirmCandidateScreen(
         state = state,
         onManualEntry = onManualEntry,
-        onPhotoEntry = takePillarPhoto,
+        // Straight to the form, which asks album-or-camera and then reads what comes back.
+        // This used to open the camera here first, so a user who had already photographed
+        // the pillar was asked twice and the album was never offered on this path.
+        onPhotoEntry = onPhotoEntry,
         onReject = viewModel::onReject,
         onBack = { onDone(null) },
     )

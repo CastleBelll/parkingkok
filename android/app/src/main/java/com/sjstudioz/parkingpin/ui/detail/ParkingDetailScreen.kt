@@ -171,7 +171,7 @@ fun ParkingDetailScreen(
 
     ParkingPhotoPicker(
         visible = pickingPhoto,
-        onDismiss = { pickingPhoto = false },
+        onHide = { pickingPhoto = false },
         onPhotoSelected = onPhotoSelected,
         onCameraUnavailable = onCameraUnavailable,
     )

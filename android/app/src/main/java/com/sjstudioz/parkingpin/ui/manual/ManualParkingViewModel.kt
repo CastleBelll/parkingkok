@@ -62,12 +62,11 @@ data class ManualParkingUiState(
  * decision: either this form was reached through the camera, or it was not.
  */
 class PillarPhotoEntry(
-    private val photo: PhotoSource,
     private val readSuggestion: ReadPillarSuggestionUseCase,
     private val attachPhoto: AttachParkingPhotoUseCase,
 ) {
 
-    suspend fun read(): PillarSuggestion = readSuggestion(photo)
+    suspend fun read(photo: PhotoSource): PillarSuggestion = readSuggestion(photo)
 
     /**
      * Keeps the photo on the record it just became (docs/02 §6a).
@@ -77,7 +76,7 @@ class PillarPhotoEntry(
      * reason FR-007 makes a photo optional — the record is already written and is
      * complete without one.
      */
-    suspend fun attachTo(recordId: String) {
+    suspend fun attachTo(recordId: String, photo: PhotoSource) {
         attachPhoto(recordId, photo)
     }
 }
@@ -137,17 +136,28 @@ class ManualParkingViewModel(
     private var captureHandled = false
 
     /**
+     * What the picker actually returned — **the album's URI or the camera's file**.
+     *
+     * It has to come from the picker and cannot be built here. The entry used to hold
+     * [CameraCaptureFile]'s last capture whatever the user chose, so picking a photo of the
+     * pillar out of the album read a file nothing on that path had written: the form opened
+     * empty and the OCR was never used, which is the one thing `사진으로 입력` promises.
+     */
+    private var capturedPhoto: PhotoSource? = null
+
+    /**
      * The photo the user just took, read for a floor before anything is saved.
      *
      * Called by the screen once the picker returns. A dismissed camera calls
      * [onCaptureDismissed] instead and the form stays exactly as it is — empty, and no
      * worse than 직접 입력.
      */
-    fun onPhotoCaptured() {
+    fun onPhotoCaptured(photo: PhotoSource) {
         if (captureHandled) return
         captureHandled = true
+        capturedPhoto = photo
         val entry = pillarPhoto ?: return
-        viewModelScope.launch { prefillFromPillar(entry) }
+        viewModelScope.launch { prefillFromPillar(entry, photo) }
     }
 
     fun onCaptureDismissed() {
@@ -164,8 +174,8 @@ class ManualParkingViewModel(
      * Nothing is reported when it reads nothing. There is no spinner to clear because
      * none was shown, and the form the user sees is the one they would have seen anyway.
      */
-    private suspend fun prefillFromPillar(entry: PillarPhotoEntry) {
-        val suggestion = entry.read()
+    private suspend fun prefillFromPillar(entry: PillarPhotoEntry, photo: PhotoSource) {
+        val suggestion = entry.read(photo)
         if (suggestion.isEmpty) return
         _uiState.update {
             it.copy(
@@ -175,6 +185,13 @@ class ManualParkingViewModel(
                 pillarSuggestionOffered = true,
             )
         }
+    }
+
+    /** Keeps the photo on the record it just became, when there was one (§6a). */
+    private suspend fun attachPillarPhoto(recordId: String) {
+        val entry = pillarPhoto ?: return
+        val photo = capturedPhoto ?: return
+        entry.attachTo(recordId, photo)
     }
 
     fun onFloorChange(value: String) = _uiState.update { it.copy(floorRaw = value) }
@@ -225,7 +242,7 @@ class ManualParkingViewModel(
         // the candidate exactly where it was.
         if (result is ConfirmCandidateResult.Confirmed) {
             detectionRuntime?.handleUserAnswer(DetectionEvent.UserConfirmedParking(clock.nowEpochMillis()))
-            pillarPhoto?.attachTo(result.record.id)
+            attachPillarPhoto(result.record.id)
         }
         _uiState.update {
             when (result) {
@@ -242,7 +259,7 @@ class ManualParkingViewModel(
     }
 
     private suspend fun applySaveResult(result: SaveManualParkingResult) {
-        if (result is SaveManualParkingResult.Saved) pillarPhoto?.attachTo(result.record.id)
+        if (result is SaveManualParkingResult.Saved) attachPillarPhoto(result.record.id)
         _uiState.update {
             when (result) {
                 is SaveManualParkingResult.Saved ->

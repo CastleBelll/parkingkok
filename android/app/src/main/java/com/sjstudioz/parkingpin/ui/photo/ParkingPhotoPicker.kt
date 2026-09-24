@@ -38,15 +38,24 @@ import java.io.IOException
  * It follows that there is no denied-permission path to handle here, which is the point:
  * a parking record with no photo is a complete record.
  *
+ * ## Closing is not cancelling
+ *
+ * [onHide] fires the moment the dialog goes away, and that includes the two cases where a
+ * photo is on its way. Only [onCancelled] means nothing will arrive: the dialog was
+ * dismissed, or the album or the camera was backed out of. Conflating the two cost the
+ * whole feature — `사진으로 입력` marked its capture handled as soon as the dialog closed,
+ * so the photo that came back a second later was dropped and the form stayed empty.
+ *
  * This composable owns no state beyond the in-flight capture URI; what to do with the
  * chosen image is the caller's ViewModel's business.
  */
 @Composable
 fun ParkingPhotoPicker(
     visible: Boolean,
-    onDismiss: () -> Unit,
+    onHide: () -> Unit,
     onPhotoSelected: (PhotoSource) -> Unit,
     onCameraUnavailable: () -> Unit,
+    onCancelled: () -> Unit = {},
 ) {
     val context = LocalContext.current
     var captureUri by remember { mutableStateOf<Uri?>(null) }
@@ -54,7 +63,7 @@ fun ParkingPhotoPicker(
     val pickFromAlbum = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia(),
     ) { uri ->
-        if (uri != null) onPhotoSelected(contentPhotoSource(context, uri))
+        if (uri != null) onPhotoSelected(contentPhotoSource(context, uri)) else onCancelled()
     }
 
     val takePhoto = rememberLauncherForActivityResult(
@@ -62,7 +71,7 @@ fun ParkingPhotoPicker(
     ) { written ->
         val uri = captureUri
         captureUri = null
-        if (written && uri != null) onPhotoSelected(contentPhotoSource(context, uri))
+        if (written && uri != null) onPhotoSelected(contentPhotoSource(context, uri)) else onCancelled()
     }
 
     // The album-or-camera question is asked on every path, including `사진으로 입력`: the
@@ -71,13 +80,16 @@ fun ParkingPhotoPicker(
     if (!visible) return
 
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = {
+            onHide()
+            onCancelled()
+        },
         title = { Text(stringResource(R.string.photo_pick_title)) },
         text = { Text(stringResource(R.string.photo_pick_body)) },
         confirmButton = {
             TextButton(
                 onClick = {
-                    onDismiss()
+                    onHide()
                     val uri = captureFileUri(context)
                     captureUri = uri
                     if (uri == null) {
@@ -99,7 +111,7 @@ fun ParkingPhotoPicker(
         dismissButton = {
             TextButton(
                 onClick = {
-                    onDismiss()
+                    onHide()
                     pickFromAlbum.launch(
                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
                     )
@@ -122,39 +134,6 @@ private fun contentPhotoSource(context: Context, uri: Uri): PhotoSource {
     val resolver = context.applicationContext.contentResolver
     return PhotoSource {
         resolver.openInputStream(uri) ?: throw IOException("photo stream unavailable")
-    }
-}
-
-/**
- * The camera on its own — `사진으로 입력` on the confirmation screen (docs/10 §7a).
- *
- * No album and no dialog: the user is standing in front of the pillar, and the one thing
- * worth doing there is photographing it. [onCaptured] runs only when a file was actually
- * written, so a cancelled camera leaves the caller exactly where it was.
- *
- * Returns the launcher to call from a button.
- */
-@Composable
-fun rememberCameraCapture(
-    onCaptured: () -> Unit,
-    onCameraUnavailable: () -> Unit,
-): () -> Unit {
-    val context = LocalContext.current
-    val takePhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { written ->
-        if (written) onCaptured()
-    }
-    return {
-        val uri = captureFileUri(context)
-        if (uri == null) {
-            onCameraUnavailable()
-        } else {
-            try {
-                takePhoto.launch(uri)
-            } catch (_: ActivityNotFoundException) {
-                // No camera app. Not a failure of the app — 직접 입력 is right there.
-                onCameraUnavailable()
-            }
-        }
     }
 }
 

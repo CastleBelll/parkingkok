@@ -23,7 +23,6 @@ import com.sjstudioz.parkingpin.data.DetectionStateStore
 import com.sjstudioz.parkingpin.data.detectionDataStore
 import com.sjstudioz.parkingpin.data.parking.ParkingDatabase
 import com.sjstudioz.parkingpin.data.parking.RoomParkingRepository
-import com.sjstudioz.parkingpin.data.photo.CameraCaptureFile
 import com.sjstudioz.parkingpin.data.photo.FileParkingPhotoImageLoader
 import com.sjstudioz.parkingpin.data.photo.FileParkingPhotoStore
 import com.sjstudioz.parkingpin.data.photo.JpegPhotoEncoder
@@ -368,14 +367,14 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
     val pillarTextReader: PillarTextReader by lazy { MlKitPillarTextReader() }
 
     /**
-     * The pillar photo the camera just wrote, with what the form does with it.
+     * What the form does with the pillar photo — reading it, and keeping it.
      *
-     * A function rather than a value because the file it points at is the *last* capture:
-     * the entry is built when the form opens, so it can never be holding a stale
-     * [CameraCaptureFile] from a previous screen.
+     * **The photo itself is not here.** It arrives from the picker, because the user may
+     * have chosen it out of the album rather than taken it, and the two are different
+     * files. This used to hold the camera's last capture unconditionally, so the album path
+     * read a file nothing had written and the form opened empty.
      */
     fun pillarPhotoEntry(): PillarPhotoEntry = PillarPhotoEntry(
-        photo = CameraCaptureFile.sourceIn(appContext),
         readSuggestion = ReadPillarSuggestionUseCase(pillarTextReader),
         attachPhoto = AttachParkingPhotoUseCase(parkingRepository, parkingPhotoStore, clock),
     )

@@ -24,6 +24,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Before
 import org.junit.Test
 import java.io.ByteArrayInputStream
@@ -167,15 +168,50 @@ class ManualParkingPillarPhotoTest {
             idGenerator = { UUID.randomUUID().toString() },
         ),
         pillarPhoto = PillarPhotoEntry(
-            photo = photo,
             readSuggestion = ReadPillarSuggestionUseCase(reader, timeoutMillis),
             attachPhoto = AttachParkingPhotoUseCase(repository, photoStore, clock),
         ),
         clock = clock,
     ).also {
-        // docs/02 §6a: the read starts when the camera comes back, not when the screen
-        // opens. Before that it read whatever capture file happened to be on disk — which
-        // on this path was none, so the form opened empty and the OCR was never used.
-        it.onPhotoCaptured()
+        // docs/02 §6a: the read starts when the picker comes back, not when the screen
+        // opens, and it reads **the photo the picker returned**. Before that it read
+        // whatever capture file happened to be on disk — which on the album path is a file
+        // nothing ever wrote, so the form opened empty and the OCR was never used.
+        it.onPhotoCaptured(photo)
+    }
+
+    @Test
+    fun `the photo the picker returned is the one that is read and kept`() = runTest {
+        // Arrange — the album hands back a URI of its own, which is not the camera's file.
+        // Reported from the device: 사진으로 입력 → 앨범에서 고르기 → an empty form.
+        val fromAlbum = PhotoSource { ByteArrayInputStream(ByteArray(0)) }
+        var readFrom: PhotoSource? = null
+        val viewModel = ManualParkingViewModel(
+            saveManualParking = SaveManualParkingUseCase(
+                repository = repository,
+                locationProvider = { null },
+                clock = clock,
+                idGenerator = { UUID.randomUUID().toString() },
+            ),
+            pillarPhoto = PillarPhotoEntry(
+                readSuggestion = ReadPillarSuggestionUseCase(
+                    { source -> readFrom = source; listOf(PillarLine("B3")) },
+                    ReadPillarSuggestionUseCase.DEFAULT_TIMEOUT_MILLIS,
+                ),
+                attachPhoto = AttachParkingPhotoUseCase(repository, photoStore, clock),
+            ),
+            clock = clock,
+        )
+
+        // Act
+        viewModel.onPhotoCaptured(fromAlbum)
+        val state = viewModel.uiState.first { it.pillarSuggestionOffered }
+        viewModel.onSave()
+        viewModel.uiState.first { it.savedRecordId != null }
+
+        // Assert
+        assertSame(fromAlbum, readFrom)
+        assertEquals("B3", state.floorRaw)
+        assertEquals(1, photoStore.saveCount)
     }
 }
