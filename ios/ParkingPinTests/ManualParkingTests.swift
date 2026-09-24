@@ -33,6 +33,29 @@ struct ManualParkingTests {
         )
     }
 
+    /// Android's `SaveManualParkingUseCase` already refused this; iOS wrote the late fix
+    /// onto the ended record (found in review, 2026-09-25).
+    @Test("A fix that arrives after the parking was ended leaves the ended record alone")
+    func lateFixSkipsEndedRecord() async throws {
+        // Arrange
+        let provider = LateFixProvider()
+        let model = try makeModel(locationProvider: provider)
+        #expect(await model.saveManualParking(ManualParkingDraft(floorText: "B2")))
+        let id = try #require(model.activeSession?.id)
+        await provider.waitUntilAsked()
+        #expect(model.endActiveParking())
+
+        // Act
+        provider.answer(ParkedLocation(latitude: 37.5, longitude: 127.0, horizontalAccuracy: 9, capturedAt: now))
+        for _ in 0 ..< 10 {
+            await Task.yield()
+        }
+
+        // Assert
+        model.refresh()
+        #expect(model.session(id: id)?.location == nil)
+    }
+
     @Test("With no permission of any kind, a manual parking saves and reads back")
     func savesWithEveryPermissionDenied() async throws {
         // Arrange — `UnavailableParkingLocationProvider` is the permission-less case:
@@ -261,6 +284,35 @@ struct ManualParkingTests {
         #expect(ManualParkingDraft().isEmpty)
         #expect(ManualParkingDraft(floorText: "  ", zone: "\n").isEmpty)
         #expect(!ManualParkingDraft(zone: "A구역").isEmpty)
+    }
+}
+
+/// A one-shot fix that arrives only when the test says so — the GPS answering late.
+@MainActor
+private final class LateFixProvider: ParkingLocationProviding {
+    private var pending: CheckedContinuation<ParkedLocation?, Never>?
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func storedLocation() async -> ParkedLocation? {
+        nil
+    }
+
+    func currentFix() async -> ParkedLocation? {
+        await withCheckedContinuation { continuation in
+            pending = continuation
+            waiters.forEach { $0.resume() }
+            waiters = []
+        }
+    }
+
+    func waitUntilAsked() async {
+        guard pending == nil else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func answer(_ location: ParkedLocation) {
+        pending?.resume(returning: location)
+        pending = nil
     }
 }
 
