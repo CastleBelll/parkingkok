@@ -233,7 +233,7 @@ UMP, 테스트 ID만, 배너 only, Plus 완전 차단.
 | A | **실기 iPhone 연결** | P-1 끝 ~ M0A | 현재 오프라인. 케이블 연결 + 신뢰 |
 | B | **실기 Android 연결** | M0B | USB 디버깅 ON. Samsung/Pixel 권장 |
 | C | **Apple Developer Program 가입 여부** | M0A | 미가입 시 배경 위치 실기 테스트 제약 |
-| D | **Bundle ID / package name** | P-1 | 기본 제안: `com.parkingkok.app` |
+| D | **Bundle ID / package name** | ~~P-1~~ 2026-09-21 확정 | `com.sjstudioz.parkingpin` — CLAUDE.md가 단일 출처 |
 | E | **GitHub 원격 저장소** | M1 (CI) | private repo 권장 |
 | F | Firebase 프로젝트 | M5 | Google 계정 |
 | G | 스토어 계정 (App Store Connect / Play Console) | M9 | |

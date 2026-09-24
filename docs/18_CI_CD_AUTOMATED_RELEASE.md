@@ -143,7 +143,7 @@ main
 
 내부 그룹 예:
 
-- `parkingkok-internal`
+- `parkingpin-internal`
 
 외부 TestFlight 그룹은 필요 시 별도 workflow에서 관리한다. 외부 테스터용 빌드는 Beta App Review가 필요할 수 있으므로 internal과 동일하게 취급하지 않는다.
 
@@ -466,9 +466,9 @@ Remote Config templates
 환경:
 
 ```text
-parkingkok-dev
-parkingkok-staging
-parkingkok-prod
+parkingpin-dev
+parkingpin-staging
+parkingpin-prod
 ```
 
 production Firebase 변경은 mobile app과 별도로 backwards-compatible하게 배포한다.

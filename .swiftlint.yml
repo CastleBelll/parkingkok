@@ -6,7 +6,7 @@ included:
   - ios
 
 excluded:
-  - ios/ParkingKok.xcodeproj
+  - ios/ParkingPin.xcodeproj
   - ios/DerivedData
   - ios/build
 

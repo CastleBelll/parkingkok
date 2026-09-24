@@ -58,6 +58,63 @@ Starting a location FGS from background may require ACCESS_BACKGROUND_LOCATION.
 
 P0 must test whether Activity Transition events + bounded location capture work adequately without persistent FGS.
 
+### 4a. The P0 test above was run on 2026-09-20. It fails without an FGS.
+
+A full day of real driving on a Galaxy S21 (Android 15, One UI 7) produced **three location
+fixes**, all between 12:32 and 12:42, all 56–100 m. Three bounded sessions started and three
+stopped; `deliveryCount` was **0**. Activity transitions were fine throughout —
+`transitionEventCount: 20` — so it is location alone that fails.
+
+Then measured directly, one `DRIVING` session at a 15-second interval:
+
+| condition | deliveries in 3 minutes | expected |
+|---|---|---|
+| app in the foreground | 3 in the first 25 s | ~12 |
+| backgrounded, screen off | **0** | ~12 |
+| backgrounded, screen off, exempt from battery optimisation | **1** | ~12 |
+| backgrounded, screen off, **`location` foreground service** | **45** | ~12 |
+
+The third row is the one that decided the design: **a doze exemption does not lift the
+throttle.** Android's background location limit applies to an app with no foreground
+service however the subscription was made, and the PendingIntent form — which does survive
+process death, as §2 says — does not exempt it.
+
+The consequence was not subtle. With no fix newer than noon, the candidate created at 17:32
+inherited the noon one; the home screen read `오후 12:00 · 확인해 주세요` and the confirmation
+screen drew a map with `약 17m 이내` beside it. (That second bug is fixed separately, in
+docs/05 §5 — but it only ever fired because this one starved it.)
+
+### 4b. `DrivingLocationService`, and why it is not the permanent FGS §4 forbids
+
+One `location` foreground service, started by `FusedLocationSessionRegistrar.request` and
+stopped by `remove`. Its lifetime is therefore exactly one bounded Fused Location request's,
+which `LocationSessionPlanner` already caps. A parked phone runs no service; an idle one
+runs no service. What §4 forbids is a service that stands whether or not anything is
+happening, and this is the opposite — if it is ever seen alive while `sessionMode` is
+`IDLE`, that is a leak to fix, not the design.
+
+It is `START_NOT_STICKY`: a system restart with no session behind it would be exactly that
+leak. Verified on the device: stopping the capture leaves `sessionMode: IDLE`,
+`lastSessionStopReason: DESIRED_IDLE` and **no** `ServiceRecord` for it.
+
+**Starting it from the background still needs the exemption.** Android 12+ refuses a
+background foreground-service start unless the app qualifies, and battery-optimisation
+exemption is the qualifying route available here. So the exemption is still required — not
+to lift the throttle, but to be allowed to raise the service that does. `start` is
+best-effort and silent on refusal: a throttled session beats none, and that is what the app
+had before.
+
+Settings therefore carries it as a fifth permission row, `배터리 사용량 제한 해제`, beside the
+four real runtime permissions. It is not one of those, and it is listed with them anyway
+because it fails in exactly the same way: without it the app detects nothing, and a user
+debugging "왜 감지가 안 되지" has to be able to see it in the same place as the rest.
+
+The row opens `ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS` — the system list — rather than
+`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, which is one tap fewer and Play-policy
+sensitive (docs/13_PLAY_STORE_REVIEW_CHECKLIST.md). A location-tracking core function is
+the kind of thing the policy contemplates, so the direct prompt is available later with a
+declaration; it is not worth the review risk before the app has been reviewed once.
+
 ## 5. Event Pipeline
 ```text
 PendingIntent transition event
@@ -123,6 +180,26 @@ Candidate notification actions:
 Inline text reply may be used for floor when UX is reliable, but must have an app-screen fallback.
 
 Android 13+ notification runtime permission must be handled contextually.
+
+
+### 9a. The candidate channel is `IMPORTANCE_HIGH`, at a second id (2026-09-23)
+
+`parking_detection` was created `IMPORTANCE_DEFAULT`, which makes a sound and nothing else:
+the prompt waits in the shade rather than appearing over what the user is doing. Reported
+from the device as "알림이 너무 늦게 뜬다" — not late, unseen. The user is walking away from
+the car and has 45 minutes to answer.
+
+**A channel's importance cannot be raised in place.** Android hands ownership to the user at
+creation and ignores it on later `createNotificationChannel` calls, so the new importance
+needs a new id: `parking_detection_v2`. The old one is deleted when the new one is created,
+so Settings lists one channel rather than two, and nothing is posted to it again.
+
+This is the Android half of iOS's `.timeSensitive` interruption level, which needed its own
+entitlement for the same reason — the system quietly downgrades a prompt that does not
+prove it is one.
+
+Measured on the Galaxy with the DEV drive replay: `channel=parking_detection_v2
+importance=4`, where it read `channel=parking_detection importance=3` before.
 
 ## 10. Widgets
 Use Jetpack Glance.

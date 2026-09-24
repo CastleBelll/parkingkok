@@ -96,9 +96,50 @@ The user-facing brand is **주차핀**. Every string a user can read says 주차
 widget labels, notifications, settings, paywall, store copy ("주차핀 Plus", "주차핀 가족 공유",
 "주차핀에 주차 위치가 저장됐어요").
 
-Internal identifiers are **not** renamed and must not be: package names, Bundle IDs, the
-Firebase project, class names, directory names, module names all stay `parkingkok`. A PR
-that renames an identifier to match the brand is wrong.
+**The store listing name is longer than the brand, because 주차핀 alone was taken
+(decided 2026-09-21):**
+
+| field | value |
+|---|---|
+| App Store / Play **app name** | `주차핀 - 자동 주차 위치 기록` |
+| App Store **subtitle** | `주차한 순간을 앱이 먼저 기록해요` |
+| Play **short description** | `주차하면 층과 구역까지 자동으로 기록합니다` |
+| on-device label (`CFBundleDisplayName`, `app_name`) | **`주차핀`**, and it stays that way |
+
+The listing name and the icon label are different fields on purpose: a home screen truncates
+at roughly eight Hangul characters, so the long form would render as `주차핀 - 자동…` under
+the icon. Every string *inside* the app is still plain 주차핀.
+
+Identifiers were settled **before the first store submission**, which is the only moment a
+package name can change. Play shows the package in its own URL, so it was never purely
+internal.
+
+| | value |
+|---|---|
+| Android `applicationId`, `namespace` and Kotlin package | `com.sjstudioz.parkingpin` |
+| iOS bundle id — **every configuration, DEV included** | `com.sjstudioz.parkingpin` |
+| iOS widget extension | `com.sjstudioz.parkingpin.widget` |
+| iOS App Group | `group.com.sjstudioz.parkingpin` |
+| Firebase project | `parkingpin-51147` |
+
+**`com.sjstudioz.` is a studio namespace, and that is the point.** Two earlier attempts were
+wrong in different ways: `com.parkingkok.app` was the old brand, and `kr.parkingpin.app`
+read as a claim on `parkingpin.kr`, a domain nobody here owns. A studio prefix claims
+nothing, survives the app being renamed, and gives the next app somewhere to live.
+
+**DEV and STAGING share the production bundle id.** Suffixed ids meant three App IDs, three
+App Groups and three Firebase apps to keep in step, for one developer with one phone, and
+all they bought was side-by-side installation. The build *configurations* remain — `PK_DEV`
+still compiles in the diagnostics and still cannot reach a store. The cost is real and worth
+knowing: installing a DEV build replaces a store build and shares its records.
+
+**That window is now closed.** Once a build reaches a store the package name and bundle ID
+are permanent, and a PR that changes either is wrong.
+
+Internal names went with them, the same day and for consistency rather than necessity: the
+Swift module and Xcode targets are `ParkingPin`, the directories are `ios/ParkingPin*`, and
+the Kotlin `Parkingkok*` type prefix is `Parkingpin*`. Nothing named `ParkingKok` or
+`parkingkok` remains outside this paragraph and the git history.
 
 ## Visual Reference Rule
 When building or revising UI, consult the packaged design screenshots in `design-references/`

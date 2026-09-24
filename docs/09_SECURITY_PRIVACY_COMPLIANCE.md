@@ -4,7 +4,28 @@
 - store subscription entitlement
 - referral credits
 - anonymous/internal account mapping
+- **sign-in email** — see 1a
 - local parking coordinates/photos/notes
+
+### 1a. The one personal detail the app asks for (2026-09-21)
+
+**An email address, at sign-in, and nothing else.** No name, no photo, no contacts, no
+advertising identifier. Apple answers with a relay address
+(`…@privaterelay.appleid.com`) unless the user chooses to share their real one; Google
+answers with the account's address.
+
+It is asked for because it is the only thing that can answer *"restore my subscription"*
+from someone who has lost their phone. A uid cannot — the user does not know it, and §13c
+of docs/07 means the account on one platform is unreachable from the other. Apple hands the
+email over **only at the first authorization**, so a build that skips it condemns every
+account created before the day it is added; a user asked to revoke the app in iOS Settings
+and sign in again is a user already having a bad time.
+
+Where it lives: Firebase Auth's user record, and nowhere else. It is **not** copied into
+Firestore, analytics, crash reports or logs — docs/09 §11's rule that auth messages stay out
+of the log exists partly because they can carry it. Nothing in the product emails the user;
+there is no marketing list to be on.
+
 
 ## 2. Threats
 - patched client claims Plus

@@ -1,0 +1,361 @@
+#if PK_DEV
+    import Foundation
+    import UIKit
+
+    /// DEV-only fixture so the product screens can be photographed on a real device.
+    ///
+    /// The UI states worth reviewing — an active parking with a floor, a history with
+    /// both sources in it — take a drive and a car park to reach otherwise, and there is
+    /// no way to drive the touchscreen from the command line. This is the same shape of
+    /// hook as `PK_FORCE_DRIVING_SESSION` in `DetectionRuntime`, and like that one it is
+    /// compiled out of STAGING and PROD entirely.
+    ///
+    /// ```sh
+    /// xcrun devicectl device process launch --device <udid> \
+    ///   --environment-variables '{"PK_SEED_SAMPLE_PARKING":"1"}' com.sjstudioz.parkingpin.dev
+    /// ```
+    ///
+    /// **Replaces** whatever is stored, so the screenshot is the same every run.
+    @MainActor
+    enum ParkingSampleSeed {
+        static var isRequested: Bool {
+            ProcessInfo.processInfo.environment["PK_SEED_SAMPLE_PARKING"] == "1"
+        }
+
+        /// Seeds the active parking with neither a coordinate nor a photo.
+        ///
+        /// That is the FR-001 state — saved with location permission denied — and it is
+        /// the one the detail screen has to degrade into: no map card, `길찾기` disabled
+        /// and explained, an empty photo panel. Unreachable from the seeded fixture
+        /// otherwise, and there is no way to drive the touchscreen to a history record.
+        ///
+        /// ```sh
+        ///   --environment-variables '{"PK_SEED_SAMPLE_PARKING":"1","PK_SEED_WITHOUT_LOCATION":"1"}'
+        /// ```
+        static var isWithoutLocationRequested: Bool {
+            ProcessInfo.processInfo.environment["PK_SEED_WITHOUT_LOCATION"] == "1"
+        }
+
+        /// Restores an active parking that a device test had to end (2026-09-23).
+        ///
+        /// **Additive, unlike [isRequested]**: it writes one active session and touches
+        /// nothing else, because the records on the phone are the owner's and a seed that
+        /// replaced them to put a floor back would cost more than it fixed.
+        ///
+        /// It exists because iOS cannot be driven from the command line at all — `devicectl`
+        /// has no input API, so a state reached by tapping can only be restored by tapping,
+        /// and asking someone to retype what a test cleared is a bad trade.
+        ///
+        /// ```sh
+        /// xcrun devicectl device process launch --device <udid> \
+        ///   --environment-variables '{"PK_SEED_ACTIVE_PARKING":"B5/01번"}' com.sjstudioz.parkingpin
+        /// ```
+        ///
+        /// The value is `floor` or `floor/spot`. A parking already in progress is left
+        /// alone: two active sessions is a state the product does not have.
+        static var requestedActiveParking: (floor: String, spot: String?)? {
+            guard let raw = ProcessInfo.processInfo.environment["PK_SEED_ACTIVE_PARKING"],
+                  !raw.isEmpty
+            else { return nil }
+            let parts = raw.split(separator: "/", maxSplits: 1).map(String.init)
+            guard let floor = parts.first else { return nil }
+            return (floor, parts.count > 1 ? parts[1] : nil)
+        }
+
+        /// Opens the app on one screen rather than home, so every product surface can be
+        /// photographed without a way to drive the touchscreen.
+        ///
+        /// ```sh
+        ///   --environment-variables '{"PK_SEED_SAMPLE_PARKING":"1","PK_INITIAL_ROUTE":"history"}'
+        /// ```
+        static func initialRoute(activeParkingID: UUID?) -> AppRoute? {
+            switch ProcessInfo.processInfo.environment["PK_INITIAL_ROUTE"] {
+            case "history": .history
+            case "notifications": .notificationHistory
+            case "settings": .settings
+            case "diagnostics": .diagnostics
+            case "detail": activeParkingID.map(AppRoute.parkingDetail(id:))
+            // The fixture's unanswered candidate, which carries a fix — so this is the
+            // half of §7a's "where" row that `PK_INJECT_CANDIDATE` cannot reach: the
+            // engine's synthetic evidence produces no reliable location on a simulator.
+            case "confirm": .candidateConfirmation(id: notificationIDs[3])
+            default: nil
+            }
+        }
+
+        /// Where the seeded active parking is pinned for the FR-008 map screenshot.
+        ///
+        /// Seoul City Hall. The original fixture carried no coordinate at all, on the
+        /// grounds that a screenshot must never show a place anyone lives — which is
+        /// still the rule. A civic landmark is not that place, and `03-parking-detail.png`
+        /// cannot be compared against a screen with the map card missing.
+        static let sampleLatitude = 37.566_295
+        static let sampleLongitude = 126.977_945
+        /// Deliberately underground-grade. A 4m fix would make the accuracy circle
+        /// invisible and would not exercise the honest-framing rule at all.
+        static let sampleAccuracyMeters: Double = 24
+
+        /// Mirrors `design-references/01-home-main.png` so the two can be held side by
+        /// side: B3 · A구역 142, parked 1시간 24분 ago, over three earlier records.
+        ///
+        /// `photoStore` is optional so the fixture still applies when photo storage is
+        /// unavailable — the same degradation the product has.
+        /// Writes the active parking [requestedActiveParking] asks for, if there is none.
+        static func applyActiveParking(
+            _ requested: (floor: String, spot: String?),
+            to store: any ParkingStoring,
+            now: Date
+        ) throws {
+            guard try store.activeSession() == nil else { return }
+            try store.startSession(
+                ParkingSession(
+                    id: UUID(),
+                    startedAt: now,
+                    endedAt: nil,
+                    source: .manual,
+                    confidenceBucket: nil,
+                    location: nil,
+                    floor: FloorValue.parse(requested.floor),
+                    zone: nil,
+                    spot: requested.spot,
+                    memo: nil,
+                    photoRelativePath: nil,
+                    createdAt: now,
+                    updatedAt: now
+                )
+            )
+        }
+
+        static func apply(
+            to store: any ParkingStoring,
+            photoStore: (any ParkingPhotoStoring)? = nil,
+            candidateStore: (any ParkingCandidateStoring)? = nil,
+            historyStore: (any CandidateHistoryStoring)? = nil,
+            now: Date
+        ) async throws {
+            try store.deleteAll()
+
+            for offset in past {
+                var record = sample(
+                    startedAt: now.addingTimeInterval(-offset.startedHoursAgo * 3600),
+                    floor: offset.floor,
+                    zone: offset.zone,
+                    spot: offset.spot,
+                    source: offset.source
+                )
+                record.endedAt = record.startedAt.addingTimeInterval(offset.durationHours * 3600)
+                try store.startSession(record)
+                try store.endSession(id: record.id, at: record.endedAt ?? now)
+            }
+
+            var active = sample(
+                id: activeRecordID,
+                startedAt: now.addingTimeInterval(-84 * 60),
+                floor: "B3",
+                zone: "A구역",
+                spot: "142",
+                source: .detected
+            )
+            if !isWithoutLocationRequested {
+                active.location = ParkedLocation(
+                    latitude: sampleLatitude,
+                    longitude: sampleLongitude,
+                    horizontalAccuracy: sampleAccuracyMeters,
+                    capturedAt: now.addingTimeInterval(-84 * 60)
+                )
+                if let photoStore, let image = placeholderPhotoData() {
+                    active.photoRelativePath = try? await photoStore.save(image, for: active.id)
+                }
+            }
+            try store.startSession(active)
+            applyNotifications(
+                candidateStore: candidateStore,
+                historyStore: historyStore,
+                savedRecordID: active.id,
+                now: now
+            )
+        }
+
+        /// docs/10 §7b's list: one unanswered candidate and the three resolved outcomes.
+        ///
+        /// History is append-only by contract (docs/05 §10a) and has no delete, so the
+        /// fixture keeps its promise — "the screenshot is the same every run" — the only
+        /// way it can: **fixed ids**. `append` deduplicates by candidate id, so a second
+        /// seeded run adds nothing and the list stays these four rows however often it is
+        /// reseeded. The `저장됨` row's `recordId` is `activeRecordID`, also fixed, so it
+        /// still opens a record that exists after the parking store was replaced.
+        ///
+        /// §7b's empty state is photographed from a fresh install with no seed flag at
+        /// all, which is the only honest way to reach it.
+        private static func applyNotifications(
+            candidateStore: (any ParkingCandidateStoring)?,
+            historyStore: (any CandidateHistoryStoring)?,
+            savedRecordID: UUID,
+            now: Date
+        ) {
+            // Oldest first: `append` puts each at the head, so the list reads newest first
+            // exactly as §7b's mock does.
+            let resolutions: [(minutesAgo: Double, outcome: CandidateOutcome, record: UUID?)] = [
+                (4 * 24 * 60, .expired, nil),
+                (26 * 60, .rejected, nil),
+                (84, .confirmed, savedRecordID)
+            ]
+            for (index, resolution) in resolutions.enumerated() {
+                historyStore?.append(
+                    CandidateHistoryEntry(
+                        id: notificationIDs[index],
+                        raisedAt: now.addingTimeInterval(-resolution.minutesAgo * 60),
+                        outcome: resolution.outcome,
+                        recordId: resolution.record
+                    )
+                )
+            }
+
+            // The unanswered one: what puts the dot on the bell and the
+            // `확인이 필요해요` row at the top of the list.
+            //
+            // `PK_INJECT_CANDIDATE` drives the engine to produce a real one, and the two
+            // flags answer the same question in different ways — so when it is set this
+            // fixture leaves the slot alone rather than overwriting what the engine put
+            // there. One live candidate at a time either way (§12).
+            guard ProcessInfo.processInfo.environment["PK_INJECT_CANDIDATE"] == nil else { return }
+            try? candidateStore?.clear()
+            try? candidateStore?.save(
+                ParkingCandidate(
+                    id: notificationIDs[3],
+                    detectedAt: now.addingTimeInterval(-6 * 60),
+                    confidenceBucket: .high,
+                    reasonCodes: [.recentVehicleActivity, .vehicleExitDetected, .walkingAfterVehicle],
+                    // The confirmation screen draws this (docs/10 §7a "where"), so the
+                    // fixture has to carry one or the DEV hook only ever exercises the
+                    // 위치 없음 half of that row. `PK_WITHOUT_LOCATION` is how the other half
+                    // is reached, exactly as it is for the records above.
+                    lastReliableLocation: isWithoutLocationRequested ? nil : LastReliableLocation(
+                        latitude: sampleLatitude,
+                        longitude: sampleLongitude,
+                        horizontalAccuracy: sampleAccuracyMeters,
+                        capturedAt: now.addingTimeInterval(-6 * 60)
+                    ),
+                    expiresAt: now.addingTimeInterval(ParkingCandidatePolicy.expiry - 6 * 60),
+                    score: 82,
+                    driveDuration: 22 * 60,
+                    driveDistanceMeters: 7400,
+                    accuracyBucket: .fair
+                )
+            )
+        }
+
+        /// A drawn stand-in for a photo of a car park pillar.
+        ///
+        /// Generated rather than bundled: a real photograph in the repository would be
+        /// somebody's car park, and the screenshot only needs the panel to be occupied at
+        /// a realistic aspect ratio.
+        ///
+        /// Also what `PK_PILLAR_FIXTURE` feeds the docs/02 §6a reader, because a device
+        /// with no way to deliver a tap has no way to press a camera shutter either.
+        static func placeholderPhotoData() -> Data? {
+            let size = CGSize(width: 1600, height: 1200)
+            let renderer = UIGraphicsImageRenderer(size: size)
+            let image = renderer.image { context in
+                UIColor(red: 0.42, green: 0.45, blue: 0.5, alpha: 1).setFill()
+                context.fill(CGRect(origin: .zero, size: size))
+                UIColor(red: 0.16, green: 0.42, blue: 0.82, alpha: 1).setFill()
+                context.fill(CGRect(x: 560, y: 0, width: 480, height: size.height))
+                let label = NSAttributedString(
+                    string: "B3\nA구역",
+                    attributes: [
+                        .font: UIFont.systemFont(ofSize: 220, weight: .heavy),
+                        .foregroundColor: UIColor.white
+                    ]
+                )
+                label.draw(in: CGRect(x: 600, y: 300, width: 420, height: 700))
+            }
+            return image.jpegData(compressionQuality: 0.9)
+        }
+
+        private struct PastParking {
+            let startedHoursAgo: Double
+            let durationHours: Double
+            let floor: String
+            let zone: String?
+            let spot: String?
+            let source: ParkingSource
+        }
+
+        private static let past: [PastParking] = [
+            PastParking(
+                startedHoursAgo: 26,
+                durationHours: 2,
+                floor: "B2",
+                zone: "C구역",
+                spot: "38",
+                source: .manual
+            ),
+            PastParking(
+                startedHoursAgo: 120,
+                durationHours: 3,
+                floor: "B4",
+                zone: "A구역",
+                spot: "112",
+                source: .detected
+            ),
+            PastParking(
+                startedHoursAgo: 168,
+                durationHours: 1.5,
+                floor: "B1",
+                zone: "출구 3 근처",
+                spot: nil,
+                source: .manual
+            ),
+            PastParking(
+                startedHoursAgo: 240,
+                durationHours: 4,
+                floor: "B5",
+                zone: nil,
+                spot: "201",
+                source: .detected
+            )
+        ]
+
+        /// Fixed so a reseed keeps pointing at a record that exists — see
+        /// `applyNotifications`, where the `저장됨` row's `recordId` is written once and
+        /// then deduplicated away on every later run.
+        static let activeRecordID = UUID(uuidString: "5EED0000-0000-4000-8000-00000000A001") ?? UUID()
+
+        /// The three resolutions and the unanswered candidate, with fixed ids for the
+        /// same reason.
+        private static let notificationIDs = [
+            "5EED0000-0000-4000-8000-00000000B001",
+            "5EED0000-0000-4000-8000-00000000B002",
+            "5EED0000-0000-4000-8000-00000000B003",
+            "5EED0000-0000-4000-8000-00000000B004"
+        ].map { UUID(uuidString: $0) ?? UUID() }
+
+        private static func sample(
+            id: UUID = UUID(),
+            startedAt: Date,
+            floor: String,
+            zone: String?,
+            spot: String?,
+            source: ParkingSource
+        ) -> ParkingSession {
+            ParkingSession(
+                id: id,
+                startedAt: startedAt,
+                endedAt: nil,
+                source: source,
+                confidenceBucket: source == .detected ? .high : nil,
+                // No coordinate: the fixture has no business carrying one, and a screenshot
+                // of it must never show a place anyone lives.
+                location: nil,
+                floor: FloorValue.parse(floor),
+                zone: zone,
+                spot: spot,
+                memo: nil,
+                photoRelativePath: nil,
+                createdAt: startedAt,
+                updatedAt: startedAt
+            )
+        }
+    }
+#endif

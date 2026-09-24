@@ -22,13 +22,38 @@ Plus:
 Target consumer price: **about ₩1,500/month**.
 Actual localized price is configured independently in App Store Connect and Play Console and always displayed from store product metadata.
 
+## 1a. v1 ships free (2026-09-20)
+**Neither ads nor Plus are in the first release.** The product owner's decision: launch free,
+watch what people actually do, and add monetisation against evidence rather than against a
+plan. Everything below from §2 onward stays the contract for when that happens — it is not
+cancelled, it is deferred.
+
+What exists today is the one plug-in point, and nothing else:
+
+| | iOS | Android |
+|---|---|---|
+| the states | `PlusEntitlement` | `PlusEntitlement` |
+| the source | `PlusEntitlementSource.current(environment:)` | `plusEntitlement(debuggable:)` |
+
+Both answer `plusActive` on DEV/STAGING and `free` on the shipped build, so Plus-gated paths
+stay buildable and testable while being invisible in production. M6 replaces those two
+function bodies with a verified store transaction and touches nothing else. Features ask
+`allowsPlusFeatures` and never read the state directly — `grace` and `billingIssue` both mean
+"still paying", and a feature that checked `== plusActive` would lock out a subscriber whose
+card is being retried.
+
+**What was deliberately not built.** No AdMob SDK, no banner view, no UMP, no paywall, no
+StoreKit or Play Billing. A banner slot with no SDK behind it and no caller is dead code, and
+§12's placement rules are enforceable when there is something to place — not before. The
+`Plus 구독` rows in Settings on both platforms are placeholders that say so plainly.
+
 ## 2. Product IDs
 ### iOS
-`com.<company>.parkingkok.plus.monthly`
+`com.sjstudioz.parkingpin.plus.monthly`
 StoreKit auto-renewable subscription.
 
 ### Android
-`parkingkok_plus_monthly` or store naming equivalent.
+`parkingpin_plus_monthly` or store naming equivalent.
 Use one subscription with one monthly base plan at MVP.
 
 Keep only one tier to avoid upgrade/downgrade complexity.
@@ -122,6 +147,8 @@ MVP policy recommendation:
 - cross-platform paid portability is not marketed until optional account-linking exists and store-policy review is complete
 
 ## 12. Ads
+**Not in v1 — see §1a.** The rules below apply from the release that first requests an ad.
+
 AdMob on both platforms.
 Free only.
 

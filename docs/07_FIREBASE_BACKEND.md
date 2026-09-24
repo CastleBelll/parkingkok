@@ -174,6 +174,114 @@ Paid recovery:
 
 Free referral credit after uninstall/cross-platform device change cannot be guaranteed without optional future account-linking. Do not imply guaranteed recovery in UI.
 
+### 13a. Sign-in is a **link**, never a second sign-in (2026-09-21)
+
+The UI stays 회원가입 없음 by default. Signing in is something a user reaches for, not
+something the app demands, and when they do it must cost them nothing.
+
+**The rule: `linkWithCredential` on the existing anonymous user. Never `signInWithCredential`.**
+
+The difference is the whole feature. Linking keeps the same Firebase uid and attaches a
+provider to it, so everything keyed to that uid — `accounts/{accountId}.currentAuthUid`, the
+referral ledger, the entitlement — stays pointed at the same person. Signing in mints a
+*new* uid and abandons the anonymous one, silently, with whatever was keyed to it. Today
+there is no server state to lose, which is exactly why the rule has to be written before
+there is: the failure is invisible until the moment it is expensive.
+
+**What actually carries over, stated plainly so the UI does not overpromise:**
+
+| | carried |
+|---|---|
+| parking records, photos, floor/zone/memo | **yes, trivially** — they are local files and a Room/SwiftData store, keyed to the device and not to any account (docs/00) |
+| OS permissions, detection settings, consent | **yes** — nothing about them is account-shaped |
+| referral / entitlement / `accountId` | **yes, and only because of `linkWithCredential`** |
+| the same data on a *second* device | **no.** There is no sync. Signing in on a new phone gives that phone the same account and an empty history |
+
+That last row is the one a user will assume the other way round. Sign-in copy must not say
+백업 or 복원.
+
+### 13b. The credential already belongs to someone else
+
+**There are three collisions, not one (2026-09-21).** They were all reported to the user as
+"이미 다른 기기에서 사용 중", and that sentence is wrong for two of them:
+
+| iOS code | Android `errorCode` | what actually happened | what the user is told |
+|---|---|---|---|
+| 17025 | `ERROR_CREDENTIAL_ALREADY_IN_USE` | this Apple/Google account is attached to another Firebase user | 다른 기기에서 이미 사용 중 |
+| 17012 / 17007 | `ERROR_ACCOUNT_EXISTS_WITH_DIFFERENT_CREDENTIAL`, `ERROR_EMAIL_ALREADY_IN_USE` | the **email** behind it belongs to an account with a different sign-in method | 이 이메일은 다른 로그인 방식으로 이미 쓰고 있어요 |
+| 17015 | `ERROR_PROVIDER_ALREADY_LINKED` | it is already on *this* account | nothing — the screen was behind |
+
+The middle row is not about the other device at all. A project with **one account per email
+address** answers it whenever the same person signs in with Apple on the iPhone and Google
+on the Android phone — which §13c says is exactly what this product produces — and sending
+that user to look for another phone is a dead end. The last row was worse in a quieter way:
+it reported a conflict for a screen that only needed refreshing.
+
+`linkWithCredential` fails with the first of them when the Google/Apple account is already
+attached to another Firebase user — most often the same person, on a phone they signed in on
+before. Two ways out:
+
+- **sign in to the existing account**, abandoning this device's anonymous uid and anything
+  keyed to it, or
+- **refuse the link** and say why.
+
+**v1 refuses.** Abandoning a uid is unrecoverable and silent, and the app has no server state
+yet that would make the trade worth it. The copy says the account is already in use on
+another device and that the parking records on this phone are untouched — which is true,
+because they were never in the account.
+
+Revisit when there is something on the server worth merging, and revisit it as a merge, not
+as a switch.
+
+#### How to verify a link, and the tool that will lie to you (2026-09-21)
+
+**`firebase auth:export` does not report `apple.com` providers.** Measured: the same uid, at
+the same moment, read two ways —
+
+```text
+device   uid 8ksG8nZRP7RY7jj94Gco6i4MQv82  isAnonymous false  providers ["apple.com"]
+export   uid 8ksG8nZRP7RY7jj94Gco6i4MQv82  providerUserInfo []
+```
+
+— while the Google user beside it exports its provider, email, display name and photo in
+full. The export is not lagging; it reads the same both before and long after.
+
+Confirmed a second time after the `com.sjstudioz.parkingpin` rename, and this reading settles
+it beyond argument: the same export that shows `providerUserInfo: []` shows
+`email: …@privaterelay.appleid.com` on the same row. A relay address has no way into that
+record except the Apple link, so the link is there and the provider list is what is missing.
+
+An hour went into that gap. The export said a link had never happened, so the screen that
+said it had was treated as the broken thing; the real state was that the link *had*
+succeeded, on an account that a second bug then orphaned, and every later attempt was
+refused with 17025 by a credential nobody could see.
+
+**So: never confirm an Apple link with `auth:export`.** Use the app's own view of
+`Auth.currentUser.providerData` (the DEV diagnostics file writes it into the App Group
+container, where `devicectl device copy from` can read it) or the Firebase console. The
+export remains fine for Google and for counting accounts.
+
+### 13c. One provider per platform, and the gap that leaves (2026-09-21)
+
+| platform | provider offered | why |
+|---|---|---|
+| Android | Google | Credential Manager, already on every device, no extra SDK |
+| iOS | **Apple only** | Guideline 4.8 makes Sign in with Apple mandatory the moment any third-party sign-in is offered, and it needs no SDK beyond `AuthenticationServices`. Google on iOS would mean adding the GoogleSignIn package, a reversed-client-id URL scheme, and a second button |
+
+**The consequence, written down rather than discovered later: an account created on the
+iPhone cannot be reached from the Android phone, and the reverse.** A user who signs in with
+Apple on iOS and then installs the Android app gets a different anonymous uid there, with no
+way to attach it to the same account.
+
+This costs nothing today — §13a's table shows records never move between devices anyway, so
+the account carries only a referral ledger and an entitlement that do not exist yet. It
+stops being free the moment an entitlement does. The fix at that point is **Google on iOS**
+(the GoogleSignIn package), not Apple on Android: Apple's Android flow is a web redirect
+through `startActivityForSignInWithProvider`, which is more surface for the same result.
+
+Until then, restore-purchase flows must not be described as "다른 기기에서 복원" across
+platforms, because across platforms they cannot be.
+
 ## 14. Remote Config
 Common values + platform overrides.
 Server values always clamped by client.

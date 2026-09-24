@@ -44,6 +44,8 @@ trace(§9)와 fixture(§8)가 쓰는 문자열. 플랫폼 내부 표현과 별�
 | LocationQualityDegraded | `location_quality_degraded` |
 | VehicleProjectionConnected | `projection_connected` |
 | VehicleProjectionDisconnected | `projection_disconnected` |
+| BluetoothCarConnected | `bluetooth_car_connected` |
+| BluetoothCarDisconnected | `bluetooth_car_disconnected` |
 | UserConfirmedParking | `user_confirmed` |
 | UserRejectedParking | `user_rejected` |
 

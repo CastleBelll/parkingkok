@@ -23,6 +23,23 @@
          launch, and denial is not an app failure. -->
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
 
+    <!-- docs/04_ANDROID §2a: the drive-scoped capture service. Measured on 2026-09-20 —
+         without a foreground service, background location is throttled to roughly nothing
+         (0 deliveries in 3 minutes against ~12 expected), and a doze exemption alone does
+         not lift it. The service lives only while one bounded Fused Location request does. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+
+    <!-- The car link (docs/05 §3a "The car link"). From Android 12 this grant is what
+         makes the system deliver ACL_CONNECTED/ACL_DISCONNECTED at all; without it the
+         app simply never hears about a car, which costs accuracy and nothing else. It is
+         requested only alongside Smart Detection and denial is not an app failure.
+         BLUETOOTH is its pre-12 predecessor and is capped accordingly.
+         No scanning permission is declared: the app never discovers devices, it only
+         hears that one already paired has attached or detached. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+
     <!-- The label prompt asks what a just-closed session was (docs/05 §9 labelling).
          Runtime permission on Android 13+, requested from the diagnostics screen only and
          never at first launch. Denial suppresses the prompt and is counted; it breaks
@@ -30,7 +47,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
-        android:name=".ParkingkokApplication"
+        android:name=".ParkingpinApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -38,7 +55,7 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Parkingkok">
+        android:theme="@style/Theme.Parkingpin">
 
         <!-- ══ Firebase Analytics starts switched OFF (docs/07 "동의") ══════════════
              The SDK collects by default, and `FirebaseInitProvider` runs before
@@ -68,7 +85,8 @@
 
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:theme="@style/Theme.Parkingpin.Splash">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -98,11 +116,48 @@
             android:name=".detection.ActivityTransitionReceiver"
             android:exported="false" />
 
+        <!-- docs/04_ANDROID §2a. Started by `FusedLocationSessionRegistrar.request` and
+             stopped by `remove`, so its lifetime is exactly one bounded capture's. Never
+             permanent: a parked phone runs no service, which is what CLAUDE.md's rule
+             against a standing foreground service actually forbids. -->
+        <service
+            android:name=".detection.DrivingLocationService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
+
         <!-- Target of the Fused Location PendingIntent. Not exported, for the same
              reason as the transition receiver. -->
         <receiver
             android:name=".detection.LocationUpdateReceiver"
             android:exported="false" />
+
+        <!-- Target of the candidate notification's 주차 아님 action (docs/05 §10a). Not
+             exported: only the notification holds the PendingIntent, and a PendingIntent
+             target does not need to be exported to be delivered. Rejecting must cost no
+             app launch — it is the answer the detector learns most from, so it is the
+             cheapest thing on the notification. -->
+        <receiver
+            android:name=".detection.ParkingCandidateReceiver"
+            android:exported="false" />
+
+        <!-- The car link (docs/05 §3a). Declared in the manifest rather than registered
+             at runtime because the signal is worth nothing unless it arrives while the app
+             is not running — the disconnect happens as the driver walks away. ACL_CONNECTED
+             and ACL_DISCONNECTED are on the platform's implicit-broadcast exception list,
+             so a manifest receiver still receives them on Android 8+.
+
+             Exported: these are system broadcasts, and an unexported receiver would not
+             get them. Nothing is trusted from the intent beyond the Bluetooth device class,
+             and a spoofed connect can at worst open a detection window that produces a
+             candidate the user declines. -->
+        <receiver
+            android:name=".detection.CarLinkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.bluetooth.device.action.ACL_CONNECTED" />
+                <action android:name="android.bluetooth.device.action.ACL_DISCONNECTED" />
+            </intent-filter>
+        </receiver>
 
         <!-- Target of the label-prompt notification actions. Not exported: only the
              notification holds the PendingIntent, and a PendingIntent target does not need

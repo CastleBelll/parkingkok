@@ -1,0 +1,27 @@
+{
+  "name": "bus_repeated_stops_produce_no_notification_storm",
+  "initialState": "DRIVING",
+  "events": [
+    {"type":"location","t":0,"accuracy":10,"speed":9.0},
+    {"type":"stationary_enter","t":40},
+    {"type":"location","t":55,"accuracy":11,"speed":0.0},
+    {"type":"stationary_exit","t":70},
+    {"type":"location","t":85,"accuracy":10,"speed":8.5},
+    {"type":"stationary_enter","t":130},
+    {"type":"location","t":145,"accuracy":10,"speed":0.0},
+    {"type":"stationary_exit","t":160},
+    {"type":"location","t":175,"accuracy":9,"speed":9.5},
+    {"type":"stationary_enter","t":220},
+    {"type":"location","t":235,"accuracy":11,"speed":0.0},
+    {"type":"stationary_exit","t":250},
+    {"type":"location","t":265,"accuracy":10,"speed":10.0},
+    {"type":"stationary_enter","t":310},
+    {"type":"location","t":325,"accuracy":10,"speed":0.0},
+    {"type":"stationary_exit","t":340},
+    {"type":"location","t":355,"accuracy":9,"speed":9.0}
+  ],
+  "expected": {
+    "candidate": false,
+    "finalState": "DRIVING"
+  }
+}

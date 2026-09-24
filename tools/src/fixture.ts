@@ -161,11 +161,13 @@ const EVENT_EXTRA_KEYS: Record<EventType, readonly string[]> = {
   stationary_exit: ['confidence'],
   location: ['accuracy', 'speed', 'distanceFromPreviousM'],
   location_quality_degraded: ['fromBucket', 'toBucket'],
-  car_projection_connected: ['platform'],
-  car_projection_disconnected: ['platform'],
+  projection_connected: ['platform'],
+  projection_disconnected: ['platform'],
+  bluetooth_car_connected: [],
+  bluetooth_car_disconnected: [],
   timer_tick: [],
-  user_confirmed_parking: ['floor'],
-  user_rejected_parking: [],
+  user_confirmed: ['floor'],
+  user_rejected: [],
 };
 
 function parseEvent(value: unknown, path: string): FixtureEvent {

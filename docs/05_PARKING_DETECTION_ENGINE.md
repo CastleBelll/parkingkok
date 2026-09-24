@@ -57,6 +57,327 @@ User-confirmed or policy-confirmed active parking.
 ### DEPARTURE_CANDIDATE
 New meaningful vehicle session while PARKED.
 
+## 3a. Transitions
+
+Section 3 describes what each state *is*. This says what moves between them, because
+"vehicle evidence appeared" and "validate duration/distance" are sentences two engines
+would each read differently — and this project has already had two platforms diverge from
+a contract that left a decision open.
+
+Every threshold below either points at the section that already fixes it, or is named here
+as a starting constant. **A constant marked `unvalidated` is a hypothesis**: no
+above-ground drive has been replayed against it yet (§18), and it is expected to move once
+field data exists. Neither platform may pick its own value for one.
+
+| from | to | condition |
+|---|---|---|
+| `IDLE` | `DRIVING_CANDIDATE` | `vehicle_enter` |
+| `DRIVING_CANDIDATE` | `DRIVING` | vehicle activity sustained ≥ `minimumVehicleDuration` |
+| `DRIVING_CANDIDATE` | `IDLE` | `vehicle_exit`, or no promotion within `drivingCandidateWindow` |
+| `DRIVING` | `PARKING_TRANSITION` | `vehicle_exit`, **or** no movement evidence for `movementIdleWindow` |
+| `PARKING_TRANSITION` | `CANDIDATE_PENDING` | any of `walking_enter`, `stationary_enter`, location stop — within `transitionWindow` |
+| `PARKING_TRANSITION` | `DRIVING` | movement evidence returns before `transitionWindow` elapses |
+| `PARKING_TRANSITION` | `IDLE` | `transitionWindow` elapses with no confirming signal |
+| `CANDIDATE_PENDING` | `PARKED` | user confirms (§10a) |
+| `CANDIDATE_PENDING` | `IDLE` | user rejects, or 45-minute expiry (§10) |
+| `CANDIDATE_PENDING` | `DRIVING_CANDIDATE` | `vehicle_enter` — a new journey starts |
+| `PARKED` | `DEPARTURE_CANDIDATE` | vehicle ≥ 90s **and** movement ≥ 500m (§11) |
+| `DEPARTURE_CANDIDATE` | `DRIVING` | departure confirmed (§11) |
+| `DEPARTURE_CANDIDATE` | `PARKED` | evidence lapses |
+
+### Constants
+
+| name | value | source |
+|---|---|---|
+| `minimumVehicleDuration` | 90s | §11 uses 90s for departure; entry uses the same bar so one direction cannot be laxer than the other |
+| `drivingCandidateWindow` | 300s | §7 `vehicleEvidenceMaxAge` — evidence older than this is already not counted |
+| `movementIdleWindow` | 180s | §7 `maximumBaseline`. **unvalidated** |
+| `transitionWindow` | 300s | §7 vehicle window, reused so a walk that starts late still counts. **unvalidated** |
+| `sessionMaximumDuration` | 2h | hard ceiling on one `DRIVING` session. Longer than any ordinary commute, far shorter than a day; without it a drive that never sees another fix keeps the location capture up for ever (§19). Ends in `IDLE` with no candidate — two hours in, nothing knows where the car was left. Android gained it 2026-09-21; iOS always had it |
+
+### The car link
+
+A phone attached to a car — by Android Auto / CarPlay projection, or by Bluetooth to the
+car's audio system — is the strongest signal this product can get, and the only one that
+knows the *moment* the driver leaves. Motion heuristics infer parking minutes later, from
+absence. A disconnect is an event.
+
+| from | to | condition |
+|---|---|---|
+| `IDLE` | `DRIVING_CANDIDATE` | `projection_connected` or `bluetooth_car_connected` |
+| `DRIVING` | `CANDIDATE_PENDING` | `projection_disconnected` or `bluetooth_car_disconnected` |
+| `CANDIDATE_PENDING` | `DRIVING` | a car link reconnects |
+
+Connecting does **not** promote straight to `DRIVING`: people sit in parked cars. The
+90-second sustain in §3a still applies, so getting in and changing your mind produces
+nothing.
+
+Disconnecting **does** go straight to `CANDIDATE_PENDING`, skipping `PARKING_TRANSITION`.
+Waiting for a walk would lose exactly the case §3a was corrected for — an underground car
+park where no walk is ever detected — and the link has already told us the engine stopped
+and the phone left the car.
+
+The reconnect row is what makes a fuel stop safe (§17 fixture #3): disconnect, pump, get
+back in, and the candidate is retired and its notification withdrawn before it is worth
+anything. It is also why `CANDIDATE_PENDING → DRIVING` exists at all.
+
+Reason codes: `car_projection_disconnected` already covers both, since §4 is closed and the
+product distinction — the phone was attached to a car and stopped being attached — is the
+same. The *kind* of link belongs in §8 weighting, not in a new code.
+
+#### Platform reality
+
+These are not equally available, and the contract says so rather than pretending:
+
+- **Android** can observe both. `ACTION_ACL_CONNECTED` / `ACTION_ACL_DISCONNECTED` with a
+  `BluetoothClass` of `AUDIO_VIDEO_CAR_AUDIO` or `AUDIO_VIDEO_HANDSFREE` identifies a car
+  device, and it works from a broadcast receiver in the background.
+- **iOS does not expose classic Bluetooth connect/disconnect as an event.** CoreBluetooth
+  is BLE-only, ExternalAccessory needs an MFi accessory, and AccessorySetupKit matches
+  declared BLE/Wi-Fi accessories. But the earlier claim that the audio route costs an
+  audio session was only half right, and the half that is wrong matters:
+  `AVAudioSession.currentRoute` is **read-only and needs no activation**, and `.carAudio`
+  covers CarPlay and car Bluetooth alike — so *sampling* the link on each wake is free.
+  What needs an audio session is background route-*change* callbacks, which this app does
+  not buy. iOS therefore polls where Android observes.
+  There is also `com.apple.developer.carplay-parking`, a CarPlay entitlement category
+  matched to exactly this product; granted, it would turn the projection row into a real
+  background event rather than a poll.
+
+So Bluetooth is an **optional vehicle signal** — the property `optionalVehicleSignal` in
+docs/17 §3 already anticipated one. Where it exists the engine becomes far more accurate;
+where it does not, nothing regresses, because every §3a transition still stands on motion
+and location alone. No fixture may depend on a link event being present.
+
+Before building the iOS side, confirm the limitation against current SDKs rather than
+taking this paragraph's word for it, and report what you find.
+
+### Movement evidence does not gate promotion
+
+An earlier draft of this table required movement evidence as well as sustained vehicle
+activity to reach `DRIVING`. Replaying the three real drives recorded on 2026-09-19
+against it showed why that is wrong: the 14:26 trip is the textbook signature —
+`vehicle_enter`, `vehicle_exit` seven minutes later, `walking_enter` after that — and it
+carries **zero location events**. Gated on movement it never leaves `DRIVING_CANDIDATE`,
+and the parking is never detected.
+
+That is not an edge case. §13 and the notes around §7 say underground car parks, tunnels
+and urban canyons are this product's main setting, and those are exactly the places GPS
+Doppler speed does not arrive. A rule that needs movement evidence to believe the OS is a
+rule that fails where the app is most needed.
+
+Movement evidence still matters — it is what §8 weighs and what separates a real trip from
+a phone on a desk — but it belongs in the confidence bucket (§9), not in the transition.
+A drive with no fixes can reach `CANDIDATE_PENDING` with lower confidence; it cannot be
+made invisible.
+
+### When a timeout fires
+
+Every elapsed-time row — `drivingCandidateWindow`, `movementIdleWindow`, `transitionWindow`
+and the 45-minute expiry — fires **only on a `timer_tick` event**. Rows whose condition is
+a duration that has been *sustained* (`DRIVING_CANDIDATE → DRIVING`, `PARKED →
+DEPARTURE_CANDIDATE`) are evaluated on every event.
+
+The alternative — evaluating elapsed time whenever any event happens to arrive — makes the
+same trace replay differently depending on whether something unrelated woke the engine.
+`subway_commute_underground` is the proof: it has a 303-second gap after `vehicle_enter`
+and a 1012-second gap during the ride, both longer than the windows they would trip, and
+under arrival-time evaluation it ends in `IDLE` instead of `CANDIDATE_PENDING`.
+
+`timer_tick` is already in the fixture vocabulary and none of the committed fixtures use
+one, which is the same statement from the other direction: a fixture that wants a timeout
+to fire says so.
+
+#### RESOLVED 2026-09-21: nothing on Android produced one, and firing them broke the subway trace
+
+Two facts, both measured on 2026-09-20, that this section does not currently reconcile.
+
+**1. Android never ticks in production.** `ParkingDetectionRuntime.handleTick` has test
+callers only. `drivingCandidateWindow`, `movementIdleWindow` and `transitionWindow` are
+therefore dead in the shipped Android app — a drive that ends underground with no
+`vehicle_exit` stays in `DRIVING` for ever, which is the 14:26 real trace. iOS ticks at
+`now` on every motion wake, so the two platforms produce different products from the same
+engine, and no fixture can see it: fixtures replay against the engine, and the engine is
+not where the difference is.
+
+**2. Making them fire retires the subway trip.** Replaying the five committed fixtures with
+a tick before every event:
+
+| fixture | no tick | tick before each event |
+|---|---|---|
+| `bus_repeated_stops_no_storm` | `DRIVING`, 0 | `DRIVING`, 0 |
+| `red_light_no_candidate` | `DRIVING`, 0 | `DRIVING`, 0 |
+| `subway_commute_underground` | `CANDIDATE_PENDING`, 1 | **`IDLE`, 0** |
+| `tunnel_no_parking` | `DRIVING`, 0 | `DRIVING`, 0 |
+| `vehicle_then_walk` | `CANDIDATE_PENDING`, 1 | `CANDIDATE_PENDING`, 1 |
+
+The path it takes, traced event by event:
+
+```text
+t=6404  vehicle_enter   IDLE               -> DRIVING_CANDIDATE
+t=6707  timer_tick      DRIVING_CANDIDATE  -> PARKING_TRANSITION
+t=7719  timer_tick      PARKING_TRANSITION -> IDLE
+```
+
+**It is not `drivingCandidateWindow`.** That row sits below the promotion check, exactly as
+`fromDrivingCandidate`'s comment says, so the 303-second silence promotes the session
+rather than retiring it. What happens at `t=6707` is that the promotion re-reads the same
+tick in `DRIVING`, and there `movementIdleWindow` — 180s — has already elapsed. Then
+`transitionWindow` — 300s — expires at `t=7719`, 1392 seconds before the walk at `t=9111`
+that would have answered it.
+
+**The real problem is that underground there is no movement evidence to have.**
+`lastMovementEvidenceAtMillis` only advances on a location fix that clears §7's bar. In a
+tunnel, a subway or an underground car park there are no fixes at all, so the moment
+anything ticks, `movementIdleWindow` fires — not because the car stopped, but because the
+sky is gone. §3a already states the matching rule one section up, for promotion: "Movement
+evidence does not gate promotion." The idle window is the same claim in reverse and carries
+no such caveat.
+
+#### DECIDED 2026-09-20: a connected car link suppresses `movementIdleWindow`
+
+The product owner's answer, and it is better than the three this section first offered:
+**if Bluetooth is still connected to the car, the car has not been parked.** A phone attached
+to the car's audio system during a 180-second gap is at a red light, in a tunnel or on a
+ramp — it is not a car that has been left.
+
+So `DRIVING → PARKING_TRANSITION` on `movementIdleWindow` does not fire while a car link is
+connected. §3a already called the link "the strongest signal this product can get"; this is
+that sentence applied to the one row that infers a parking from *absence*.
+
+**Only that row**, and the boundary matters:
+
+| row | gated? | why |
+|---|---|---|
+| `movementIdleWindow` | **yes** | it infers a parking from silence, and the link says the car is running |
+| `drivingCandidateWindow` | no | a link with no drive is someone sitting in a parked car with the radio on — which is precisely what this row exists to retire |
+| `transitionWindow` | no | it abandons a suspected parking; keeping it open costs an open session and buys nothing |
+| session maximum duration (2h) | no | a bound on the session itself, not an inference about the car |
+| 45-minute candidate expiry | no | a candidate only exists after a disconnect |
+
+The second row is the counter-example that fixed the rule's scope: two existing tests
+(`Connecting does not skip the 90-second promotion`, `DRIVING_CANDIDATE → IDLE when
+drivingCandidateWindow passes with no promotion`) both connect a link and never drive, and
+both expect the session retired. A blanket suppression broke them, correctly.
+
+##### The latch must not outlive the link
+A connect that is never followed by a disconnect would suppress timeouts for ever and kill
+detection outright — worse than the bug it fixes. The engine is pure and cannot poll, so the
+obligation is the adapter's: **on process start, and on every wake, the adapter re-asserts
+the link's real state and feeds a disconnect if it is gone.** Android can read it
+(`BluetoothProfile` connection state for `AUDIO_VIDEO_CAR_AUDIO` / `AUDIO_VIDEO_HANDSFREE`);
+iOS already samples `AVAudioSession.currentRoute` at every wake and derives the edge, so on
+that platform the latch is a sample by construction.
+
+##### What this does not fix
+`subway_commute_underground` has no link events, so it is unchanged by the link rule: a car
+with no Bluetooth pairing, underground, is in the same position. That residual is the
+narrower question this section opened — whether an absent location fix may stand in for
+absent movement when there is no link to ask — and it is answered below.
+
+#### DECIDED 2026-09-21: an absent fix is not absent movement
+
+**No.** `movementIdleWindow` does not fire on a session that has never had a fix clearing
+§7's movement bar. The row means "movement stopped", and a drive that never produced a
+moving sample has no movement that could have stopped. Underground there are no fixes at
+all, so seeding the anchor with the session start makes "no sky" read as "not moving" — and
+that, not `drivingCandidateWindow`, is what retired the subway trip at `t=6707`.
+
+**iOS has always read it this way.** `ParkingTransitionPolicy.isMovementIdle` returns false
+for a nil `lastMovingSampleAt`, and the row is additionally gated on a *confirmed* session.
+Android's `lastMovementEvidenceAtMillis` was a non-null `Long` seeded with the session
+start, so the two engines disagreed about the same row while every fixture passed — because
+no fixture ticked. It is now `Long?`, with `null` meaning "never moved".
+
+**Android therefore ticks in production, and the ticks come from the events themselves.**
+The engine settles the timeout rows against each event's own timestamp, after folding that
+event's evidence:
+
+```text
+fold(event) -> edge transition -> settle timeouts to a fixed point
+```
+
+Folding first is the half that is easy to get wrong: a batch opened with a tick judges the
+windows *before* the fix that would have advanced them, which is the 2026-09-20 measurement
+above. Settling after the edge keeps every committed fixture green, `subway_commute_underground`
+included, and the Android suite's three tests that asserted the old reading were rewritten
+to give the session a moving fix first — they had been encoding the bug.
+
+The timeout rows now live in exactly one place on each platform (`timeoutRow` here,
+`tickOnce` on iOS); the edge table no longer carries a `timer_tick` branch.
+
+##### The scheduled half (2026-09-21)
+**Android ticks once a minute while — and only while — the location foreground service is
+up.** Per-event settling covers every drive that keeps producing events; the one that stops
+is the case this is for: underground, no `vehicle_exit`, no fixes because there is no sky, no
+walk transition delivered. Nothing ends that session, and the capture service stays up behind
+it. Even the two-hour ceiling could not fire, because it too was only reached through an
+event.
+
+**A loop inside `DrivingLocationService`, not an `AlarmManager`.** The costly state and that
+service have the same lifetime, so the tick exists exactly while the silence would cost
+something and a parked phone ticks never — no alarms to schedule, no exact-alarm permission
+to justify, nothing to leak. Doze does not apply while a foreground service runs, which is
+the other reason it belongs there. One minute against a shortest window of 180 s gives three
+chances at each boundary.
+
+iOS needs no equivalent: its adapters wake on Core Motion and `CLServiceSession`, and the
+engine ticks at `now` on each of those.
+
+##### The windows are judged before the edge too (2026-09-21)
+
+Both engines now run **ingest → windows → edge → windows** on every event, and the ordering
+is the contract rather than an implementation detail.
+
+Android's `fold` is split the way iOS's already was: `ingestEvidence` folds what the event
+*observes* — a location fix, a quality degradation — and the session lifecycle a motion or
+link edge implies is folded with the edge afterwards. That split is what lets the windows be
+judged with this event's evidence in hand but without its transition already applied.
+
+The case it fixes: a `walking_enter` arriving after `transitionWindow` has closed. iOS found
+`IDLE` and confirmed nothing; Android found `PARKING_TRANSITION` still standing and opened a
+candidate for a stop that had been abandoned minutes earlier. Held now by a test on each
+side — `A walk that arrives after the window confirms nothing` and
+`a walk that arrives after the transition window confirms nothing`.
+
+Folding the evidence **first** remains the half that is easy to get wrong, and the reason is
+above: a batch opened with a tick judges the windows before the fix that would have advanced
+them, which is the 2026-09-20 measurement that retired the subway trip.
+
+### Leaving a pending candidate behind
+
+`CANDIDATE_PENDING → DRIVING_CANDIDATE` on `vehicle_enter` exists because a candidate can
+be ignored. Without that row, driving away ten minutes after a prompt left the engine
+parked in `CANDIDATE_PENDING` for up to forty-five minutes with detection dead — and §10a
+already presupposes the row by describing what happens when a *new journey* produces a
+candidate while an old one is pending.
+
+The old candidate is **not** retired at `vehicle_enter`. It stays answerable, and is
+superseded only when the new session actually produces a candidate (§10a). `vehicle_enter`
+is a noisy signal — a bus passing, a passenger seat, the OS guessing — and retiring a
+prompt on it would delete the answer to a question the user was still holding.
+
+### The red light
+
+`DRIVING → PARKING_TRANSITION → DRIVING` is the path a long stop takes, and it is why
+`PARKING_TRANSITION` exists as its own state rather than being folded into the candidate
+(§3 of the domain contract). Entering it is silent: nothing is persisted, nothing is
+notified. Fixture #2 in §17 exists to hold this.
+
+### One candidate per travel session
+
+§12 requires it. Concretely: leaving `CANDIDATE_PENDING` by rejection or expiry returns to
+`IDLE`, and a `DRIVING` session that has already produced a candidate cannot produce a
+second one — the trip must pass through `IDLE` first. This is what stops a bus with
+repeated stops from becoming a notification storm (fixture #5).
+
+### Reason codes
+
+Codes accumulate as evidence arrives and travel with the candidate; they are never
+recomputed at the end from the final state. The §4 list in the domain contract is closed —
+an engine that needs a code that is not on it has found a contract gap, and the answer is
+to raise it, not to add a string.
+
 ## 4. Platform Signal Mapping
 
 ### iOS
@@ -93,6 +414,38 @@ OS는 위치 모니터링을 시작하는 순간 **캐시된 마지막 fix를 �
 
 정확도만으로는 잡을 수 없다. 캐시된 fix는 대체로 *좋은* fix이고, 단지 현재가 아닐 뿐이다.
 따라서 **타임스탬프 기반 freshness 가드를 반드시 둔다.**
+
+### The fix a candidate inherits must belong to the drive that just ended
+
+Measured on Android on 2026-09-20: a candidate created at 17:32 carried a fix captured at
+**12:00** — five and a half hours and an unknown number of kilometres earlier. It was the
+last fix good enough to be admitted all day, and nothing aged it out.
+
+The guards above bound **admission**. Nothing bounded **use**. `lastReliableLocation` is a
+running value on the state, and `openCandidateOrEndSession` attached whatever it held.
+
+A candidate with a wrong coordinate is worse than a candidate with none. The confirmation
+screen draws that coordinate on a map and prints its accuracy beside it (docs/10 §7a), so a
+stale fix is not a blank — it is a confident lie, and `위치 없음` is a state the screen
+already renders properly.
+
+**Two conditions, both required, or the candidate is created with no location:**
+
+| condition | what it catches |
+|---|---|
+| `capturedAt >= session.vehicleActivityStartedAt` | a fix from a *previous* trip, or from the origin before this one began. The origin is not the destination |
+| `now - capturedAt <= staleLocationWindow` | a long drive whose only good fix came near the start. Being on the motorway at minute two says nothing about where the car stopped at minute ninety |
+
+`staleLocationWindow` = **600s**, **unvalidated**, in the same spirit as §3a's other
+constants. The budget it has to cover is: the descent into a garage where the sky is lost
+(0–5 min), the stop and the walk that confirms it (1–3 min), and the platform's own
+transition delivery delay — 17s on the Android device that produced this trace. Tune it from
+field data; the cost of it being too tight is `위치 없음` on a parking that had a usable fix,
+and the cost of it being too loose is the 17:32 candidate above.
+
+A candidate that loses its fix this way keeps everything else. It is still a candidate, it
+still notifies, and it still becomes a record — one saved without a location, which FR-001
+already calls an ordinary outcome.
 
 - 기본값: 수신 시점 기준 **300초** 초과 시 live evidence에서 제외
 - 시계 오차 허용: 미래 방향 5초까지
@@ -266,6 +619,58 @@ Negative:
 
 These are defaults for field tuning, not guaranteed truth.
 
+### 8a. Measured 2026-09-21: the underground parking that scored 55
+
+The first real candidate this project produced scored **low** and therefore notified nobody
+(§9). The arithmetic, from a 100-minute drive that ended underground:
+
+```text
+recent vehicle session       +25
+vehicle exit                 +15
+stationary after driving     +10    ← walking would have been +30
+route comfortably over min    +5
+                            ────
+                              55    (medium starts at 60)
+```
+
+Two of §8's positives are structurally unavailable underground, and both of them are ones
+above-ground parking collects for free:
+
+- **`walking shortly after vehicle` (+30) is usually `stationary after driving` (+10).** You
+  park, get out, and stand at the lift. The Activity Transition API reports STILL before it
+  reports WALKING, and often instead of it.
+- **`location movement stopped` (+10) cannot fire at all.** It needs a fix, and there are no
+  fixes under a slab.
+
+So the app's main setting carries a 30-point structural penalty against the weights.
+
+**Raising `stationary after driving` is the obvious fix and it is the wrong one.** A long bus
+ride that ends with the rider standing at a stop produces *exactly* the same evidence — the
+engine cannot tell them apart from motion, which is what §12 already says. Every point added
+there buys one parking notification and one bus notification.
+
+The one signal that separates them is the car link, and it is already weighted +20. A
+Bluetooth disconnect also adds `vehicle exit` through the same fold, so the same drive with a
+paired car scores:
+
+```text
+recent vehicle session       +25
+vehicle exit                 +15
+car link disconnected        +20
+                            ────
+                              60    → medium → notifies
+```
+
+A bus has no car link and stays below the bar. That is the discrimination §8 was built to
+make, and it had never once fired: `BLUETOOTH_CONNECT` was declared in the manifest and
+requested by nothing until 2026-09-21, so the +20 was unreachable. No link event appears in
+any trace recorded before that date, which is the same fact from the other side.
+
+**No weight is being changed on the strength of one candidate.** The next drive with the
+permission actually granted is the measurement that decides whether anything here needs
+tuning, and the number to watch is how often a real parking still lands under 60 with a car
+link present.
+
 ## 9. Confidence Buckets
 - high: >=80
 - medium: 60...79
@@ -283,6 +688,76 @@ After expiry:
 - do not silently create parking
 - clear/supersede on new trip according to product flow
 
+## 10a. Candidate Notification and Confirmation (v1 contract)
+
+Sections 9, 10 and 12 fix when a candidate exists and how long it lives. These fix what
+the user sees, because that is the part two platforms would otherwise each invent.
+
+### Identity and deduplication
+A candidate carries a `candidateId`. The notification is posted with that id as its own
+identifier, so re-posting the same candidate **replaces** the notification rather than
+stacking a second one. Section 12 already allows one candidate per travel session; this
+is what makes that visible — a session can never show two notifications.
+
+If a new travel session produces a candidate while an older one is still pending, the
+older candidate expires immediately and its notification is withdrawn. A stale prompt
+about a previous trip is worse than no prompt.
+
+### Posting
+Posted on entry to `CANDIDATE_PENDING`, never earlier: `PARKING_TRANSITION` is the state
+that is still deciding, and a notification there would fire on every red light.
+
+`low` confidence posts nothing (§9). The candidate is still recorded so the app can show
+it when opened, and so the trace keeps the evidence.
+
+Notification permission is not required for correctness. Denied, the candidate is saved
+and surfaces in the app on next launch; nothing is lost and nothing is retried.
+
+### What the notification says
+Copy is fixed in `docs/02_PRODUCT_SCOPE_AND_FLOWS.md` §5 and must not be reworded:
+
+```text
+주차한 것 같아요
+마지막으로 확인된 위치와 시간을 저장해뒀어요.
+```
+
+It never states a floor, an address or a coordinate — the engine does not know the floor,
+and §9 of docs/09 keeps location out of notifications.
+
+### What a tap does
+Opens the confirmation screen for that `candidateId`. If the candidate has since expired
+or been handled, the screen opens on the record it became, or on home when there is
+nothing left to show. A tap never silently creates parking (§10).
+
+### Confirmation screen
+Shape and copy are fixed in `docs/10_DESIGN_UX_SPEC.md` §7a.
+
+Confirming writes a parking record with `source = detected`, the candidate's
+`lastReliableLocation`, and the chosen floor. Rejecting discards the candidate and is
+recorded as evidence for tuning — it is the strongest signal the detector has.
+
+### Expiry
+At 45 minutes the candidate expires, its notification is withdrawn, and no record is
+created. A user who opens an expired notification lands on home; the app does not
+apologise for it in a dialog.
+
+### History
+
+Resolving a candidate — confirmed, rejected or expired — appends it to a local history of
+the last 30, which is what the bell opens (docs/10 §7b). The live candidate slot still
+holds at most one; history is a separate append-only list, because the two answer
+different questions and giving the slot a second job is how it would end up holding two
+live candidates by accident.
+
+An entry keeps the raised-at time, the outcome, and for a confirmed one the record id.
+Not the location: §10a keeps coordinates out of this surface and history is the same
+surface a day later.
+
+### Analytics
+`parking_candidate_created`, `parking_candidate_confirmed`, `parking_candidate_rejected`
+(docs/17 §2), each carrying `confidenceBucket` and the §4 reason codes and nothing else.
+Rejection is the event that pays for the whole feature, so it is never dropped.
+
 ## 11. Departure
 While PARKED:
 - new sustained vehicle evidence
@@ -293,6 +768,71 @@ Initial:
 - movement >=500m
 
 If uncertain -> suggestion, not destructive silent end.
+
+### 11a. What a confirmed departure actually does (2026-09-21)
+
+Android's engine has had `PARKED → DEPARTURE_CANDIDATE → DRIVING` for some time. What it
+did not have was any **effect**, so the machine noticed the departure and the user's
+진행 중 주차 stayed open for ever — they still had to press 주차 종료 by hand. The last mile:
+
+`DEPARTURE_CANDIDATE → DRIVING` now emits `EndActiveParking(endedAtMillis)`, and the runtime
+closes the open record through the same `EndParkingUseCase` the manual button uses.
+
+**The end time is when the car pulled away, not when the engine was sure.** That transition
+is guarded by `DrivingConfirmationGuard` in full — §7's bar for a meaningful driving session
+— which is minutes of driving after the fact. The effect therefore carries
+`DEPARTURE_CANDIDATE`'s own entry time, the moment §11's two bars were first cleared.
+Stamping "now" would record the parking as ending somewhere down the road.
+
+**"If uncertain → suggestion" is honoured by the state below it.** Reaching
+`DEPARTURE_CANDIDATE` and never confirming ends nothing and shows nothing; the record stays
+open and the user is not told anything happened. Only the strict guard closes a record,
+because leaving one open is recoverable and ending one the user is still sitting in is not.
+
+`parking_auto_end` (docs/17) is reported only when a record was actually closed. A departure
+detected after the user already ended the parking by hand is not an automatic end.
+
+**iOS landed the same day (2026-09-21)** and the two platforms now agree. iOS's shape
+differs only where the engines differ: the session is opened by `vehicle_enter` while
+`PARKED`, the bars are checked in `tickOnce`, and the record is closed by the coordinator
+calling `ParkingModel.endActiveParking(at:)`.
+
+One thing the iOS build had to fix on the way, and it is worth knowing about:
+`DrivingEvidence.isConfirmed` is a **latch**, set by `promoteToDriving` on §3a's 90-second
+bar. It is not §7's guard, and departure needs §7's guard. Reading the latch meant a real
+departure never confirmed — caught by the test written to prove it did.
+`meetsDrivingConfirmation(now:)` now evaluates §7 directly, and is what the departure row
+asks. Android never had this hazard because its `DrivingConfirmationGuard.evaluate` was
+already a function of the evidence rather than a flag on it.
+
+### 11b. The car link opens a departure (2026-09-21)
+
+**`PARKED` + `car_link_connected` → `DEPARTURE_CANDIDATE`.** §3a already calls the link the
+strongest signal this product can get, and the departure side was ignoring it: reconnecting
+to the car's Bluetooth or to Android Auto / CarPlay did nothing at all while parked, so a
+drive away still had to be re-derived from 90 s of motion and 500 m of GPS — the two bars
+§11 was built on before there was a link to ask.
+
+It is the mirror of the row §3a already has on the other side: a disconnect while `DRIVING`
+skips `PARKING_TRANSITION` and opens the candidate outright, because the phone leaving the
+car is the parking. A connect while `PARKED` is the same statement in reverse.
+
+**It opens the candidate; it does not end the parking.** The distinction is the whole of
+§11a: `DEPARTURE_CANDIDATE` shows nothing and ends nothing, and only `DrivingConfirmationGuard`
+— §7's guard in full — closes the record. Ending outright on the connect would delete the
+one thing the app is for whenever someone sits in a parked car with the radio on, which is
+exactly the false positive §3a's gating table already had to be narrowed for.
+
+**The end time is still right.** The record is closed at `DEPARTURE_CANDIDATE`'s entry time
+(§11a), which is now the moment the phone reconnected to the car — a better answer than the
+old one, which was whenever 90 s of vehicle motion and 500 m happened to be reached.
+
+**Sitting in the car and not driving costs nothing.** Vehicle evidence goes stale
+`recentVehicleWindow` after the connect, the lapse row returns the machine to `PARKED`, and
+the record was never touched.
+
+No fixture covers this: §3a forbids a fixture that depends on a link event being present, so
+it is held by per-platform engine tests on both sides.
 
 ## 12. Taxi/Bus Mitigation
 - short trip guards

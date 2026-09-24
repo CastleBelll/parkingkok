@@ -89,8 +89,8 @@ jobs:
           # onto SwiftPM dependency targets (Firebase), which Xcode builds with
           # -suppress-warnings, producing a hard "conflicting options" driver error.
           xcodebuild build-for-testing \
-            -project ParkingKok.xcodeproj \
-            -scheme ParkingKok \
+            -project ParkingPin.xcodeproj \
+            -scheme ParkingPin \
             -configuration DEV \
             -destination "platform=iOS Simulator,OS=${IOS_SIMULATOR_OS},name=${IOS_SIMULATOR_NAME}" \
             -derivedDataPath "${RUNNER_TEMP}/DerivedData"
@@ -100,8 +100,8 @@ jobs:
         run: |
           set -euo pipefail
           xcodebuild test-without-building \
-            -project ParkingKok.xcodeproj \
-            -scheme ParkingKok \
+            -project ParkingPin.xcodeproj \
+            -scheme ParkingPin \
             -configuration DEV \
             -destination "platform=iOS Simulator,OS=${IOS_SIMULATOR_OS},name=${IOS_SIMULATOR_NAME}" \
             -derivedDataPath "${RUNNER_TEMP}/DerivedData"

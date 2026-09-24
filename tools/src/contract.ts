@@ -60,11 +60,13 @@ export const EVENT_TYPES = [
   'stationary_exit',
   'location',
   'location_quality_degraded',
-  'car_projection_connected',
-  'car_projection_disconnected',
+  'projection_connected',
+  'projection_disconnected',
+  'bluetooth_car_connected',
+  'bluetooth_car_disconnected',
   'timer_tick',
-  'user_confirmed_parking',
-  'user_rejected_parking',
+  'user_confirmed',
+  'user_rejected',
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

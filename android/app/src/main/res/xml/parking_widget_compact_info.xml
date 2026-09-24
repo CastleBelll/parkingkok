@@ -14,10 +14,22 @@
   `previewImage` beside it: that attribute could only name the launcher icon, and a logo
   is exactly the decoration the floor must not compete with. Below API 31, where
   `previewLayout` does not exist, the platform falls back to the app icon by itself.
+
+  ## `keyguard` (docs/06 §7b)
+
+  This is the size the lock screen can take, so this is the one that offers itself there.
+  A host that has no lock-screen slot ignores the category outright, so declaring it costs
+  a shipped build nothing.
+
+  `initialKeyguardLayout` is required beside it: a keyguard host inflates that rather than
+  `initialLayout`, and a provider without one is skipped by some hosts before the user ever
+  sees it in a picker. It is the same Glance loading layout — the real content arrives on
+  the first update, exactly as on the home screen.
 -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/widget_description"
     android:initialLayout="@layout/glance_default_loading_layout"
+    android:initialKeyguardLayout="@layout/glance_default_loading_layout"
     android:minWidth="110dp"
     android:minHeight="110dp"
     android:minResizeWidth="110dp"
@@ -27,4 +39,4 @@
     android:targetCellWidth="2"
     android:targetCellHeight="2"
     android:updatePeriodMillis="1800000"
-    android:widgetCategory="home_screen" />
+    android:widgetCategory="home_screen|keyguard" />

@@ -19,11 +19,11 @@ if (file("google-services.json").exists()) {
 }
 
 android {
-    namespace = "com.parkingkok.app"
+    namespace = "com.sjstudioz.parkingpin"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.parkingkok.app"
+        applicationId = "com.sjstudioz.parkingpin"
         minSdk = 29
         // targetSdk 36 is the Google Play requirement from 2026-08-31. Do not lower.
         targetSdk = 36
@@ -73,6 +73,7 @@ dependencies {
     androidTestImplementation(composeBom)
 
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.core.splashscreen)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
@@ -91,12 +92,19 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.play.services.location)
+    // docs/02 §6a: reading the pillar runs on device and must work with no network, so
+    // this is the bundled Korean model rather than the Play-services one that downloads
+    // on first use. The APK cost is the price of the feature working underground.
+    implementation(libs.mlkit.text.recognition.korean)
 
     // docs/07 §2: Analytics and Auth only. No Storage — the contract forbids it — and no
     // Firestore/Functions/App Check/Remote Config until the feature that needs them lands.
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.analytics)
     implementation(libs.firebase.auth)
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play.services)
+    implementation(libs.google.id)
     // `Task.await()`, so the anonymous sign-in is an ordinary suspend call that a caller
     // can cancel, instead of a listener the app has to remember to detach.
     implementation(libs.kotlinx.coroutines.play.services)

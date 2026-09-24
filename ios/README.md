@@ -1,6 +1,6 @@
 # iOS — 주차핀
 
-`ParkingKok.xcodeproj` is **generated**, not committed. `ios/project.yml` is the
+`ParkingPin.xcodeproj` is **generated**, not committed. `ios/project.yml` is the
 source of truth; the `.pbxproj` is a build artifact (see ADR note in the PR for T-1.3).
 
 ## Toolchain
@@ -22,11 +22,11 @@ silently drops the platform/product setting presets.
 ```sh
 cd ios && xcodegen generate
 
-xcodebuild -project ParkingKok.xcodeproj -scheme ParkingKok \
+xcodebuild -project ParkingPin.xcodeproj -scheme ParkingPin \
   -configuration DEV \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build
 
-xcodebuild -project ParkingKok.xcodeproj -scheme ParkingKok \
+xcodebuild -project ParkingPin.xcodeproj -scheme ParkingPin \
   -configuration DEV \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
 ```
@@ -37,11 +37,11 @@ xcodebuild -project ParkingKok.xcodeproj -scheme ParkingKok \
 committed (docs/18_CI_CD_AUTOMATED_RELEASE.md keeps it as `APPLE_TEAM_ID`). Pass it in:
 
 ```sh
-xcodebuild -project ParkingKok.xcodeproj -scheme ParkingKok \
+xcodebuild -project ParkingPin.xcodeproj -scheme ParkingPin \
   -configuration DEV -destination 'id=<device-udid>' \
   PK_DEVELOPMENT_TEAM=<team-id> -allowProvisioningUpdates build
 
-xcrun devicectl device install app --device <device-udid> <path>/ParkingKok.app
+xcrun devicectl device install app --device <device-udid> <path>/ParkingPin.app
 xcrun devicectl device process launch --device <device-udid> com.parkingkok.app.dev
 ```
 
@@ -268,6 +268,47 @@ xcrun devicectl device capture screenshot --device <device-udid> --destination s
 Capture a few seconds after launch — a screenshot taken during the launch animation
 catches the scroll view mid-bounce and looks like a safe-area bug that is not there.
 
+## M0 field check — candidate notification and confirmation
+
+A candidate needs a confirmed drive that ended with a walk, which cannot be produced on
+demand in a simulator or on a desk. The injection hook builds the evidence such a drive
+would have produced and hands it to the **real** creation path, so §6's rule, §8's weights,
+§9's buckets and the `low`-posts-nothing gate all still apply — nothing here is bypassed.
+It is inside `#if PK_DEV`, so STAGING and PROD do not contain it.
+
+```sh
+SIMCTL_CHILD_PK_INJECT_CANDIDATE=medium \
+SIMCTL_CHILD_PK_OPEN_CANDIDATE=1 \
+  xcrun simctl launch <udid> com.parkingkok.app.dev
+```
+
+| Variable | Effect |
+| --- | --- |
+| `PK_INJECT_CANDIDATE=medium` | Confirmed drive + walk → 75 → `medium`, so the notification is posted. |
+| `PK_INJECT_CANDIDATE=low` | Confirmed drive + stationary → 55 → `low`. The candidate is written and appears on home; **nothing is posted** (docs/05 §9). |
+| `PK_OPEN_CANDIDATE=1` | Opens the confirmation screen the notification's body tap would open. It routes through the same value a real tap sets, and exists because a headless simulator has no way to deliver one. |
+
+The same two buttons sit at the top of `감지 진단` → 주차 후보, for a device where launch
+environment variables are less convenient than a tap.
+
+Launching with `PK_INJECT_CANDIDATE` requests **provisional** notification authorization
+rather than `.alert`, because a machine with no Simulator window has nobody to answer the
+permission alert. Provisional notifications are delivered quietly, so there is no banner to
+photograph — what proves the post is `usernotificationsd`:
+
+```sh
+xcrun simctl spawn <udid> log stream --style compact \
+  --predicate 'subsystem CONTAINS "parkingkok" OR (process == "usernotificationsd" AND eventMessage CONTAINS[c] "parkingkok")'
+```
+
+`Forwarding addRequest` is the notification reaching the system. A `low` run must show
+`candidate created, confidence=low` and **no** `addRequest`; a second trip must show
+`removePendingNotificationRequests` and `removeDeliveredNotifications` for the candidate it
+superseded.
+
+The banner itself, and the tap that opens the confirmation screen, still need a device or a
+Simulator window — neither is reachable from a headless host.
+
 ## M2 field check — map and photo
 
 Neither half of M2 is fully observable in the simulator: the simulator has no camera, so
@@ -275,11 +316,11 @@ Neither half of M2 is fully observable in the simulator: the simulator has no ca
 GPU. Both need the device.
 
 ```sh
-xcodebuild -project ParkingKok.xcodeproj -scheme ParkingKok \
+xcodebuild -project ParkingPin.xcodeproj -scheme ParkingPin \
   -configuration DEV -destination 'id=<device-udid>' \
   PK_DEVELOPMENT_TEAM=<team-id> -allowProvisioningUpdates build
 
-xcrun devicectl device install app --device <device-udid> <path>/ParkingKok.app
+xcrun devicectl device install app --device <device-udid> <path>/ParkingPin.app
 xcrun devicectl device process launch --device <device-udid> --terminate-existing \
   --environment-variables '{"PK_SEED_SAMPLE_PARKING":"1","PK_INITIAL_ROUTE":"detail"}' \
   com.parkingkok.app.dev

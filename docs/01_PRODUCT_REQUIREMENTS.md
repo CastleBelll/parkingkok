@@ -38,12 +38,44 @@
 - parking lot map partnerships
 - vehicle manufacturer API
 - BLE OBD hardware
-- family live car sharing
+- family live car sharing — reconsidered and re-confirmed 2026-09-20, see §5a
 - Apple Watch/Wear OS
 - exact parking-stall GPS
 - community
 - web dashboard
 - cloud parking-history sync
+
+### 5a. Shared parking, reconsidered 2026-09-20
+
+Raised as "가족이 차 한 대를 같이 쓴다" — one car, several people, everyone seeing the same
+parking. A full plan was written and then withdrawn the same day. Recorded so it is not
+re-argued from nothing.
+
+It is a small UI change: sharing adds no screen, because the shared thing is the Home screen
+itself. Everything behind it is large:
+
+- **It ends the local-only design.** A record two phones can both see means the parking
+  coordinate leaves the device, which CLAUDE.md's Hard Constraints forbid outright and which
+  this list already calls a non-goal. The narrowest version that keeps the promise is
+  end-to-end encryption — a per-car key, never stored server-side, wrapped to each member —
+  and that brings key exchange, rotation on member removal, and keystore work on both
+  platforms.
+- **위치정보법.** Sharing makes this a service handling *other people's* location, which the
+  local-only design avoided entirely. Encryption does not obviously exempt a provider,
+  because the obligation attaches to providing the service. This alone can decide the
+  feature and needs a qualified answer, not an engineering one.
+- **It breaks one-candidate-per-parking.** Detection runs on every member's phone, so a
+  family driving together is three phones reaching `CANDIDATE_PENDING` for one car. Who was
+  driving is not knowable from motion — the passenger's phone sees the same trip — so it
+  needs a server-side arbiter, which needs the accounts that do not exist yet (M5).
+
+None of that is impossible. It is simply a different product's worth of work, stacked on a
+detector that as of the same day had never produced a candidate on a real drive.
+
+**If it comes back**, the cheap thing it is often mistaken for is worth separating first:
+"주차 위치를 가족에게 보내기" — a share sheet, one message, no account, no sync, no stored
+location. It answers *tell them where I parked* rather than *we all see where the car is*,
+and it needs none of the above.
 
 ## 6. Functional Requirements
 
