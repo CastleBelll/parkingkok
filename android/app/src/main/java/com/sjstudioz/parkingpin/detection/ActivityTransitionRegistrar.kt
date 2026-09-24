@@ -10,10 +10,6 @@ import com.google.android.gms.location.ActivityRecognition
 import com.google.android.gms.location.ActivityTransition
 import com.google.android.gms.location.ActivityTransitionRequest
 import com.sjstudioz.parkingpin.domain.registration.TransitionRegistrationSpec
-import com.google.android.gms.tasks.Task
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 
 /**
  * Owns the Play services Activity Transition subscription.
@@ -33,7 +29,7 @@ class ActivityTransitionRegistrar(private val context: Context) : TransitionRegi
             PackageManager.PERMISSION_GRANTED
 
     override suspend fun register(): String? {
-        if (!hasPermission()) return "ACTIVITY_RECOGNITION permission not granted"
+        if (!hasPermission()) return PERMISSION_MISSING_REASON
         val request = ActivityTransitionRequest(
             TransitionRegistrationSpec.subscriptions.map { subscription ->
                 ActivityTransition.Builder()
@@ -42,17 +38,27 @@ class ActivityTransitionRegistrar(private val context: Context) : TransitionRegi
                     .build()
             },
         )
-        return failureReasonOf {
+        return try {
             ActivityRecognition.getClient(context)
                 .requestActivityTransitionUpdates(request, pendingIntent())
+                .failureReason()
+        } catch (revoked: SecurityException) {
+            // Checked above, but it can be revoked in Settings between the check and the call.
+            PERMISSION_REVOKED_REASON
         }
     }
 
-    override suspend fun unregister(): String? =
-        failureReasonOf {
+    override suspend fun unregister(): String? {
+        // Removal is gated by the same permission; without it the OS refuses the call anyway.
+        if (!hasPermission()) return PERMISSION_MISSING_REASON
+        return try {
             ActivityRecognition.getClient(context)
                 .removeActivityTransitionUpdates(pendingIntent())
+                .failureReason()
+        } catch (revoked: SecurityException) {
+            PERMISSION_REVOKED_REASON
         }
+    }
 
     private fun pendingIntent(): PendingIntent {
         val intent = Intent(context, ActivityTransitionReceiver::class.java)
@@ -65,26 +71,9 @@ class ActivityTransitionRegistrar(private val context: Context) : TransitionRegi
         )
     }
 
-    /**
-     * Runs a Play services Task and maps a rejection to a short, coordinate-free reason
-     * string. Coroutine cancellation is never swallowed.
-     */
-    private suspend fun failureReasonOf(start: () -> Task<Void>): String? =
-        try {
-            suspendCancellableCoroutine { continuation ->
-                start()
-                    .addOnSuccessListener { continuation.resume(Unit) }
-                    .addOnFailureListener { error -> continuation.resumeWithException(error) }
-            }
-            null
-        } catch (error: com.google.android.gms.common.api.ApiException) {
-            "ApiException statusCode=${error.statusCode}"
-        } catch (error: SecurityException) {
-            "SecurityException"
-        }
-
     private companion object {
         /** Fixed so the PendingIntent stays equal across process restarts and app updates. */
         const val REQUEST_CODE = 0xA1
+        const val PERMISSION_MISSING_REASON = "ACTIVITY_RECOGNITION permission not granted"
     }
 }

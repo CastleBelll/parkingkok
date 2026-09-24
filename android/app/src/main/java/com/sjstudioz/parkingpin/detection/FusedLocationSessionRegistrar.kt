@@ -7,16 +7,11 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.content.ContextCompat
-import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
-import com.google.android.gms.tasks.Task
 import com.sjstudioz.parkingpin.domain.location.LocationAccuracyTier
 import com.sjstudioz.parkingpin.domain.location.LocationSessionConfig
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 
 /**
  * Owns the bounded Fused Location subscription
@@ -59,10 +54,16 @@ class FusedLocationSessionRegistrar(private val context: Context) : LocationSess
         // `DrivingLocationService` for the measurement that put it here — a PendingIntent
         // survives process death but is still throttled to nothing without this.
         DrivingLocationService.start(context)
-        return failureReasonOf {
+        val failure = try {
             LocationServices.getFusedLocationProviderClient(context)
                 .requestLocationUpdates(config.toLocationRequest(), pendingIntent())
-        }.also { failure -> if (failure != null) DrivingLocationService.stop(context) }
+                .failureReason()
+        } catch (revoked: SecurityException) {
+            // Checked above, but it can be revoked in Settings between the check and the call.
+            PERMISSION_REVOKED_REASON
+        }
+        if (failure != null) DrivingLocationService.stop(context)
+        return failure
     }
 
     override suspend fun remove(): String? {
@@ -70,9 +71,12 @@ class FusedLocationSessionRegistrar(private val context: Context) : LocationSess
         // service standing: its whole justification is a live capture, and CLAUDE.md's rule
         // is about a service that outlives one.
         DrivingLocationService.stop(context)
-        return failureReasonOf {
+        return try {
             LocationServices.getFusedLocationProviderClient(context)
                 .removeLocationUpdates(pendingIntent())
+                .failureReason()
+        } catch (revoked: SecurityException) {
+            PERMISSION_REVOKED_REASON
         }
     }
 
@@ -89,24 +93,6 @@ class FusedLocationSessionRegistrar(private val context: Context) : LocationSess
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
         )
     }
-
-    /**
-     * Runs a Play services Task and maps a rejection to a short, coordinate-free reason
-     * string. Coroutine cancellation is never swallowed.
-     */
-    private suspend fun failureReasonOf(start: () -> Task<Void>): String? =
-        try {
-            suspendCancellableCoroutine { continuation ->
-                start()
-                    .addOnSuccessListener { continuation.resume(Unit) }
-                    .addOnFailureListener { error -> continuation.resumeWithException(error) }
-            }
-            null
-        } catch (error: ApiException) {
-            "ApiException statusCode=${error.statusCode}"
-        } catch (error: SecurityException) {
-            "SecurityException"
-        }
 
     private companion object {
         /** Fixed so the PendingIntent stays equal across process restarts and app updates. */
