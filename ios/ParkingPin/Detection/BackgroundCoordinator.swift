@@ -441,9 +441,8 @@ actor BackgroundCoordinator {
     #if PK_DEV
         /// Opens a bounded session without waiting for Core Motion.
         ///
-        /// The Core Location half of this milestone — `CLServiceSession`,
-        /// `CLBackgroundActivitySession`, `liveUpdates` delivery, the `UIBackgroundModes`
-        /// entitlement — cannot be exercised in the simulator and otherwise cannot be
+        /// The Core Location half of this milestone — background standard updates and the
+        /// `UIBackgroundModes` entitlement — cannot be exercised in the simulator and otherwise cannot be
         /// exercised at all until someone drives a car. This lets the field-test checklist
         /// prove the plumbing works first, so a failed drive means a detection problem rather
         /// than a wiring problem.

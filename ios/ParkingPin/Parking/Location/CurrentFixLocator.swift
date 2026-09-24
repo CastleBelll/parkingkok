@@ -3,7 +3,7 @@ import Foundation
 
 /// One fix, now, for the save the user just asked for.
 ///
-/// Separate from the detection stack's `CLServiceSession` on purpose: that session is a
+/// Separate from the detection stack's drive capture on purpose: that capture is a
 /// *drive*, bounded and battery-gated (docs/05 §19), and a manual save is a single moment.
 /// Starting the drive session to answer it would be the 24-hour-tracking shape docs/00
 /// forbids, and stopping it again immediately would be worse.

@@ -45,21 +45,20 @@ On relaunch:
 
 ### DRIVING
 
-Use modern async sequence:
+`CLLocationManager.startUpdatingLocation()` with `allowsBackgroundLocationUpdates`,
+`.automotiveNavigation` and best-for-navigation accuracy, automatic pausing off
+(`LiveDrivingLocationCapture`).
 
-`CLLocationUpdate.liveUpdates(.automotiveNavigation)`
-
-During required background live update period:
-- `CLServiceSession` with required authorization
-- `CLBackgroundActivitySession`
-
-Sessions must be recreated on relevant background relaunch per Apple guidance.
+**Not `liveUpdates` (changed 2026-09-24, §3a).** A drive is detected in the background, so
+the capture has to *start* there, and a `CLBackgroundActivitySession` created in the
+background grants nothing. Standard updates with Always authorization and the `location`
+background mode may be started from the background.
 
 ### Stop aggressive tracking
 
 As soon as parking candidate reaches terminal state or driving times out:
-- cancel liveUpdates task
-- invalidate background session
+- stop standard updates
+- turn `allowsBackgroundLocationUpdates` off
 - return to significant-change monitoring
 
 ## 3a. OPEN: the bounded capture ran 42 minutes late on a real drive (2026-09-20)
@@ -103,7 +102,7 @@ under 주행 세션:
 |---|---|---|
 | `captureRequestedAt` | 캡처 요청 | the engine asked. Stamped in `beginCapture` before anything can fail |
 | `captureStartedAt` | 캡처 시작 | the adapter ran. A request with no start means `start()` never happened |
-| `captureHoldsSessions` | 세션 보유 | `CLServiceSession` **and** `CLBackgroundActivitySession` are held right now. False while capturing means they were released underneath us |
+| `captureHoldsSessions` | 세션 보유 | `CLServiceSession` **and** `CLBackgroundActivitySession` are held right now. False while capturing means they were released underneath us. *Schema 11: now `captureIsUpdating` (업데이트 중), since the capture holds neither* |
 | `captureUpdateCount` | 업데이트 수신 | iterations of `CLLocationUpdate.Updates`, counted before the fix is examined. Zero means Core Location never spoke at all — a different bug from fixes that arrive and are rejected |
 
 `startedAt` and `updateCount` deliberately survive `stop()`. The question the field data
@@ -130,6 +129,14 @@ motion wake, in the background. If that is the cause, every background-started c
 is a foreground-only stream, which is exactly the field shape above. Schema 10 adds
 `captureStartedInForeground` (화면: 포그라운드 시작) so the next drive confirms or kills
 this, instead of it being acted on as a guess.
+
+**2026-09-24, acted on.** The user confirmed they never open the app while driving, so
+every field capture had started in the background, and the dense runs began exactly when
+the app was opened after parking. That was enough to act on without another drive.
+`LiveDrivingLocationCapture` now uses `CLLocationManager` standard updates, which Always
+authorization and the `location` background mode allow to start from the background. The
+next drive is the check: `captureStartedInForeground: false` with `captureUpdateCount`
+climbing during the drive and fixes at GPS accuracy.
 
 Android failed the same gate for a different reason and it is fixed there — see
 docs/04_ANDROID_IMPLEMENTATION.md §4a/§4b. The Android answer (a drive-scoped foreground

@@ -28,29 +28,28 @@ protocol BoundedLocationCapturing: Sendable {
 /// The report said only `isCapturingDrivingLocation: false` *after the fact*, which is
 /// consistent with both.
 ///
-/// These separate them. `startedAt` says whether `start()` ran and when. `holdsSessions`
-/// says whether the two objects that keep background delivery alive are still held right
-/// now. `updateCount` says whether the async sequence ever yielded — including yields that
-/// carried no usable fix, which the `drivingFixCount` in the report does not count.
+/// These separate them. `startedAt` says whether `start()` ran and when. `isUpdating`
+/// says whether location updates are running right now. `updateCount` says whether Core
+/// Location ever delivered — including deliveries that carried no usable fix, which the
+/// `drivingFixCount` in the report does not count.
 struct BoundedCaptureHealth: Sendable, Equatable {
     /// When `start()` last ran, or nil if it never has in this process.
     var startedAt: Date?
-    /// Whether `CLServiceSession` **and** `CLBackgroundActivitySession` are both held.
-    /// False while capturing is the signature of a session that was released underneath us.
-    var holdsSessions: Bool
-    /// Iterations of `CLLocationUpdate.Updates`, whatever they contained.
+    /// Whether standard location updates are running right now.
+    var isUpdating: Bool
+    /// Locations Core Location delivered, whatever they contained.
     var updateCount: Int
     /// Whether the app was active when `start()` last ran; nil if it never has.
     ///
-    /// A `CLBackgroundActivitySession` begun in the background grants nothing — Apple DTS:
-    /// "A new CLBackgroundActivitySession can only be started from Foreground." A capture
-    /// started from a significant-change or motion wake is therefore the prime suspect for
-    /// §3a's late capture, and this is the field that says whether one did.
+    /// Almost every capture starts in the background — the engine decides a drive began
+    /// during a significant-change or motion wake. That is why the capture is built on
+    /// `CLLocationManager` (see `LiveDrivingLocationCapture`), and this field is how a field
+    /// report shows the background start is working.
     var startedInForeground: Bool?
 
     static let none = BoundedCaptureHealth(
         startedAt: nil,
-        holdsSessions: false,
+        isUpdating: false,
         updateCount: 0,
         startedInForeground: nil
     )
@@ -66,37 +65,39 @@ protocol BoundedLocationCaptureDelegate: AnyObject {
     func captureWatchdogDidTick()
 }
 
-/// `CLLocationUpdate.liveUpdates(.automotiveNavigation)` plus the two session objects
-/// background delivery needs (docs/04_IOS_IMPLEMENTATION.md §3 DRIVING).
+/// Standard location updates from `CLLocationManager`, for one bounded drive
+/// (docs/04_IOS_IMPLEMENTATION.md §3 DRIVING, §3a).
 ///
-/// Three resources are taken together and must be released together:
+/// **Why not `CLLocationUpdate.liveUpdates`.** Until 2026-09-24 this held a
+/// `CLServiceSession` and a `CLBackgroundActivitySession` around `liveUpdates`. Apple DTS:
+/// "A new CLBackgroundActivitySession can only be started from Foreground. From background
+/// only an existing running CLBAS session can be continued." The engine decides a drive
+/// began during a significant-change or motion wake — in the background, nearly always —
+/// so the session granted nothing and the stream ran only once the user opened the app,
+/// usually after parking. Every field drive showed that shape (§3a). With Always
+/// authorization and the `location` background mode, `startUpdatingLocation` may be started
+/// from the background and keeps the process running while it delivers, which is what a
+/// drive that began while the phone was in a pocket needs.
 ///
-/// - the `Task` iterating `CLLocationUpdate.Updates`
-/// - `CLServiceSession`, which declares the authorization the updates require
-/// - `CLBackgroundActivitySession`, which keeps delivery alive — and the status
-///   indicator visible — once the app is backgrounded
-///
-/// Leaking any one of them means high-accuracy GPS keeps running after the drive ended,
-/// which is exactly what docs/00_CORE_RULES.md Background forbids and what the §19
-/// battery gate measures. `stop()` therefore tears down all three unconditionally, and
-/// `start()` refuses to run twice rather than orphaning the first set.
+/// Leaking the updates means high-accuracy GPS keeps running after the drive ended, which
+/// is exactly what docs/00_CORE_RULES.md Background forbids and what the §19 battery gate
+/// measures. `stop()` therefore tears everything down unconditionally, and `start()`
+/// refuses to run twice.
 ///
 /// There is no `deinit` cleanup: this type is owned for the process lifetime by
 /// `DetectionRuntime`, so a `deinit` would be dead code and could not hop to the main
-/// actor anyway. The session is bounded by `stop()` and by
-/// `DrivingSessionTimeoutPolicy`, not by deallocation.
+/// actor anyway. The session is bounded by `stop()` and by `DrivingSessionTimeoutPolicy`,
+/// not by deallocation.
 @MainActor
-final class LiveDrivingLocationCapture: BoundedLocationCapturing {
+final class LiveDrivingLocationCapture: NSObject, BoundedLocationCapturing {
     weak var delegate: (any BoundedLocationCaptureDelegate)?
 
     /// How often the watchdog checks the timeout rules. Coarse on purpose: it exists to
     /// bound a stalled session, not to drive detection, and every wake costs battery.
     private static let watchdogInterval = Duration.seconds(60)
 
-    private var updatesTask: Task<Void, Never>?
+    private let manager = CLLocationManager()
     private var watchdogTask: Task<Void, Never>?
-    private var serviceSession: CLServiceSession?
-    private var backgroundSession: CLBackgroundActivitySession?
 
     private(set) var isCapturing = false
 
@@ -107,10 +108,15 @@ final class LiveDrivingLocationCapture: BoundedLocationCapturing {
     private var updateCount = 0
     private var startedInForeground: Bool?
 
+    override init() {
+        super.init()
+        manager.delegate = self
+    }
+
     func health() -> BoundedCaptureHealth {
         BoundedCaptureHealth(
             startedAt: lastStartedAt,
-            holdsSessions: serviceSession != nil && backgroundSession != nil,
+            isUpdating: isCapturing,
             updateCount: updateCount,
             startedInForeground: startedInForeground
         )
@@ -122,33 +128,8 @@ final class LiveDrivingLocationCapture: BoundedLocationCapturing {
         lastStartedAt = Date.now
         startedInForeground = UIApplication.shared.applicationState == .active
 
-        // Declares that the updates below need Always authorization. Created before the
-        // sequence so the first update is never dropped for want of a session.
-        serviceSession = CLServiceSession(authorization: .always)
-        backgroundSession = CLBackgroundActivitySession()
-
-        updatesTask = Task.detached { [weak self] in
-            do {
-                // Mapped to `LocationFix` inside the loop: `CLLocationUpdate` is not
-                // Sendable, so nothing but the domain value crosses back to the main actor.
-                for try await update in CLLocationUpdate.liveUpdates(.automotiveNavigation) {
-                    if Task.isCancelled {
-                        return
-                    }
-                    await self?.countUpdate()
-                    let denied = update.authorizationDenied || update.authorizationDeniedGlobally
-                    let fix = update.location.map(LocationFix.init)
-                    guard let self else { return }
-                    let shouldContinue = await ingest(fix: fix, authorizationDenied: denied)
-                    if !shouldContinue {
-                        return
-                    }
-                }
-            } catch {
-                let nsError = error as NSError
-                await self?.report(failure: "\(nsError.domain)(\(nsError.code))")
-            }
-        }
+        Self.configureForDrive(manager)
+        manager.startUpdatingLocation()
 
         // Tied to the capture, not to the app: it cannot outlive `stop()`, so a session
         // that ends takes its timer with it.
@@ -161,25 +142,11 @@ final class LiveDrivingLocationCapture: BoundedLocationCapturing {
         }
     }
 
-    /// Counted before the fix is examined, so an update that carried nothing still shows
-    /// the sequence is alive. A capture with `updateCount == 0` never heard from Core
-    /// Location at all, which is a different bug from one whose fixes are all rejected.
-    private func countUpdate() {
-        updateCount += 1
-    }
-
     func stop() {
-        updatesTask?.cancel()
-        updatesTask = nil
+        manager.stopUpdatingLocation()
+        Self.configureForIdle(manager)
         watchdogTask?.cancel()
         watchdogTask = nil
-        // Invalidated in the reverse order they were taken, and always both: an
-        // invalidated background session with a live service session still holds the
-        // authorization open.
-        backgroundSession?.invalidate()
-        backgroundSession = nil
-        serviceSession?.invalidate()
-        serviceSession = nil
         isCapturing = false
     }
 
@@ -187,23 +154,80 @@ final class LiveDrivingLocationCapture: BoundedLocationCapturing {
         isCapturing
     }
 
-    /// Returns whether the loop should keep iterating.
-    private func ingest(fix: LocationFix?, authorizationDenied: Bool) -> Bool {
-        guard isCapturing else { return false }
-        if authorizationDenied {
-            delegate?.captureDidLoseAuthorization()
-            return false
-        }
-        if let fix, fix.isValid {
-            delegate?.captureDidProduce(fix)
-        }
-        return true
+    /// The settings one drive runs with, and why each one.
+    ///
+    /// - `automotiveNavigation` and best-for-navigation accuracy: what `liveUpdates` was
+    ///   asked for, so §7's thresholds see fixes of the grade they were written against.
+    /// - `allowsBackgroundLocationUpdates`: the whole point — delivery continues with the
+    ///   app in the background, and may be *started* there.
+    /// - `pausesLocationUpdatesAutomatically = false`: Core Location's own pause fires at a
+    ///   long red light and does not resume from the background, which would end the drive's
+    ///   fixes at the first stop. The session is bounded by §15's rules instead.
+    /// - No background indicator: the drive is bounded, and Always authorization permits it.
+    static func configureForDrive(_ manager: CLLocationManager) {
+        manager.activityType = .automotiveNavigation
+        manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
+        manager.distanceFilter = kCLDistanceFilterNone
+        manager.pausesLocationUpdatesAutomatically = false
+        manager.allowsBackgroundLocationUpdates = true
+        manager.showsBackgroundLocationIndicator = false
     }
 
-    private func report(failure: String) {
+    /// Nothing may keep the app alive in the background once the drive is over.
+    static func configureForIdle(_ manager: CLLocationManager) {
+        manager.allowsBackgroundLocationUpdates = false
+    }
+
+    /// Counted before the fix is examined, so a delivery that carried nothing still shows
+    /// Core Location is alive (see `BoundedCaptureHealth.updateCount`).
+    private func ingest(_ locations: [CLLocation]) {
         guard isCapturing else { return }
-        AppLog.detection.error("driving capture failed: \(failure, privacy: .public)")
-        delegate?.captureDidFail(failure)
+        for location in locations {
+            updateCount += 1
+            let fix = LocationFix(location)
+            if fix.isValid {
+                delegate?.captureDidProduce(fix)
+            }
+        }
+    }
+
+    private func fail(_ error: any Error) {
+        guard isCapturing else { return }
+        let nsError = error as NSError
+        switch CLError.Code(rawValue: nsError.code) {
+        case .denied:
+            delegate?.captureDidLoseAuthorization()
+        case .locationUnknown:
+            // Transient by definition: Core Location keeps trying and says so this way.
+            return
+        default:
+            let description = "\(nsError.domain)(\(nsError.code))"
+            AppLog.detection.error("driving capture failed: \(description, privacy: .public)")
+            delegate?.captureDidFail(description)
+        }
+    }
+
+    private func authorizationChanged(to status: CLAuthorizationStatus) {
+        guard isCapturing else { return }
+        if status == .denied || status == .restricted {
+            delegate?.captureDidLoseAuthorization()
+        }
+    }
+}
+
+/// `@MainActor` on the conformance: the manager was created on the main actor, so Core
+/// Location calls back there, and Swift 6 wants that stated rather than assumed.
+extension LiveDrivingLocationCapture: @MainActor CLLocationManagerDelegate {
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        ingest(locations)
+    }
+
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: any Error) {
+        fail(error)
+    }
+
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        authorizationChanged(to: manager.authorizationStatus)
     }
 }
 
