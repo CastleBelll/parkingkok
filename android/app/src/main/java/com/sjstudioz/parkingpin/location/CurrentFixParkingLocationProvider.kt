@@ -69,6 +69,11 @@ class CurrentFixParkingLocationProvider(
             )
         } catch (cancellation: CancellationException) {
             throw cancellation
+        } catch (revoked: SecurityException) {
+            // Checked above, but it can be revoked in Settings between the check and the call.
+            // The save already happened without it (FR-001), so this is not a failure.
+            Log.i(TAG, "current fix unavailable: location permission revoked")
+            null
         } catch (failure: Exception) {
             // Class name only — a location failure message has carried provider and account
             // detail before, and docs/09 §11 keeps that out of the log. Never a coordinate.
