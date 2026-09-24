@@ -82,12 +82,26 @@ object PillarTextParser {
     @JvmName("parseLines")
     fun parse(observed: List<PillarLine>): PillarSuggestion {
         val lines = observed.map(PillarLine::text)
-        // Tallest wins per token: the same label can appear twice, and what matters is the
-        // biggest it was painted.
-        val heights = observed
-            .groupBy(PillarLine::text)
-            .mapValues { (_, seen) -> seen.maxOf(PillarLine::height) }
-        return parse(lines, heights)
+        return parse(lines, paintedHeights(observed))
+    }
+
+    /**
+     * How big each token was painted, tallest wins.
+     *
+     * **Every word of a row inherits the row's height**, not only the row as a whole. A
+     * pillar paints `02` over `B2` and the recogniser returns the pair as one observation
+     * `02 02`; without this the words it splits into have no size at all, and the rules
+     * that pick the nearest pillar and the nearest bay have nothing to compare.
+     */
+    private fun paintedHeights(observed: List<PillarLine>): Map<String, Double> {
+        val heights = mutableMapOf<String, Double>()
+        observed.forEach { line ->
+            val tokens = listOf(line.text) + line.text.split(WHITESPACE).filter(String::isNotEmpty)
+            tokens.forEach { token ->
+                heights[token] = maxOf(heights[token] ?: 0.0, line.height)
+            }
+        }
+        return heights
     }
 
     private fun parse(lines: List<String>, heights: Map<String, Double>): PillarSuggestion {
@@ -96,7 +110,7 @@ object PillarTextParser {
         // decides against one**. Falling through to a narrower window re-reads a fragment
         // of the same sign: `지하 15층` is rejected as a floor nobody has, and its second
         // word alone is `15층` — a basement turned into a storey, thirty floors away.
-        val floor = lines.firstNotNullOfOrNull(::floorInLine) ?: repeatedBadge(lines)
+        val floor = lines.firstNotNullOfOrNull(::floorInLine) ?: badge(lines, heights)
         // What the floor took: the text it chose, and — when that text was corrected from a
         // misread badge — the digits it came from. Neither may come back as the bay or as
         // the pillar's own number.
@@ -105,13 +119,13 @@ object PillarTextParser {
             if (floor != null && lines.none { it == floor }) add("8" + floor.drop(1))
         }
         val words = lines.flatMap { it.split(WHITESPACE) }.filter(String::isNotEmpty)
+        val shapes = labelShapes(words)
+        val bays = baysIn(words, used, shapes, heights)
+        val bay = nearest(bays)
         return PillarSuggestion(
             floorRaw = floor,
-            zone = windows.firstNotNullOfOrNull(::zoneOrNull) ?: pillarLabel(words, used, heights),
-            spot = windows
-                .filterNot(used::contains)
-                .filterNot { readsAsAPillarLabel(it, labelShapes(words)) }
-                .firstNotNullOfOrNull(::spotOrNull),
+            zone = zone(windows, words, used, heights, shapes, bays[bay] ?: 0.0),
+            spot = bay,
         )
     }
 
@@ -146,21 +160,32 @@ object PillarTextParser {
      * bay, and rewriting every `82` into `B2` would invent a floor out of a bay number.
      *
      * **Repetition is what makes it safe.** The badge is identical on every pillar in frame
-     * while bay and pillar numbers all differ, so a digit run is re-read as a floor only
-     * when it appears more than once *and* the corrected value is a floor a garage has. A
-     * close-up of one pillar has no repetition and needs none: at that distance the badge
-     * reads as `B2` and the ordinary path takes it.
+     * while bay and pillar numbers all differ, so a digit run is re-read as a floor when it
+     * appears more than once *and* the corrected value is a floor a garage has.
+     *
+     * **Size is the other thing that makes it safe**, and repetition alone was not enough.
+     * A close-up of one pillar was supposed to read `B1` outright, and on a photo of a B1
+     * wall it did not: the recogniser returned a single `81` and nothing else, so the badge
+     * rule could not fire and the app offered bay 81 for a car on B1. There is no repetition
+     * to wait for in a photo with one pillar in it — what there is instead is a number
+     * painted across an eighth of the frame, which no bay number ever is. So a lone run also
+     * counts when it was painted at least [LARGE_BADGE_HEIGHT] tall. Both routes still
+     * require the corrected value to be a floor a garage has, which is what keeps `814` out.
      */
-    private fun repeatedBadge(lines: List<String>): String? =
+    private fun badge(lines: List<String>, heights: Map<String, Double>): String? =
         lines.flatMap { it.split(WHITESPACE) }
             .filter { it.length >= 2 && it.startsWith("8") && it.all(Char::isDigit) }
             .groupingBy { it }
             .eachCount()
-            .filterValues { it >= 2 }
-            // Most repeated first, then the shallower floor: `82` before `83` is a coin
-            // toss worth deciding the same way every time.
+            .filter { (token, count) -> count >= 2 || (heights[token] ?: 0.0) >= LARGE_BADGE_HEIGHT }
+            // Most repeated first, then the biggest, then the shallower floor: `82` before
+            // `83` is a coin toss worth deciding the same way every time.
             .entries
-            .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
+            .sortedWith(
+                compareByDescending<Map.Entry<String, Int>> { it.value }
+                    .thenByDescending { heights[it.key] ?: 0.0 }
+                    .thenBy { it.key },
+            )
             .map { "B" + it.key.drop(1) }
             .firstOrNull { text ->
                 FloorParser.parse(text)?.let(::isPlausibleFloor) == true
@@ -207,6 +232,34 @@ object PillarTextParser {
     }
 
     /**
+     * Which pillar the photo is of, in the three ways a wall says it.
+     *
+     * `A구역` first because it is the only one the contract spells out, then the pillar's own
+     * number, then a lone letter — each a weaker claim than the one before it.
+     */
+    private fun zone(
+        windows: List<String>,
+        words: List<String>,
+        used: Set<String>,
+        heights: Map<String, Double>,
+        shapes: Set<String>,
+        bayHeight: Double,
+    ): String? {
+        windows.firstNotNullOfOrNull(::zoneOrNull)?.let { return it }
+        pillarLabel(words, used, heights)?.let { label ->
+            // **A label painted far smaller than the bay is a different pillar.** A frame
+            // holding `B1 18` across a fifth of the image and `B119` across a tenth is one
+            // pillar in front of the camera and the next one down the row; naming the far
+            // one beside the near one's bay sends the user to neither.
+            val labelHeight = heights[label] ?: 0.0
+            return label.takeUnless { labelHeight > 0.0 && bayHeight >= labelHeight * NEAREST_MARGIN }
+        }
+        // Only when the photo shows no pillar number at all — see [loneLetterZone].
+        if (shapes.isNotEmpty()) return null
+        return loneLetterZone(words, used, heights)
+    }
+
+    /**
      * `B17`, `C13`, `가12` — the number painted on the pillar itself.
      *
      * Not a zone in the `A구역` sense, and it is what the user would write down anyway: in a
@@ -241,6 +294,79 @@ object PillarTextParser {
         val nearest = ranked.firstOrNull() ?: return null
         val next = ranked.getOrNull(1) ?: return nearest.first
         return nearest.first.takeIf { nearest.second >= next.second * NEAREST_MARGIN }
+    }
+
+    /**
+     * A pillar that paints its letter and its number on two separate rows.
+     *
+     * `A` above `47` is one label the recogniser returned as two observations, and
+     * [pillarLabel] cannot see it: `A` is not `A47`. Without this the `A` was dropped and
+     * the user was offered bay 47 on a floor with an A end and a B end.
+     *
+     * Only when the photo contains no pillar label at all — the caller checks. In a wide
+     * shot that *does* (`B17`, `B16`, `B B15`) a stray `B` is the left-over of a label
+     * already read, and offering it as the zone would name a pillar that is not there.
+     *
+     * **Latin capitals only, and not Hangul.** A wall of Korean signage is made of
+     * two-syllable words — `안내`, `출구`, `주차` — and every one of them is a two-character
+     * token that is not a zone. Hangul zones are written `가구역` on the wall anyway, which
+     * [ZONE] already reads.
+     *
+     * **And painted large enough to be one.** A garage is full of small letters — the `P` on
+     * a wall sign forty metres away came back at 0.013 of the image and was offered as the
+     * zone. A letter that names where the car is is painted to be read from across the
+     * floor; measured on the pillar that raised this rule, its `A` filled 0.10 to 0.14. A
+     * reader that measured nothing therefore offers no lone letter, which is the same stance
+     * [pillarLabel] takes.
+     */
+    private fun loneLetterZone(
+        words: List<String>,
+        used: Set<String>,
+        heights: Map<String, Double>,
+    ): String? =
+        words.filter { LONE_LETTER.matches(it) }
+            .groupingBy { it }
+            .eachCount()
+            .filterValues { it == 1 }
+            .keys
+            .filterNot(used::contains)
+            .filter { (heights[it] ?: 0.0) >= LONE_LETTER_MIN_HEIGHT }
+            .singleOrNull()
+
+    /**
+     * Which bay, when a photo paints several.
+     *
+     * The same rule as [pillarLabel], for the same reason. A frame looking down a row of
+     * bays shows `02`, `03` and `04`, and the car is at the one nearest the camera — the one
+     * painted largest. Taking the first the recogniser returned picked `04`, the far end of
+     * the row, on a real photo of a car parked at `02`.
+     *
+     * A reader that measured nothing reports zero for everything, and then the order is all
+     * there is; that is the old behaviour and it stays for that case.
+     */
+    private fun baysIn(
+        words: List<String>,
+        used: Set<String>,
+        shapes: Set<String>,
+        heights: Map<String, Double>,
+    ): Map<String, Double> {
+        val bays = LinkedHashMap<String, Double>()
+        words.filterNot(used::contains)
+            .filterNot { readsAsAPillarLabel(it, shapes) }
+            .forEach { word ->
+                val digits = spotOrNull(word) ?: return@forEach
+                bays[digits] = maxOf(bays[digits] ?: 0.0, heights[word] ?: 0.0)
+            }
+        return bays
+    }
+
+    private fun nearest(bays: Map<String, Double>): String? {
+        val first = bays.keys.firstOrNull() ?: return null
+        if (bays.size == 1) return first
+        val ranked = bays.entries.filter { it.value > 0.0 }.sortedByDescending { it.value }
+        val nearest = ranked.firstOrNull() ?: return first
+        val next = ranked.getOrNull(1) ?: return nearest.key
+        return nearest.key.takeIf { nearest.value >= next.value * NEAREST_MARGIN }
     }
 
     private fun labelShapes(words: List<String>): Set<String> =
@@ -279,6 +405,20 @@ object PillarTextParser {
      */
     const val NEAREST_MARGIN = 1.15
 
+    /**
+     * How tall, as a fraction of the image, a single `8`-prefixed run has to be painted
+     * before it is believed to be the floor badge with nothing to compare it against.
+     *
+     * Measured across twelve real pillar photos: the `81` that is a B1 badge filling a
+     * close-up came back at 0.129, and every digit run that was *not* a floor — `814` at
+     * 0.043, the repeated `82` at 0.027, a wall-sign `81` at 0.020 — sat below a third of
+     * that. 0.08 is the middle of a gap with nothing in it. Mirrored on iOS.
+     */
+    const val LARGE_BADGE_HEIGHT = 0.08
+
+    /** How tall a lone letter must be painted to name a pillar. Mirrored on iOS. */
+    const val LONE_LETTER_MIN_HEIGHT = 0.05
+
     const val DEEPEST_BASEMENT = 10
     const val HIGHEST_STOREY = 20
 
@@ -291,6 +431,9 @@ object PillarTextParser {
 
     /** One or two letters — Latin or Hangul — then one to three digits, and nothing else. */
     private val PILLAR_LABEL = Regex("""^[가-힣A-Za-z]{1,2}\d{1,3}$""")
+
+    /** A pillar label's letter alone, on its own row: the `A` above a `47`. */
+    private val LONE_LETTER = Regex("""^[A-Z]{1,2}$""")
 
     /** `142`, `142번`. Kept as digits, because that is what the field holds. */
     private val SPOT = Regex("""^(\d{1,4})번?$""")

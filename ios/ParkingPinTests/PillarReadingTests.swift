@@ -217,6 +217,40 @@ struct PillarFloorSuggestionTests {
         #expect(spot == "814")
     }
 
+    @Test("A zone is read with or without the space before 구역")
+    func spacedZone() {
+        // docs/02 §6a's table accepts both spellings, and Android read both from the day
+        // the feature landed. Split on whitespace, `A 구역` is just `A` — which the
+        // lone-letter rule would now offer as the zone, losing the 구역 on the wall.
+        #expect(PillarFloorSuggestion.zoneAndSpot(fromLines: ["A구역"], excluding: []).0 == "A구역")
+        #expect(PillarFloorSuggestion.zoneAndSpot(fromLines: ["A 구역"], excluding: []).0 == "A구역")
+    }
+
+    @Test("A pillar that paints its letter above its number keeps the letter")
+    func letterRowIsTheZone() {
+        let (zone, spot) = PillarFloorSuggestion.zoneAndSpot(
+            fromLines: ["A", "47"],
+            excluding: [],
+            heights: ["A": 0.140, "47": 0.143]
+        )
+
+        #expect(zone == "A")
+        #expect(spot == "47")
+    }
+
+    @Test("A stray letter beside real pillar labels is not a zone of its own")
+    func strayLetterIsNotAZone() {
+        // The wide shot returns `B` on its own beside `B17` and `B16`: a fragment of a
+        // label already read, not a pillar the car could be at.
+        let (zone, _) = PillarFloorSuggestion.zoneAndSpot(
+            fromLines: ["B", "B17", "B16"],
+            excluding: [],
+            heights: ["B17": 0.050, "B16": 0.049]
+        )
+
+        #expect(zone == nil)
+    }
+
     @Test("A wall with no 구역 on it offers no zone")
     func zoneNeedsItsWord() {
         // Without the literal word, every two-character token on a wall of signage is a
@@ -471,5 +505,261 @@ struct VisionPillarTextReaderTests {
 
         // Assert
         #expect(reading == .none)
+    }
+}
+
+/// Twelve real pillar photos, read by Vision on this machine, with what the wall actually
+/// said beside what the recogniser returned.
+///
+/// Every rule in `PillarFloorSuggestion` was written against a photo, and this is the set
+/// of photos. Perfect reading is not achievable — §6a says so, and four of these twelve
+/// still lose something — but a rule that fixes one wall and breaks another is caught here
+/// rather than on the phone. The rows are the recogniser's verbatim output, `text|height`,
+/// copied from the diagnostics dump; the height is the fraction of the image the row filled.
+///
+/// The same twelve are asserted on Android in `PillarTextParserTest`.
+@Suite("Real pillar photos")
+struct PillarPhotoFixtureTests {
+    /// A close-up of a single B1 wall, where the badge's `B` came back as an `8`.
+    ///
+    /// The repetition rule cannot fire on one pillar. Size is what is left, and `81` filled
+    /// an eighth of the frame — this is the photo `largeBadgeHeight` exists for. Before it,
+    /// the user was offered 자리 81 for a car on B1.
+    @Test("7B4E5633 — a lone 81 painted across the frame is B1")
+    func loneLargeBadgeIsTheFloor() {
+        let reading = PillarFloorSuggestion.reading(from: [PillarLine("81", height: 0.129)])
+
+        #expect(reading.floorText == "B1")
+        #expect(reading.spot == nil)
+    }
+
+    /// A pillar that paints its letter above its number, which Vision returned as two rows.
+    @Test("77F9B13C — A over 47 is zone A, bay 47")
+    func letterAndNumberOnSeparateRows() {
+        let reading = PillarFloorSuggestion.reading(from: [
+            PillarLine("A", height: 0.140),
+            PillarLine("47", height: 0.143)
+        ])
+
+        #expect(reading.floorText == nil)
+        #expect(reading.zone == "A")
+        #expect(reading.spot == "47")
+    }
+
+    /// Three bays in one frame — `02` in front of the camera, `03` and `04` down the row.
+    @Test("98E8104E — the nearest bay wins, not the first one read")
+    func nearestBayWins() {
+        let reading = PillarFloorSuggestion.reading(from: [
+            PillarLine("04", height: 0.031),
+            PillarLine("03", height: 0.047),
+            PillarLine("B2", height: 0.031),
+            PillarLine("02 02", height: 0.136),
+            PillarLine("B2", height: 0.074),
+            PillarLine("B2", height: 0.082)
+        ])
+
+        #expect(reading.floorText == "B2")
+        #expect(reading.spot == "02")
+    }
+
+    /// The wide shot the earlier rules were written against, unchanged by the new ones.
+    @Test("41EECF59 — a repeated 82 is the floor and the nearest pillar is the zone")
+    func wideShotOfALabelledRow() {
+        let reading = PillarFloorSuggestion.reading(from: [
+            PillarLine("10/ C13", height: 0.031),
+            PillarLine("a", height: 0.027),
+            PillarLine("82", height: 0.023),
+            PillarLine("B17", height: 0.059),
+            PillarLine("B", height: 0.047),
+            PillarLine("82", height: 0.020),
+            PillarLine("B16", height: 0.047),
+            PillarLine("[", height: 0.031),
+            PillarLine("82", height: 0.020),
+            PillarLine("B B15", height: 0.051),
+            PillarLine("814", height: 0.043),
+            PillarLine("82", height: 0.027)
+        ])
+
+        #expect(reading.floorText == "B2")
+        // The stray `B` is a fragment of a label already read, not a zone of its own.
+        #expect(reading.zone == "B17")
+        // `814` is `B14`, and `B14` is not a floor either.
+        #expect(reading.spot == nil)
+    }
+
+    @Test("4BC91EF8 — B2 over bay 02, with a warning sign in frame")
+    func floorAboveBayWithSignage() {
+        let reading = PillarFloorSuggestion.reading(from: [
+            PillarLine("주차장 바닥에 브레거를", height: 0.014),
+            PillarLine("버려지 마셔요.", height: 0.012),
+            PillarLine("B2", height: 0.152),
+            PillarLine("B2 02", height: 0.063)
+        ])
+
+        #expect(reading.floorText == "B2")
+        #expect(reading.spot == "02")
+    }
+
+    @Test("98BBE445 — B118 read as B1 and 18 is a floor and a bay")
+    func floorAndBayOnOneRow() {
+        let reading = PillarFloorSuggestion.reading(from: [
+            PillarLine("B1 18", height: 0.269),
+            PillarLine("B1 191", height: 0.121)
+        ])
+
+        #expect(reading.floorText == "B1")
+        #expect(reading.spot == "18")
+    }
+
+    @Test("63205636 — a wall that says B3 and nothing else")
+    func plainFloor() {
+        let reading = PillarFloorSuggestion.reading(from: [PillarLine("B3", height: 0.114)])
+
+        #expect(reading == PillarReading(floorText: "B3"))
+    }
+
+    @Test("9B89C54F — a pillar numbered B35 states no floor, and B35 is not one")
+    func pillarNumberWithoutAFloor() {
+        let reading = PillarFloorSuggestion.reading(from: [
+            PillarLine("B35", height: 0.039),
+            PillarLine("PARKING", height: 0.031),
+            PillarLine("보형자", height: 0.035)
+        ])
+
+        #expect(reading.floorText == nil)
+        #expect(reading.zone == "B35")
+    }
+
+    @Test("94695E1F — B4F is B4, and the bay is the pillar's own number")
+    func redundantFloorSpelling() {
+        // The wall paints `428` over `B4F`. `B4F` says basement and floor at once, which is
+        // redundant and real; read as free text it threw away a floor stated plainly.
+        let reading = PillarFloorSuggestion.reading(from: [
+            PillarLine("428", height: 0.034),
+            PillarLine("B4F", height: 0.019),
+            PillarLine("428", height: 0.012),
+            PillarLine("그르타/", height: 0.041)
+        ])
+
+        #expect(reading.floorText == "B4F")
+        #expect(FloorValue.parse("B4F")?.displayText == "B4")
+        #expect(reading.spot == "428")
+    }
+
+    @Test("873CE149 — a photo with nothing readable in it is silence")
+    func nothingReadable() {
+        #expect(PillarFloorSuggestion.reading(from: []) == .none)
+    }
+
+    /// Known incomplete, and kept as the honest record of it.
+    @Test("3B922445 — the wall says B1 over 27 and Vision only returned the 27")
+    func floorTheRecogniserNeverSaw() {
+        let reading = PillarFloorSuggestion.reading(from: [PillarLine("27", height: 0.239)])
+
+        // Nothing here can recover a floor that was never recognised: inventing one from a
+        // bay number is precisely the misread §6a forbids. The bay is offered and the user
+        // types the floor, which is the failure mode the feature is designed around.
+        #expect(reading.floorText == nil)
+        #expect(reading.spot == "27")
+    }
+
+    /// Not a car park at all — a press photo that happened to be in the folder.
+    @Test("D336556B — a photo of something else offers no floor")
+    func notACarPark() {
+        let reading = PillarFloorSuggestion.reading(from: [
+            PillarLine("81", height: 0.020),
+            PillarLine("09", height: 0.039),
+            PillarLine("YONHAPNEWS", height: 0.051)
+        ])
+
+        // The same `81` that is a floor when it fills the frame is not one at a fiftieth of
+        // it. A suggested bay on a photo the user chose is harmless; a suggested floor is not.
+        #expect(reading.floorText == nil)
+    }
+}
+
+/// The same twelve photos as `PillarPhotoFixtureTests`, read by **ML Kit on the phone**
+/// rather than by Vision on a Mac.
+///
+/// Two recognisers see one wall differently, and the rules have to hold for both: ML Kit
+/// recovered the `B1` Vision missed on 3B922445 and read a whole row of pillars as one
+/// forty-character line on 41EECF59. These are the readings the Android device actually
+/// produced, and they are asserted on iOS as well because a rule that only works for the
+/// recogniser it was written against is not a rule.
+@Suite("Real pillar photos, as the phone's other recogniser saw them")
+struct PillarPhotoCrossReaderFixtureTests {
+    @Test("3B922445 — the floor Vision missed is read here, and it is the floor")
+    func floorRecoveredByTheOtherReader() {
+        let reading = PillarFloorSuggestion.reading(from: [
+            PillarLine("B1", height: 0.114),
+            PillarLine("27", height: 0.277)
+        ])
+
+        #expect(reading.floorText == "B1")
+        #expect(reading.spot == "27")
+    }
+
+    @Test("41EECF59 — a whole row of pillars returned as one line names none of them")
+    func mergedRowOfPillars() {
+        let reading = PillarFloorSuggestion.reading(from: [
+            PillarLine("od C13", height: 0.023),
+            PillarLine("B2", height: 0.020),
+            PillarLine("P", height: 0.025),
+            PillarLine("B17 BL B16 BB15 Bh4 3 2 i", height: 0.123),
+            PillarLine("수구", height: 0.021)
+        ])
+
+        #expect(reading.floorText == "B2")
+        // Five labels on one row are five pillars the same distance away, and the stray
+        // `3` and `2` beside them are the same tie. §6a leaves both blank.
+        #expect(reading.zone == nil)
+        #expect(reading.spot == nil)
+    }
+
+    @Test("98BBE445 — the next pillar down the row is not this pillar's zone")
+    func farPillarIsNotTheZone() {
+        let reading = PillarFloorSuggestion.reading(from: [
+            PillarLine("기사지", height: 0.025),
+            PillarLine("그ali", height: 0.073),
+            PillarLine("B119", height: 0.094),
+            PillarLine("B1 18", height: 0.213)
+        ])
+
+        #expect(reading.floorText == "B1")
+        #expect(reading.spot == "18")
+        // The car is at B118. `B119` is the next pillar, painted at less than half the
+        // size of the row the bay came from.
+        #expect(reading.zone == nil)
+    }
+
+    @Test("94695E1F — a P on a distant wall sign is not the zone")
+    func smallLetterIsNotAZone() {
+        let reading = PillarFloorSuggestion.reading(from: [
+            PillarLine("428", height: 0.031),
+            PillarLine("B4F", height: 0.016),
+            PillarLine("428n", height: 0.014),
+            PillarLine("P", height: 0.013)
+        ])
+
+        #expect(reading.floorText == "B4F")
+        #expect(reading.spot == "428")
+        #expect(reading.zone == nil)
+    }
+
+    @Test("873CE149 — the photo Vision read nothing in gives up its bay here")
+    func bayRecoveredByTheOtherReader() {
+        // The wall says B2 and 79; only the 79 was recognised, and a bay alone is still
+        // worth offering.
+        let reading = PillarFloorSuggestion.reading(from: [PillarLine("79", height: 0.106)])
+
+        #expect(reading.floorText == nil)
+        #expect(reading.spot == "79")
+    }
+
+    @Test("7B4E5633 — read cleanly, the B1 wall needs no correction at all")
+    func badgeReadWithoutCorrection() {
+        let reading = PillarFloorSuggestion.reading(from: [PillarLine("B1", height: 0.148)])
+
+        #expect(reading == PillarReading(floorText: "B1"))
     }
 }

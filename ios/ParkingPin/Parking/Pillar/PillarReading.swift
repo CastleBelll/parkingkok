@@ -68,6 +68,22 @@ struct PillarReading: Sendable, Equatable {
     }
 }
 
+/// One painted row, and how tall it was drawn.
+///
+/// The height is the only thing in a photo that says which pillar is nearest, and the
+/// nearest is the one the car is at. A fraction of the image height, so it is comparable
+/// within one photo and meaningless across two; zero means the reader did not measure.
+/// Mirrors Android's `PillarLine`.
+struct PillarLine: Sendable, Equatable {
+    let text: String
+    let height: Double
+
+    init(_ text: String, height: Double = 0) {
+        self.text = text
+        self.height = height
+    }
+}
+
 /// Reads the floor off a pillar photo, on device.
 ///
 /// A protocol because the screens must be testable without a camera, a photo library or
@@ -104,6 +120,40 @@ extension PillarTextReading {
 /// Separate from the Vision plumbing so the rule can be tested on strings — which is what
 /// `B3` vs `83` vs `142` actually is.
 enum PillarFloorSuggestion {
+    /// Everything a recogniser saw, turned into the one suggestion the form is offered.
+    ///
+    /// The order is the rule and it is not obvious, which is why it lives here rather than
+    /// in the reader: the floor decides first, and whatever it took is then withheld from
+    /// the zone and the bay. Mirrors Android's `PillarTextParser.parse`.
+    static func reading(from observed: [PillarLine]) -> PillarReading {
+        let lines = observed.map(\.text)
+        let heights = paintedHeights(of: observed)
+        let floorText = floorText(fromLines: lines, heights: heights)
+        // What the floor took: the text it chose, plus — when that text was corrected from
+        // a misread badge — the digits it was corrected from. Neither may come back as the
+        // bay or as the pillar's own number (§6a).
+        var used = Set(floorText.map { [$0] } ?? [])
+        if let floorText, !lines.contains(floorText) {
+            used.insert("8" + floorText.dropFirst())
+        }
+        let (zone, spot) = zoneAndSpot(fromLines: lines, excluding: used, heights: heights)
+        return PillarReading(floorText: floorText, zone: zone, spot: spot)
+    }
+
+    /// How big each token was painted, tallest wins.
+    ///
+    /// **Every word of a row inherits the row's height**, not only the row as a whole. A
+    /// pillar paints `02` over `B2` and the recogniser returns the pair as one observation
+    /// `02 02`; without this the words it splits into have no size at all, and the rules
+    /// that pick the nearest pillar and the nearest bay have nothing to compare.
+    private static func paintedHeights(of observed: [PillarLine]) -> [String: Double] {
+        observed.reduce(into: [String: Double]()) { heights, line in
+            for token in [line.text] + line.text.split(whereSeparator: \.isWhitespace).map(String.init) {
+                heights[token] = max(heights[token] ?? 0, line.height)
+            }
+        }
+    }
+
     /// The one line that states a plausible floor, or `nil`.
     ///
     /// **Order is not a signal, and treating it as one was a real misread.** This used to
@@ -114,8 +164,8 @@ enum PillarFloorSuggestion {
     ///
     /// What separates them is not position but size — of the number, not of the text. See
     /// [isPlausibleFloor].
-    static func floorText(fromLines lines: [String]) -> String? {
-        lines.lazy.compactMap(candidate(in:)).first ?? repeatedBadge(in: lines)
+    static func floorText(fromLines lines: [String], heights: [String: Double] = [:]) -> String? {
+        lines.lazy.compactMap(candidate(in:)).first ?? badge(in: lines, heights: heights)
     }
 
     /// The floor badge that every pillar carries, when the recogniser turned its `B` into an
@@ -132,11 +182,18 @@ enum PillarFloorSuggestion {
     /// the bay, and rewriting every `82` into `B2` would invent a floor out of a bay number.
     ///
     /// **Repetition is what makes it safe.** The floor badge is identical on every pillar in
-    /// frame; bay and pillar numbers are all different. So a digit run is only re-read as a
-    /// floor when it appears more than once *and* the corrected value is a floor a garage
-    /// has. A close-up of one pillar has no repetition and needs none: at that distance the
-    /// badge reads as `B2` and the ordinary path takes it.
-    private static func repeatedBadge(in lines: [String]) -> String? {
+    /// frame; bay and pillar numbers are all different. So a digit run is re-read as a floor
+    /// when it appears more than once *and* the corrected value is a floor a garage has.
+    ///
+    /// **Size is the other thing that makes it safe**, and repetition alone was not enough.
+    /// A close-up of one pillar was supposed to read `B1` outright, and on a photo of a B1
+    /// wall it did not: Vision returned a single `81` and nothing else, so the badge rule
+    /// could not fire and the app offered bay 81 for a car on B1. There is no repetition to
+    /// wait for in a photo with one pillar in it — what there is instead is a number painted
+    /// across an eighth of the frame, which no bay number ever is. So a lone run also counts
+    /// when it was painted at least [largeBadgeHeight] tall. Both routes still require the
+    /// corrected value to be a floor a garage has, which is what keeps `814` out.
+    private static func badge(in lines: [String], heights: [String: Double]) -> String? {
         var counts: [String: Int] = [:]
         for word in lines.flatMap({ $0.split(whereSeparator: \.isWhitespace) }) {
             let token = String(word)
@@ -144,10 +201,12 @@ enum PillarFloorSuggestion {
             counts[token, default: 0] += 1
         }
         return counts
-            .filter { $0.value >= 2 }
-            // Most repeated first, then the shallower floor: `82` before `83` is a coin
-            // toss worth deciding the same way every time.
-            .sorted { ($0.value, $1.key) > ($1.value, $0.key) }
+            .filter { $0.value >= 2 || (heights[$0.key] ?? 0) >= largeBadgeHeight }
+            // Most repeated first, then the biggest, then the shallower floor: `82` before
+            // `83` is a coin toss worth deciding the same way every time.
+            .sorted {
+                ($0.value, heights[$0.key] ?? 0, $1.key) > ($1.value, heights[$1.key] ?? 0, $0.key)
+            }
             .lazy
             .map { "B" + $0.key.dropFirst() }
             .first { text in
@@ -155,6 +214,15 @@ enum PillarFloorSuggestion {
                 return isPlausibleFloor(parsed)
             }
     }
+
+    /// How tall, as a fraction of the image, a single `8`-prefixed run has to be painted
+    /// before it is believed to be the floor badge with nothing to compare it against.
+    ///
+    /// Measured across twelve real pillar photos: the `81` that is a B1 badge filling a
+    /// close-up came back at 0.129, and every digit run that was *not* a floor — `814` at
+    /// 0.043, the repeated `82` at 0.027, a wall-sign `81` at 0.020 — sat below a third of
+    /// that. 0.08 is the middle of a gap with nothing in it.
+    static let largeBadgeHeight = 0.08
 
     /// Deepest basement and highest storey a floor sign is believed to state.
     ///
@@ -247,6 +315,59 @@ enum PillarFloorSuggestion {
     /// One or two letters — Latin or Hangul — then one to three digits, and nothing else.
     private static var pillarLabelPattern: Regex<Substring> { /^[가-힣A-Za-z]{1,2}\d{1,3}$/ }
 
+    /// A pillar that paints its letter and its number on two separate rows.
+    ///
+    /// `A` above `47` is one label the recogniser returned as two observations, and the
+    /// rule above cannot see it: `A` is not `A47`. Without this the `A` was dropped and the
+    /// user was offered bay 47 on a floor with an A and a B end.
+    ///
+    /// Only when the photo contains no pillar label at all. In a wide shot that *does* —
+    /// `B17`, `B16`, `B B15` — a stray `B` is the left-over of a label already read, and
+    /// offering it as the zone would name a pillar that is not there.
+    ///
+    /// **Latin capitals only, and not Hangul.** A wall of Korean signage is made of
+    /// two-syllable words — `안내`, `출구`, `주차` — and every one of them is a two-character
+    /// token that is not a zone. Hangul zones are written `가구역` on the wall anyway, which
+    /// the 구역 rule above already reads.
+    /// **And painted large enough to be one.** A garage is full of small letters — the `P`
+    /// on a wall sign forty metres away came back at 0.013 of the image and was offered as
+    /// the zone. A letter that names where the car is is painted to be read from across the
+    /// floor; measured on the pillar that raised this rule, its `A` filled 0.10 to 0.14. A
+    /// reader that measured nothing therefore offers no lone letter, which is the same
+    /// stance the nearest-pillar rule takes.
+    private static var loneLetterPattern: Regex<Substring> { /^[A-Z]{1,2}$/ }
+
+    static let loneLetterMinHeight = 0.05
+
+    private static func loneLetterZone(
+        among words: [String],
+        excluding used: Set<String>,
+        heights: [String: Double]
+    ) -> String? {
+        var counts: [String: Int] = [:]
+        for word in words where word.wholeMatch(of: loneLetterPattern) != nil {
+            counts[word, default: 0] += 1
+        }
+        let letters = counts
+            .filter { $0.value == 1 && !used.contains($0.key) }
+            .filter { (heights[$0.key] ?? 0) >= loneLetterMinHeight }
+            .map(\.key)
+        return letters.count == 1 ? letters.first : nil
+    }
+
+    /// The one- and two-word phrases of a line, longer first at each position.
+    ///
+    /// Two words because `A 구역` is one value written with a space in it, and splitting on
+    /// whitespace leaves `A` — which the lone-letter rule would then offer as the zone,
+    /// dropping the 구역 the wall painted. Mirrors Android's `windowsOf`.
+    private static func windows(of line: String) -> [String] {
+        let words = line.split(whereSeparator: \.isWhitespace).map(String.init)
+        return words.indices.flatMap { index -> [String] in
+            let pair = index + 1 < words.count ? ["\(words[index]) \(words[index + 1])"] : []
+            return pair + [words[index]]
+        }
+    }
+
     /// The zone and bay a pillar states, if it states them (§6a).
     ///
     /// `used` is what the floor already took — the text it chose and, on a wide shot, the
@@ -258,19 +379,69 @@ enum PillarFloorSuggestion {
         heights: [String: Double] = [:]
     ) -> (String?, String?) {
         let words = lines.flatMap { $0.split(whereSeparator: \.isWhitespace) }.map(String.init)
-        let zone = words.first { $0.wholeMatch(of: zonePattern) != nil }
-            ?? pillarLabel(among: words, excluding: used, heights: heights)
         let labelShapes = Set(
             words.compactMap { $0.wholeMatch(of: pillarLabelPattern) != nil ? shape(of: $0) : nil }
         )
-        let spot = words
-            .lazy
-            .filter { !used.contains($0) }
-            .filter { !readsAsAPillarLabel($0, shapes: labelShapes) }
-            .compactMap { $0.wholeMatch(of: spotPattern)?.1 }
-            .first
-            .map(String.init)
-        return (zone, spot)
+        var bays: [(digits: String, height: Double)] = []
+        for word in words where !used.contains(word) && !readsAsAPillarLabel(word, shapes: labelShapes) {
+            guard let digits = word.wholeMatch(of: spotPattern)?.1 else { continue }
+            let height = heights[word] ?? 0
+            if let index = bays.firstIndex(where: { $0.digits == digits }) {
+                bays[index].height = max(bays[index].height, height)
+            } else {
+                bays.append((String(digits), height))
+            }
+        }
+        let bay = nearestBay(among: bays)
+        let bayHeight = bay.flatMap { digits in bays.first { $0.digits == digits }?.height } ?? 0
+        return (zone(named: lines, words: words, used: used, heights: heights,
+                     labelShapes: labelShapes, bayHeight: bayHeight), bay)
+    }
+
+    /// Which pillar the photo is of, in the three ways a wall says it.
+    ///
+    /// `A구역` first because it is the only one the contract spells out, then the pillar's
+    /// own number, then a lone letter — each a weaker claim than the one before it.
+    private static func zone(
+        named lines: [String],
+        words: [String],
+        used: Set<String>,
+        heights: [String: Double],
+        labelShapes: Set<String>,
+        bayHeight: Double
+    ) -> String? {
+        if let named = lines.flatMap(windows(of:)).first(where: { $0.wholeMatch(of: zonePattern) != nil }) {
+            return named.replacing(/\s+/, with: "")
+        }
+        if let label = pillarLabel(among: words, excluding: used, heights: heights) {
+            // **A label painted far smaller than the bay is a different pillar.** A frame
+            // holding `B1 18` across a fifth of the image and `B119` across a tenth is one
+            // pillar in front of the camera and the next one down the row; naming the far
+            // one beside the near one's bay sends the user to neither.
+            let labelHeight = heights[label] ?? 0
+            guard labelHeight > 0, bayHeight >= labelHeight * nearestMargin else { return label }
+            return nil
+        }
+        // Only when the photo shows no pillar number at all — see [loneLetterPattern].
+        guard labelShapes.isEmpty else { return nil }
+        return loneLetterZone(among: words, excluding: used, heights: heights)
+    }
+
+    /// Which bay, when a photo paints several.
+    ///
+    /// The same rule as the pillar label, for the same reason. A frame looking down a row
+    /// of bays shows `02`, `03` and `04`, and the car is at the one nearest the camera —
+    /// the one painted largest. Taking the first the recogniser returned picked `04`, the
+    /// far end of the row, on a real photo of a car parked at `02`.
+    ///
+    /// A reader that measured nothing reports zero for everything, and then the order is
+    /// all there is; that is the old behaviour and it stays for that case.
+    private static func nearestBay(among bays: [(digits: String, height: Double)]) -> String? {
+        guard bays.count > 1 else { return bays.first?.digits }
+        let ranked = bays.filter { $0.height > 0 }.sorted { $0.height > $1.height }
+        guard let nearest = ranked.first else { return bays.first?.digits }
+        guard let next = ranked.dropFirst().first else { return nearest.digits }
+        return nearest.height >= next.height * nearestMargin ? nearest.digits : nil
     }
 
     private static func isPlausibleFloor(_ floor: FloorValue) -> Bool {

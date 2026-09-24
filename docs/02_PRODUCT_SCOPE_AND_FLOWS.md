@@ -108,7 +108,9 @@ Inline floor text entry is platform-dependent enhancement, not required for corr
 
 ## 6. Floor Parsing
 Accept examples:
-- b3 / B3
+- b3 / B3 / B4F — the last says basement and floor at once, which is redundant and real:
+  a pillar paints `428` over `B4F`, and read as free text it loses a floor the wall states
+  plainly. The `B` wins over the trailing `F`.
 - 지하3 / 지하 3층
 - 3층 / 3F
 - P3 if user chooses custom
@@ -155,9 +157,9 @@ said the contract had no grammar to follow. It does now.
 
 | field | accepted | rejected |
 |---|---|---|
-| zone | `A구역`, `A 구역`, `가구역` — up to six characters before the literal 구역; failing that, the pillar's own number (below) | a token with neither |
+| zone | `A구역`, `A 구역`, `가구역` — up to six characters before the literal 구역; failing that, the pillar's own number (below); failing that, a lone Latin capital painted at least **0.05** of the image tall, when the photo shows no pillar number at all | a token with none of the three, any Hangul word, and a pillar number painted far smaller than the bay beside it |
 | pillar number | `B17`, `C13`, `가12` — one or two letters then one to three digits; with several in frame, the **nearest** | the floor badge, and a tie between two equally distant pillars |
-| bay | `142`, `142번` — one to four digits, stored as digits | anything the floor already used (below) |
+| bay | `142`, `142번` — one to four digits, stored as digits; with several in frame, the **nearest**, by the same rule as the pillar number | anything the floor already used (below) |
 
 The pillar number fills the zone because that is what a person writes down: in a garage
 whose pillars are labelled, "B17" *is* where the car is. It is offered when the photo
@@ -176,6 +178,32 @@ settles which pillar is meant, and the photo usually does:
 * **A reader that measured nothing reports zero**, which ranks nowhere — a fake in a test
   and a real camera then differ in what they know rather than in what they claim.
 
+**A pillar that paints its letter and its number on separate rows** — `A` over `47` — is
+read as zone `A`, bay `47`. The recogniser returns two observations and `A` is not `A47`,
+so without this the letter is dropped and the user is sent to a floor with an A end and a B
+end holding only a number. It is a last resort: only when the photo contains **no** pillar
+number at all, because in a wide shot that does, a stray `B` is the left-over of a label
+already read. **Latin capitals only** — a wall of Korean signage is made of two-syllable
+words (`안내`, `출구`, `주차`) and every one of them would qualify, while a Hangul zone is
+written `가구역` on the wall anyway. **And painted large enough to be a zone**: a garage is
+full of small letters, and the `P` on a wall sign forty metres away came back at 0.013 of
+the image and was offered as the zone, against the 0.10–0.14 of the `A` on the pillar the
+rule was written for.
+
+**A zone and a bay of very different sizes are two different pillars.** A frame holding
+`B1 18` across a fifth of the image and `B119` across a tenth is the pillar in front of the
+camera and the next one down the row; offering the far one's number beside the near one's
+bay sends the user to neither. When the chosen bay's row is `nearestMargin` taller than the
+pillar number, the zone is dropped and the bay is kept — the same stance as a tie, and for
+the same reason: a confident wrong pillar is worse than a blank field.
+
+**Size decides the bay too, not just the pillar.** A frame looking down a row shows `02`,
+`03` and `04`; the car is at the one filling the lens. Taking the first the recogniser
+returned picked `04`, the far end of the row, on a real photo of a car parked at `02`. Same
+`nearestMargin`, same tie rule, and **each word of a recognised row inherits that row's
+height** — a pillar paints `02` over `B2` and the recogniser hands back the pair as one
+observation, whose words would otherwise have no measured size at all.
+
 #### Two rules the wall forced (2026-09-23)
 
 Both come from one photo of a B2 garage whose pillars are numbered B14–B17, and both are
@@ -190,9 +218,31 @@ offering none, because the user has to notice it and undo it.
 **A badge whose `B` was read as an `8` is still the floor, when it repeats.** That photo
 never yielded `B2` on the phone; it yielded `82`, four times, once per pillar in frame.
 `B`→`8` is the ordinary confusion and correcting it blindly would invent a floor out of a
-bay number, so a digit run is re-read as a floor **only when it appears more than once** —
-the badge is identical on every pillar while bay and pillar numbers all differ. The digits
-that correction consumes are then not offered as the bay as well.
+bay number, so a digit run is re-read as a floor when it appears more than once — the badge
+is identical on every pillar while bay and pillar numbers all differ. The digits that
+correction consumes are then not offered as the bay as well.
+
+**…or when it is painted large enough that it can only be the badge.** Repetition alone
+was not enough: a close-up of a single B1 wall yielded one `81` and nothing else, no
+repetition to wait for, and the app offered 자리 81 for a car on B1. So a lone digit run
+also counts when it filled at least **0.08** of the image height. Measured across twelve
+real pillar photos: the `81` that was a B1 badge came back at 0.129, and every digit run
+that was *not* a floor — `814` at 0.043, a repeated `82` at 0.027, a wall-sign `81` at
+0.020 — sat below a third of that. Both routes still require the corrected value to be a
+floor a garage has, which is what keeps `814` out.
+
+Twelve real pillar photos are kept as fixtures on both platforms —
+`PillarPhotoFixtureTests` and `PillarPhotoFixtureTest` — holding each recogniser's verbatim
+output beside what the wall actually said. Zero error is not reachable and the set says so:
+one photo's floor was never recognised at all and the fixture asserts that it is left
+blank. The only honest way to raise the accuracy is to add photos.
+
+**What is read is the photo the picker returned** — the album's URI or the camera's file,
+whichever the user chose. Android held the camera's last capture regardless, so 앨범에서
+고르기 read a file nothing on that path had written and the form opened empty; the same
+screen also treated the dialog closing as the user cancelling, which dropped the photo that
+arrived a second later. Both are the same mistake in different places: the capture is not
+finished until something comes back.
 
 The user always sees what was read before anything is stored. Nothing is auto-saved from a
 photo: a misread `B3` as `83` that silently became the record would be worse than typing.
@@ -247,6 +297,11 @@ If Smart Detection off:
 - current location if authorized
 
 Local save completes before any backend work.
+
+**A bay shown on its own takes the word that says what it is** — `142번`, because a bare
+number under the floor at hero weight says nothing about what the number is. The field
+holds any text (FR-006), so someone copying a wall writes `01번` as often as `01`; the word
+is added only when it is not already there. Appending it unconditionally drew `01번번`.
 
 ## 10. End Parking
 Manual:

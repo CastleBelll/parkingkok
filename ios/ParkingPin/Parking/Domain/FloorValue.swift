@@ -135,8 +135,9 @@ private struct Pattern {
 
     /// Order matters only in that every pattern is mutually exclusive by anchoring.
     static let all: [Pattern] = [
-        // B3 / b 3
-        Pattern(kind: .basement, pattern: #"^[Bb]\s*(\d{1,3})$"#),
+        // B3 / b 3 / B4F — the last is redundant and real: a pillar paints `428` over
+        // `B4F`, and read as free text it loses a floor the wall states plainly.
+        Pattern(kind: .basement, pattern: #"^[Bb]\s*(\d{1,3})\s*[Ff]?$"#),
         // 지하3 / 지하 3층
         Pattern(kind: .basement, pattern: #"^지하\s*(\d{1,3})\s*층?$"#),
         // 3F / 3 f

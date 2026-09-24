@@ -18,7 +18,12 @@ object FloorParser {
      */
     const val MAX_LEVEL: Int = 99
 
-    private val basementLatin = Regex("""^[Bb]\s*(\d{1,3})$""")
+    /**
+     * `B3`, `b 3`, and `B4F` — the last is redundant and real: a pillar paints `428` over
+     * `B4F`, and read as free text it loses a floor the wall states plainly. Matched before
+     * [groundLatin] so the `B` wins over the trailing `F`.
+     */
+    private val basementLatin = Regex("""^[Bb]\s*(\d{1,3})\s*[Ff]?$""")
     private val basementKorean = Regex("""^지하\s*(\d{1,3})\s*층?$""")
     private val groundLatin = Regex("""^(\d{1,3})\s*[Ff]$""")
     private val groundKorean = Regex("""^(?:지상\s*)?(\d{1,3})\s*층$""")
