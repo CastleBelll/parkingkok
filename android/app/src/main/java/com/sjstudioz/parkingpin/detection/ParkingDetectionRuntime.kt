@@ -51,7 +51,8 @@ import java.util.UUID
  * ### What it does not own
  * The Fused Location request. [com.sjstudioz.parkingpin.domain.location.LocationCaptureModePolicy]
  * and [FusedLocationSessionController] already decide that from the same motion events, and
- * two owners of one registration is what leaks a session.
+ * two owners of one registration is what leaks a session. The one exception is a stop, never
+ * a start: a hand save ([handleUserSavedParking]) asks the controller to end its capture.
  */
 class ParkingDetectionRuntime(
     private val store: DetectionStateStore,
@@ -68,6 +69,12 @@ class ParkingDetectionRuntime(
      */
     private val endParking: (suspend (Long) -> ParkingRecord?)? = null,
     private val analytics: (() -> AnalyticsRecording)? = null,
+    /**
+     * Ends the bounded Fused Location capture when the user saves a parking by hand
+     * (docs/05 §11c). Null in the tests that only care about state transitions, and in a
+     * build with no location session: the save then parks the machine and stops nothing.
+     */
+    private val stopLocationCapture: (suspend () -> Unit)? = null,
 ) {
 
     private val mutex = Mutex()
@@ -94,6 +101,22 @@ class ParkingDetectionRuntime(
 
     /** The user answered the prompt. Fed back so the state machine leaves `CANDIDATE_PENDING`. */
     suspend fun handleUserAnswer(event: DetectionEvent): List<DetectionEffect> = handle(listOf(event))
+
+    /**
+     * The user saved a parking themselves, not by answering a prompt (docs/05 §11c).
+     *
+     * Its own entry rather than [handleUserAnswer], because it is the one user event that
+     * also has to reach the location capture. The engine moves to `PARKED` — which is what
+     * lets §11 end this parking on the next drive away — and the capture a drive may have
+     * started is stopped, since the question it was gathering fixes for has been answered.
+     * The capture is stopped after the engine, outside the lock: it has a lock of its own,
+     * and a failure there must not cost the state machine its `PARKED`.
+     */
+    suspend fun handleUserSavedParking(atMillis: Long): List<DetectionEffect> {
+        val effects = handle(listOf(DetectionEvent.UserSavedParking(atMillis)))
+        stopLocationCapture?.invoke()
+        return effects
+    }
 
     /**
      * Nothing happened, and that is the point (docs/05 §3a).

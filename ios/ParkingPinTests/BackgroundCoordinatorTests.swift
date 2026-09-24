@@ -327,4 +327,21 @@ struct BackgroundCoordinatorTests {
         #expect(snapshot.lastLocationAccuracy == 12)
         #expect(snapshot.supersededLocationDropCount == 0)
     }
+
+    @Test("A parking saved by hand moves the engine to PARKED and is checkpointed (docs/05 §11c)")
+    func userSavedParkingIsCheckpointed() async {
+        // Arrange
+        let store = StubCheckpointStore(loadResult: .absent)
+        let coordinator = makeCoordinator(store: store, motion: StubMotionHistoryProvider())
+        await coordinator.rehydrate(launchReason: .userInitiated)
+        let savedAt = TestTime.offset(0)
+
+        // Act
+        await coordinator.userSavedParking(at: savedAt)
+
+        // Assert — the checkpoint is what makes the next drive away a departure, across
+        // process death included.
+        #expect(store.savedCheckpoints.last?.state == .parked)
+        #expect(store.savedCheckpoints.last?.stateEnteredAt == savedAt)
+    }
 }

@@ -1,0 +1,11 @@
+{
+  "name": "manual_save_parks",
+  "initialState": "IDLE",
+  "events": [
+    {"type":"user_saved","t":0}
+  ],
+  "expected": {
+    "candidate": false,
+    "finalState": "PARKED"
+  }
+}

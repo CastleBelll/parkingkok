@@ -52,6 +52,7 @@ class ParityFixtureTest {
             "the whole committed suite must run — a renamed fixture must fail loudly, not vanish",
             setOf(
                 "bus_repeated_stops_no_storm.json",
+                "manual_save_parks.json",
                 "quiet_transition_expires_no_candidate.json",
                 "red_light_no_candidate.json",
                 "subway_commute_underground.json",
@@ -147,6 +148,7 @@ class ParityFixtureTest {
         "timer_tick" -> DetectionEvent.TimerTick(atMillis)
         "user_confirmed" -> DetectionEvent.UserConfirmedParking(atMillis)
         "user_rejected" -> DetectionEvent.UserRejectedParking(atMillis)
+        "user_saved" -> DetectionEvent.UserSavedParking(atMillis)
         else -> error("unknown fixture event type '$type' — the §2 vocabulary is the contract")
     }
 

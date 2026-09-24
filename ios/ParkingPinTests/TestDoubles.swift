@@ -525,6 +525,16 @@ final class StubCandidateResolver: CandidateResolving {
     }
 }
 
+/// Records the parkings the user saved by hand, as the engine would hear of them.
+@MainActor
+final class StubManualParkingReporter: ManualParkingReporting {
+    private(set) var savedAt: [Date] = []
+
+    func userSavedParking(at date: Date) async {
+        savedAt.append(date)
+    }
+}
+
 enum TestCandidate {
     /// A candidate with a stated bucket, for the screens and the model — the policy's own
     /// tests are what hold the bucket to the evidence.

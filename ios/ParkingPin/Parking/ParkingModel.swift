@@ -19,6 +19,16 @@ struct ManualParkingDraft: Sendable, Equatable {
     }
 }
 
+/// How a parking saved by hand reaches the detection engine (docs/05 §11c).
+///
+/// A protocol rather than a reach for `DetectionRuntime.shared`, for the reason
+/// `CandidateResolving` is one: the model and its tests never need a Core Location stack
+/// to exist, and a build with no detection at all still saves parkings.
+@MainActor
+protocol ManualParkingReporting: AnyObject {
+    func userSavedParking(at date: Date) async
+}
+
 /// Application state for parking: the one place the store is read and written.
 ///
 /// Every screen observes this rather than holding its own store handle, so ending a
@@ -51,6 +61,12 @@ final class ParkingModel {
     /// which disables the widget and nothing else (CLAUDE.md: a missing capability is not
     /// an app-wide failure).
     private let snapshots: (any ActiveParkingSnapshotStoring)?
+    /// docs/05 §11c. `nil` when there is no detection to tell — the save is unaffected.
+    /// Weak because the runtime outlives every model and is not this model's to keep.
+    private weak var detection: (any ManualParkingReporting)?
+    /// The in-flight hand-off to detection. Kept so tests can await it; the save itself
+    /// never does.
+    private(set) var detectionReport: Task<Void, Never>?
 
     init(
         store: any ParkingStoring,
@@ -58,7 +74,8 @@ final class ParkingModel {
         photoStore: any ParkingPhotoStoring = UnavailableParkingPhotoStore(),
         clock: any DateProviding = SystemDateProvider(),
         analytics: any AnalyticsRecording = DisabledAnalyticsRecorder(),
-        snapshots: (any ActiveParkingSnapshotStoring)? = nil
+        snapshots: (any ActiveParkingSnapshotStoring)? = nil,
+        detection: (any ManualParkingReporting)? = nil
     ) {
         self.store = store
         self.locationProvider = locationProvider
@@ -66,6 +83,7 @@ final class ParkingModel {
         self.clock = clock
         self.analytics = analytics
         self.snapshots = snapshots
+        self.detection = detection
     }
 
     var homePreviewSessions: [ParkingSession] {
@@ -200,8 +218,21 @@ final class ParkingModel {
         if saved {
             analytics.record(.parkingManualSaved)
             attachCurrentFix(to: session.id, improving: location)
+            reportToDetection(savedAt: now)
         }
         return saved
+    }
+
+    /// docs/05 §11c: tell the engine the car is parked, so driving away can end this record.
+    ///
+    /// Detached like `attachCurrentFix`: the hop crosses the coordinator actor, which may be
+    /// busy with a wake, and the sheet must close on the save alone. Only a written record
+    /// is reported — a refused save has no parking for a departure to end.
+    private func reportToDetection(savedAt date: Date) {
+        guard let detection else { return }
+        detectionReport = Task {
+            await detection.userSavedParking(at: date)
+        }
     }
 
     /// Asks the OS where the car is and writes it onto a record already saved.

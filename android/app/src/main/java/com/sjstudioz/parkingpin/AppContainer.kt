@@ -441,6 +441,8 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
         // a transition must not pay to open Room, and only a confirmed departure calls this.
         endParking = { endedAtMillis -> EndParkingUseCase(parkingRepository, clock)(endedAtMillis) },
         analytics = { analyticsRecorder },
+        // §11c: a hand save answers the question a running capture was gathering fixes for.
+        stopLocationCapture = { locationSessionController.stop() },
     )
 
     val transitionEventIngestor: TransitionEventIngestor = TransitionEventIngestor(

@@ -133,6 +133,41 @@ class ParkingDetectionRuntimeTest {
     }
 
     @Test
+    fun `a hand save while a prompt is up withdraws it and parks the machine`() = runTest {
+        // Arrange — docs/05 §11c: the user saved the parking themselves instead of answering.
+        driveAndPark()
+        val candidate = assertNotNull(store.readCandidateOnce())
+
+        // Act
+        runtime.handleUserSavedParking(START + DRIVE_MILLIS + 60_000)
+
+        // Assert — retired, which is not a rejection, and PARKED so §11 watches the departure.
+        assertEquals(DetectionState.PARKED, runtime.restore().state)
+        assertNull(store.readCandidateOnce())
+        assertEquals(listOf(candidate.id), notifier.withdrawn)
+    }
+
+    @Test
+    fun `a hand save stops the location capture`() = runTest {
+        // Arrange — the Fused Location request is not the engine's to own, so the runtime
+        // is what reaches it when the user has answered the question capture was for.
+        var stops = 0
+        val withCapture = ParkingDetectionRuntime(
+            store = store,
+            candidates = { coordinator },
+            stopLocationCapture = { stops++ },
+        )
+        withCapture.handleMotion(motion(MotionEventKind.ENTERED_VEHICLE, START))
+
+        // Act
+        withCapture.handleUserSavedParking(START + 60_000)
+
+        // Assert
+        assertEquals(1, stops)
+        assertEquals(DetectionState.PARKED, withCapture.restore().state)
+    }
+
+    @Test
     fun `a low confidence candidate is stored and not announced`() = runTest {
         // A drive with nothing but a 90-second vehicle stretch behind it: §7's duration and
         // distance clauses are both unmet, so §8's `trip below minimum` applies and §9 puts

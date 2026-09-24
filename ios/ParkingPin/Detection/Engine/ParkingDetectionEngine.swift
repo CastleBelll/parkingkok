@@ -235,7 +235,7 @@ actor ParkingDetectionEngine {
             return []
         case .vehicleEnter, .vehicleExit, .walkingEnter, .stationaryEnter, .stationaryExit,
              .carLinkConnected, .carLinkDisconnected, .timerTick,
-             .userConfirmedParking, .userRejectedParking:
+             .userConfirmedParking, .userRejectedParking, .userSavedParking:
             return []
         }
     }
@@ -260,6 +260,8 @@ actor ParkingDetectionEngine {
             return resolveCandidate(confirmed: true, now: now)
         case .userRejectedParking:
             return resolveCandidate(confirmed: false, now: now)
+        case .userSavedParking:
+            return adoptUserSavedParking(now: now)
         // §3a has no row for these: `stationary_exit` inside a drive is a car leaving a
         // light, a fix is evidence, a degradation is supporting evidence, and a tick is
         // only an invitation to re-examine the windows.
@@ -594,6 +596,39 @@ actor ParkingDetectionEngine {
         checkpoint.candidateId = nil
         hasProducedCandidateInSession = false
         return moveTo(confirmed ? .parked : .idle, now: now)
+    }
+
+    /// §3a `*any* → PARKED` (§11c): the user saved a parking themselves.
+    ///
+    /// The user has said where the car is, and nothing the engine was inferring outranks
+    /// that — so whatever was in flight is dropped without a report. No `sessionEnded`, no
+    /// candidate: the user just answered the question those were building toward. And no
+    /// `endActiveParking` either, because the app's save flow has already closed any
+    /// previous record, and emitting it here would close the one just written.
+    ///
+    /// A pending candidate is withdrawn the way expiry withdraws it (§10), not the way a
+    /// rejection does: the user did not say "not parked", they said "parked, here". It is
+    /// inlined rather than routed through `retirePendingCandidate`, which would detour the
+    /// state through `IDLE` and write a checkpoint nobody needs.
+    private func adoptUserSavedParking(now: Date) -> [DetectionEffect] {
+        var effects: [DetectionEffect] = []
+        if let candidate = pendingCandidate {
+            pendingCandidate = nil
+            effects.append(.withdrawCandidate(id: candidate.id))
+        }
+        // A bounded session is open exactly while `driving` is set — including the one
+        // `PARKED` opens on `vehicle_enter` to measure §11's bars.
+        if driving != nil {
+            effects.append(.stopLocationCapture)
+        }
+        driving = nil
+        transition = nil
+        // Vehicle activity is over: the next `vehicle_enter` opens a departure's evidence,
+        // which §11's bars and §7's guard then have to earn from scratch.
+        isVehicleActive = false
+        vehicleActiveSince = nil
+        hasProducedCandidateInSession = false
+        return effects + moveTo(.parked, now: now)
     }
 
     // MARK: - Session lifecycle

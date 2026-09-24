@@ -67,6 +67,7 @@ export const EVENT_TYPES = [
   'timer_tick',
   'user_confirmed',
   'user_rejected',
+  'user_saved',
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 
