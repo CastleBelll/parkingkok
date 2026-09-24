@@ -57,6 +57,9 @@ class CandidateAnswerReachesEngineTest {
 
     private val clock = MutableTestClock(epochMillis = START)
 
+    /** How often the runtime reached the location capture — only a hand save does (§11c). */
+    private var captureStops = 0
+
     @Before
     fun setUp() {
         Dispatchers.setMain(dispatcher)
@@ -76,6 +79,7 @@ class CandidateAnswerReachesEngineTest {
             store = store,
             candidates = { coordinator },
             engine = ParkingDetectionEngine { "engine-candidate-${nextId++}" },
+            stopLocationCapture = { captureStops++ },
         )
     }
 
@@ -113,7 +117,53 @@ class CandidateAnswerReachesEngineTest {
             runtime.restore().state,
         )
         assertEquals("B3", checkNotNull(repository.findActive()).floor?.displayLabel)
+        assertEquals("answering a candidate is a confirmation, not a hand save", 0, captureStops)
     }
+
+    @Test
+    fun `a manual save parks the machine so the departure is watched`() = runTest {
+        // Arrange — docs/05 §11c: no candidate, the machine idle, the user saving by hand.
+        val viewModel = manualViewModel()
+        viewModel.onFloorChange("4F")
+
+        // Act
+        viewModel.onSave()
+        val settled = viewModel.uiState.first { it.savedRecordId != null || it.alreadyActive }
+
+        // Assert — `UserConfirmedParking` would have left an IDLE machine where it was.
+        assertNotNull(settled.savedRecordId)
+        assertEquals(DetectionState.PARKED, runtime.restore().state)
+        assertEquals(START, runtime.restore().stateEnteredAtMillis)
+        assertEquals(1, captureStops)
+    }
+
+    @Test
+    fun `a manual save refused for an open parking tells the machine nothing`() = runTest {
+        // Arrange — a parking is already open, so this save writes nothing.
+        manualViewModel().apply { onSave() }.uiState.first { it.savedRecordId != null }
+        val refused = manualViewModel()
+
+        // Act — vehicle evidence first, which a second hand save would drop (§11c).
+        runtime.handleMotion(motion(MotionEventKind.ENTERED_VEHICLE, START + 1_000))
+        refused.onSave()
+        refused.uiState.first { it.alreadyActive }
+
+        // Assert
+        assertNotNull("the departure evidence is still being gathered", runtime.restore().session)
+        assertEquals(1, captureStops)
+    }
+
+    private fun manualViewModel() = ManualParkingViewModel(
+        saveManualParking = SaveManualParkingUseCase(
+            repository = repository,
+            locationProvider = { null },
+            clock = clock,
+            idGenerator = { UUID.randomUUID().toString() },
+            analytics = RecordingAnalytics(),
+        ),
+        detectionRuntime = runtime,
+        clock = clock,
+    )
 
     @Test
     fun `주차 아님 returns the machine to IDLE`() = runTest {

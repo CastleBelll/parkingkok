@@ -138,6 +138,36 @@ class FusedLocationSessionControllerTest {
     }
 
     @Test
+    fun `a parking saved by hand ends a running drive capture`() = runTest {
+        // Arrange — docs/05 §11c: the user said where the car is, so the fixes a drive was
+        // collecting toward that answer are no longer worth the battery.
+        val f = fixture()
+        f.controller.onMotionEvent(motion(MotionEventKind.ENTERED_VEHICLE, startMillis))
+        assertTrue(f.registrar.isRegistered)
+
+        // Act
+        val state = f.controller.stop()
+
+        // Assert
+        assertEquals(LocationSessionMode.IDLE, state.mode)
+        assertNull("the drive's evidence goes with it", state.evidence)
+        assertFalse(f.registrar.isRegistered)
+    }
+
+    @Test
+    fun `stopping with no capture running touches nothing`() = runTest {
+        // Arrange — the ordinary hand save: nothing was being captured.
+        val f = fixture()
+
+        // Act
+        val state = f.controller.stop()
+
+        // Assert
+        assertEquals(LocationSessionMode.IDLE, state.mode)
+        assertEquals(0, f.registrar.removeCalls)
+    }
+
+    @Test
     fun `a rejected request is not recorded as a live session`() = runTest {
         // Arrange — believing a registration exists when it does not is what leaks one.
         val f = fixture()

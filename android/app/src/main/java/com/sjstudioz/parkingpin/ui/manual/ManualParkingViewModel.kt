@@ -99,13 +99,17 @@ class ManualParkingViewModel(
     private val candidateId: String? = null,
     private val coordinator: ParkingCandidateCoordinator? = null,
     /**
-     * Where a `직접 입력` confirmation reaches the §3a state machine.
+     * Where a save reaches the §3a state machine, on both arrivals.
      *
-     * The same answer as the one-tap floor chip on the confirmation screen, so it has to
-     * move the machine the same way: without it the record exists and the engine sits in
-     * `CANDIDATE_PENDING` until the 45 minutes run out, and §12's one-candidate rule keeps
-     * the next trip silent for that whole time. Null on the FR-001 manual path, which is
-     * not a candidate and has no state machine to move.
+     * A `직접 입력` confirmation is the same answer as the one-tap floor chip on the
+     * confirmation screen, so it has to move the machine the same way: without it the record
+     * exists and the engine sits in `CANDIDATE_PENDING` until the 45 minutes run out, and
+     * §12's one-candidate rule keeps the next trip silent for that whole time.
+     *
+     * An FR-001 manual save is not an answer, but the machine has to hear it too
+     * (docs/05 §11c): §11 watches for a departure only from `PARKED`, so a parking the
+     * engine was never told about is one no drive away could ever end. Null in compositions
+     * with no detection at all; the save is complete without it.
      */
     private val detectionRuntime: ParkingDetectionRuntime? = null,
     /**
@@ -259,7 +263,12 @@ class ManualParkingViewModel(
     }
 
     private suspend fun applySaveResult(result: SaveManualParkingResult) {
-        if (result is SaveManualParkingResult.Saved) attachPillarPhoto(result.record.id)
+        if (result is SaveManualParkingResult.Saved) {
+            // Only a write that happened: `AlreadyActive` saved nothing, and telling the
+            // machine a car was parked would drop the departure evidence of the open one.
+            detectionRuntime?.handleUserSavedParking(clock.nowEpochMillis())
+            attachPillarPhoto(result.record.id)
+        }
         _uiState.update {
             when (result) {
                 is SaveManualParkingResult.Saved ->

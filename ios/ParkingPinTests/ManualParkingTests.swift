@@ -18,13 +18,19 @@ struct ManualParkingTests {
 
     private func makeModel(
         locationProvider: any ParkingLocationProviding = UnavailableParkingLocationProvider(),
-        clock: any DateProviding = FixedDateProvider(ManualParkingTests.now)
+        clock: any DateProviding = FixedDateProvider(ManualParkingTests.now),
+        detection: (any ManualParkingReporting)? = nil
     ) throws -> ParkingModel {
         let store = try SwiftDataParkingStore(
             container: SwiftDataParkingStore.makeInMemoryContainer(),
             clock: clock
         )
-        return ParkingModel(store: store, locationProvider: locationProvider, clock: clock)
+        return ParkingModel(
+            store: store,
+            locationProvider: locationProvider,
+            clock: clock,
+            detection: detection
+        )
     }
 
     @Test("With no permission of any kind, a manual parking saves and reads back")
@@ -104,6 +110,51 @@ struct ManualParkingTests {
         #expect(model.failure != nil)
         #expect(model.activeSession?.id == firstID)
         #expect(model.activeSession?.floor?.displayText == "B3")
+    }
+
+    @Test("A manual save tells detection the car is parked, at the moment it was saved")
+    func manualSaveReportsToDetection() async throws {
+        // docs/05 §11c: without this the engine never reaches `PARKED` for a parking saved
+        // by hand, and driving away from it ends nothing.
+        // Arrange
+        let detection = StubManualParkingReporter()
+        let model = try makeModel(detection: detection)
+
+        // Act
+        let saved = await model.saveManualParking(ManualParkingDraft(floorText: "4F"))
+        await model.detectionReport?.value
+
+        // Assert
+        #expect(saved)
+        #expect(detection.savedAt == [now])
+    }
+
+    @Test("A save that failed tells detection nothing")
+    func failedManualSaveReportsNothing() async throws {
+        // Arrange — the second save is refused (FR-004), so there is no new parking to arm.
+        let detection = StubManualParkingReporter()
+        let model = try makeModel(detection: detection)
+        _ = await model.saveManualParking(ManualParkingDraft(floorText: "B3"))
+        await model.detectionReport?.value
+
+        // Act
+        let saved = await model.saveManualParking(ManualParkingDraft(floorText: "B1"))
+        await model.detectionReport?.value
+
+        // Assert
+        #expect(!saved)
+        #expect(detection.savedAt.count == 1, "only the save that was written reaches the engine")
+    }
+
+    @Test("With no detection attached, a manual save still works")
+    func manualSaveWithoutDetection() async throws {
+        // CLAUDE.md: manual parking never depends on detection being present.
+        let model = try makeModel(detection: nil)
+
+        let saved = await model.saveManualParking(ManualParkingDraft(floorText: "B2"))
+
+        #expect(saved)
+        #expect(model.detectionReport == nil)
     }
 
     @Test("Ending the parking moves it into the history the home preview reads")

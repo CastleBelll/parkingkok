@@ -234,9 +234,10 @@ sealed interface DetectionEffect {
     /**
      * Take the candidate down without recording an answer.
      *
-     * §3a's reconnect row and the 45-minute expiry both land here. Neither is a rejection:
-     * the user said nothing, and reporting one would poison the single distribution §10a
-     * calls the event that pays for the whole feature.
+     * §3a's reconnect row and the 45-minute expiry both land here, and so does §11c's hand
+     * save. None is a rejection: the user said nothing — or, for the save, said "parked" —
+     * and reporting one would poison the single distribution §10a calls the event that pays
+     * for the whole feature.
      */
     data class RetireCandidate(val candidateId: String) : DetectionEffect
 
@@ -317,6 +318,11 @@ class ParkingDetectionEngine(
      * edge halves the way iOS's `ingest`/`applyEdge` already are — docs/05 §3a.
      */
     fun handle(state: DetectionEngineState, event: DetectionEvent): EngineStep {
+        // §3a's `any -> PARKED` row is answered before any evidence is folded or any window
+        // judged: the user has said where the car is, and nothing the engine was inferring
+        // — including a window that happened to close at this instant — outranks that.
+        if (event is DetectionEvent.UserSavedParking) return userSavedParking(state, event.atMillis)
+
         val effects = mutableListOf<DetectionEffect>()
 
         // The evidence this event carries, folded **before** the windows are judged. This is
@@ -527,6 +533,9 @@ class ParkingDetectionEngine(
             is DetectionEvent.UserConfirmedParking,
             is DetectionEvent.UserRejectedParking,
             -> state
+
+            // Answered in [handle] before any fold, so it never reaches here.
+            is DetectionEvent.UserSavedParking -> state
         }.withGuardReasons(event.atMillis)
     }
 
@@ -847,6 +856,40 @@ class ParkingDetectionEngine(
         } else {
             EngineStep(state)
         }
+    }
+
+    /**
+     * §11c: the user saved a parking themselves, so the car is parked — from any state.
+     *
+     * The travel session goes, whole and silently: its driving evidence, a parking
+     * transition, a departure's evidence and the vehicle activity with them. No candidate,
+     * because the user just answered the question the session was building toward; and no
+     * [DetectionEffect.EndActiveParking], because the save flow closes the previous record
+     * itself and ending one here would close the record just written. Dropping the session
+     * is also what makes the next `vehicle_enter` open a *departure's* evidence, which
+     * §11's two bars and §7's guard then have to earn as before.
+     *
+     * A pending prompt is retired, as §10's rejection would retire it, but through
+     * [DetectionEffect.RetireCandidate] so it is not reported as one: the user did not say
+     * "not parked", they said "parked, here". Only from `CANDIDATE_PENDING` — elsewhere
+     * [DetectionEngineState.candidate] can be the snapshot of one already answered, and
+     * retiring that would write a history line for a candidate that did not expire.
+     *
+     * Location capture is not stopped here: the engine does not own the request (see
+     * [DetectionEffect]). [com.sjstudioz.parkingpin.detection.ParkingDetectionRuntime.handleUserSavedParking]
+     * does it beside this call.
+     */
+    private fun userSavedParking(state: DetectionEngineState, atMillis: Long): EngineStep {
+        val pending = state.candidate?.takeIf { state.state == DetectionState.CANDIDATE_PENDING }
+        return EngineStep(
+            state.copy(
+                state = DetectionState.PARKED,
+                stateEnteredAtMillis = atMillis,
+                session = null,
+                candidate = if (pending != null) null else state.candidate,
+            ),
+            listOfNotNull(pending?.let { DetectionEffect.RetireCandidate(it.id) }),
+        ).withCheckpoint()
     }
 
     // ── Shared moves ────────────────────────────────────────────────────────────────

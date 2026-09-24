@@ -15,6 +15,7 @@ import com.sjstudioz.parkingpin.domain.detection.ParkingDetectionEngine
 import com.sjstudioz.parkingpin.domain.location.LocationSample
 import com.sjstudioz.parkingpin.domain.parking.usecase.EndParkingUseCase
 import com.sjstudioz.parkingpin.domain.parking.usecase.ManualParkingInput
+import com.sjstudioz.parkingpin.domain.parking.usecase.SaveManualParkingResult
 import com.sjstudioz.parkingpin.domain.parking.usecase.SaveManualParkingUseCase
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
@@ -105,6 +106,29 @@ class AutoEndParkingTest {
         assertNotNull("ending a parking the user is still inside is the one unrecoverable move", repository.findActive())
     }
 
+    @Test
+    fun `driving away from a parking saved by hand closes it too`() = runTest {
+        // Arrange — docs/05 §11c's field report: saved from the home screen, no prompt ever
+        // answered. Before §11c the engine stayed IDLE and the drive below ended nothing.
+        val saved = SaveManualParkingUseCase(
+            repository = repository,
+            locationProvider = { null },
+            clock = clock,
+            idGenerator = { "record-1" },
+        )(ManualParkingInput(floorRaw = "4F"))
+        runtime.handleUserSavedParking(START)
+        assertEquals(DetectionState.PARKED, runtime.restore().state)
+
+        // Act
+        val departureEnteredAt = driveAway()
+
+        // Assert — closed, and closed when the car pulled away.
+        assertNull("driving away ends the hand-saved parking", repository.findActive())
+        val record = checkNotNull(repository.find((saved as SaveManualParkingResult.Saved).record.id))
+        assertEquals(departureEnteredAt, record.endedAtMillis)
+        assertTrue(analytics.events.any { it is AnalyticsEvent.ParkingAutoEnd })
+    }
+
     private suspend fun parkAndConfirm() {
         SaveManualParkingUseCase(
             repository = repository,
@@ -118,16 +142,27 @@ class AutoEndParkingTest {
         runtime.handleUserAnswer(DetectionEvent.UserConfirmedParking(START + 430_000L))
     }
 
-    /** §11's bars and then §7's: 90 s of vehicle activity and real distance covered. */
-    private suspend fun driveAway() {
+    /**
+     * §11's bars and then §7's: 90 s of vehicle activity and real distance covered.
+     *
+     * Returns when the machine entered `DEPARTURE_CANDIDATE`, which is the moment §11a
+     * stamps on the record it closes.
+     */
+    private suspend fun driveAway(): Long? {
         runtime.handleMotion(motion(MotionEventKind.ENTERED_VEHICLE, DEPART))
         var north = 0.0
         var at = DEPART
+        var departureEnteredAt: Long? = null
         repeat(12) {
             at += 30_000L
             north += 300.0
             runtime.handleLocations(listOf(fix(at, north)))
+            val state = runtime.restore()
+            if (state.state == DetectionState.DEPARTURE_CANDIDATE && departureEnteredAt == null) {
+                departureEnteredAt = state.stateEnteredAtMillis
+            }
         }
+        return departureEnteredAt
     }
 
     private fun fix(atMillis: Long, north: Double) = LocationSample(

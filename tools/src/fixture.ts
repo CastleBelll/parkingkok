@@ -168,6 +168,7 @@ const EVENT_EXTRA_KEYS: Record<EventType, readonly string[]> = {
   timer_tick: [],
   user_confirmed: ['floor'],
   user_rejected: [],
+  user_saved: [],
 };
 
 function parseEvent(value: unknown, path: string): FixtureEvent {

@@ -172,6 +172,7 @@ enum ParityFixtureRunner {
         case "timer_tick": return .timerTick(at: date)
         case "user_confirmed": return .userConfirmedParking(at: date)
         case "user_rejected": return .userRejectedParking(at: date)
+        case "user_saved": return .userSavedParking(at: date)
         default:
             throw ParityFixtureError.unknownEventType(event.type)
         }

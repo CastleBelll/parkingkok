@@ -404,6 +404,15 @@ actor BackgroundCoordinator {
         await apply(engine.handle(event), now: now)
     }
 
+    /// The user saved a parking by hand (docs/05 §11c: `*any* → PARKED`).
+    ///
+    /// `at` is the record's own start rather than this actor's clock, so the state the
+    /// checkpoint remembers was entered when the parking says it began. Called from
+    /// `ParkingModel` through `DetectionRuntime`, the same hop an answered candidate takes.
+    func userSavedParking(at date: Date) async {
+        await apply(engine.handle(.userSavedParking(at: date)), now: date)
+    }
+
     // MARK: - The car link (docs/05 §3a "The car link")
 
     /// The adapter's only entry for a car link.

@@ -89,5 +89,16 @@ sealed interface DetectionEvent {
     data class UserConfirmedParking(override val atMillis: Long) : DetectionEvent
 
     data class UserRejectedParking(override val atMillis: Long) : DetectionEvent
+
+    /**
+     * The user saved a parking themselves — from the home screen, not by answering a
+     * candidate (docs/05_PARKING_DETECTION_ENGINE.md §11c, contract §2 `user_saved`).
+     *
+     * Not a [UserConfirmedParking]: that one answers a prompt and means nothing outside
+     * `CANDIDATE_PENDING`. This one arrives in any state and moves every one of them to
+     * `PARKED`, because §11 only watches for a departure from there — and a parking the
+     * engine was never told about is one no drive away could ever end.
+     */
+    data class UserSavedParking(override val atMillis: Long) : DetectionEvent
 }
 

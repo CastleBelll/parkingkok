@@ -87,6 +87,20 @@ class FusedLocationSessionController(
     }
 
     /**
+     * Ends whatever capture is running, because the user saved a parking by hand
+     * (docs/05_PARKING_DETECTION_ENGINE.md §11c).
+     *
+     * The fixes a drive was collecting existed to answer "where did the car stop", and the
+     * user has just answered it. Without this a save made from the driver's seat left a
+     * DRIVING request running at high accuracy until its own two-hour ceiling. With nothing
+     * running it changes nothing, so a save with capture off or permission denied is free.
+     */
+    suspend fun stop(): LocationSessionState = mutex.withLock {
+        val state = store.readLocationSessionStateOnce()
+        applyPlan(stored = state, state = state, desiredMode = LocationSessionMode.IDLE, nowMillis = clock.nowEpochMillis())
+    }
+
+    /**
      * Explicit mode override for the P0 diagnostics screen, so bounded capture — and the
      * fact that it works with no foreground service — can be exercised without a drive.
      * Not a product path.

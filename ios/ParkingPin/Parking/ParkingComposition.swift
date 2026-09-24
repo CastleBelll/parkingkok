@@ -64,7 +64,9 @@ struct ParkingComposition {
                 store: store,
                 photoStore: photoStore,
                 analytics: AnalyticsComposition.recorder,
-                snapshots: snapshots
+                snapshots: snapshots,
+                // docs/05 §11c: a parking saved by hand arms the departure.
+                detection: DetectionRuntime.shared
             )
             return ParkingComposition(
                 model: model,
@@ -83,7 +85,8 @@ struct ParkingComposition {
             store: fallbackStore,
             photoStore: photoStore,
             analytics: AnalyticsComposition.recorder,
-            snapshots: snapshots
+            snapshots: snapshots,
+            detection: DetectionRuntime.shared
         )
         return ParkingComposition(
             model: fallbackModel,

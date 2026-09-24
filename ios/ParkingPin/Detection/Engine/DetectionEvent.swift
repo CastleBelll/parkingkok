@@ -48,6 +48,11 @@ enum DetectionEvent: Sendable, Equatable {
     case timerTick(at: Date)
     case userConfirmedParking(at: Date)
     case userRejectedParking(at: Date)
+    /// The user saved a parking themselves rather than by answering a candidate
+    /// (docs/05 §11c). Distinct from `userConfirmedParking` because it is valid from every
+    /// state, not only `CANDIDATE_PENDING` — and it is what arms §11's departure for the
+    /// records most users actually have.
+    case userSavedParking(at: Date)
 
     /// When the event says it happened — never when the engine got round to it. Expiry and
     /// every §3a window are measured from this, so a wake minutes late must not buy the
@@ -64,7 +69,8 @@ enum DetectionEvent: Sendable, Equatable {
              let .carLinkDisconnected(at, _),
              let .timerTick(at),
              let .userConfirmedParking(at),
-             let .userRejectedParking(at):
+             let .userRejectedParking(at),
+             let .userSavedParking(at):
             at
         case let .location(fix):
             fix.timestamp

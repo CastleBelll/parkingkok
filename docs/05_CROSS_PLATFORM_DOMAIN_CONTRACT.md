@@ -18,6 +18,7 @@ VehicleProjectionDisconnected(at, platform)
 TimerTick(at)
 UserConfirmedParking(at, floor?)
 UserRejectedParking(at)
+UserSavedParking(at)
 ```
 
 Platform mapping:
@@ -25,6 +26,8 @@ Platform mapping:
 - Android IN_VEHICLE transition -> direct mapping
 - iOS walking -> MotionStartedWalking
 - Android WALKING ENTER -> direct mapping
+- UserSavedParking: the user saved a parking record themselves, not by answering a
+  candidate. It moves every state to `PARKED` (`docs/05_PARKING_DETECTION_ENGINE.md` §11c)
 - Android STILL ENTER/EXIT -> MotionBecameStationary / MotionStoppedBeingStationary.
   `docs/04_ANDROID_IMPLEMENTATION.md` §2가 supporting evidence로 요구하고 실기기에서
   실제로 관측된다. iOS는 Core Motion `stationary` 플래그의 전이에서 유도한다
@@ -48,6 +51,7 @@ trace(§9)와 fixture(§8)가 쓰는 문자열. 플랫폼 내부 표현과 별�
 | BluetoothCarDisconnected | `bluetooth_car_disconnected` |
 | UserConfirmedParking | `user_confirmed` |
 | UserRejectedParking | `user_rejected` |
+| UserSavedParking | `user_saved` |
 
 ### Quality bucket
 `LocationQualityDegraded`의 `fromBucket`/`toBucket`:

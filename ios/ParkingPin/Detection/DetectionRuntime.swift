@@ -416,6 +416,20 @@ extension DetectionRuntime: CandidateResolving {
     }
 }
 
+/// docs/05 §11c: a parking saved by hand puts the engine in `PARKED`, so the next drive
+/// away can end it.
+///
+/// Not gated on Smart Detection's opt-in. The row starts nothing — at most it stops a
+/// capture the opt-out has already stopped — so while detection is off it is one
+/// checkpoint write. What it buys is a checkpoint that is still true when detection is
+/// turned back on: the car *is* parked, and the first drive after re-enabling ends it.
+extension DetectionRuntime: ManualParkingReporting {
+    func userSavedParking(at date: Date) async {
+        await coordinator.userSavedParking(at: date)
+        await exportDiagnostics()
+    }
+}
+
 extension DetectionRuntime: SignificantLocationMonitorDelegate {
     func monitorDidChangeAuthorization(_ authorization: LocationAuthorization) {
         locationAuthorization = authorization

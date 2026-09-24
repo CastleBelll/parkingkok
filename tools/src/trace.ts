@@ -136,6 +136,7 @@ const EVENT_EXTRA_KEYS: Record<EventType, readonly string[]> = {
   timer_tick: [],
   user_confirmed: ['floor'],
   user_rejected: [],
+  user_saved: [],
 };
 
 function parseLabel(value: unknown, path: string): TraceLabel {

@@ -684,6 +684,112 @@ class ParkingDetectionEngineTest {
         assertNull(createCandidate(step.effects).lastReliableLocation)
     }
 
+    // ── §11c: a parking the user saved themselves ───────────────────────────────────
+
+    @Test
+    fun `IDLE to PARKED when the user saves a parking by hand`() {
+        // Arrange
+        val idle = idle()
+
+        // Act
+        val step = engine.handle(idle, DetectionEvent.UserSavedParking(T1))
+
+        // Assert
+        assertEquals(DetectionState.PARKED, step.state.state)
+        assertEquals(T1, step.state.stateEnteredAtMillis)
+        assertNull(step.state.session)
+        assertEquals(0, step.state.candidatesCreated)
+        assertTrue("§14: the move is checkpointed", step.effects.any { it is DetectionEffect.PersistCheckpoint })
+        assertTrue(step.effects.none { it is DetectionEffect.CreateCandidate })
+    }
+
+    @Test
+    fun `a hand-saved parking from any inferring state lands in PARKED and ends nothing`() {
+        // Arrange — every state that holds a travel session the save makes moot.
+        val inferring = mapOf(
+            "DRIVING_CANDIDATE" to idle().handle(DetectionEvent.VehicleEnter(T0)),
+            "DRIVING" to driving(),
+            "PARKING_TRANSITION" to driving().handle(DetectionEvent.VehicleExit(T0 + 1_000)),
+            "DEPARTURE_CANDIDATE" to departureCandidate(),
+        )
+        val savedAt = T1 + 3_600_000L
+
+        inferring.forEach { (name, before) ->
+            // Act
+            val step = engine.handle(before, DetectionEvent.UserSavedParking(savedAt))
+
+            // Assert — §11c: whatever was being inferred is dropped, silently. In particular
+            // `EndActiveParking` here would close the record the user just wrote.
+            assertEquals(name, DetectionState.PARKED, step.state.state)
+            assertEquals(name, savedAt, step.state.stateEnteredAtMillis)
+            assertNull("$name: the session and its vehicle activity are gone", step.state.session)
+            assertTrue(
+                "$name: a save neither creates, retires nor ends anything",
+                step.effects.all { it is DetectionEffect.PersistCheckpoint },
+            )
+        }
+    }
+
+    @Test
+    fun `CANDIDATE_PENDING to PARKED on a hand save retires the prompt without rejecting it`() {
+        // Arrange
+        val pending = pendingCandidate()
+        val candidateId = checkNotNull(pending.candidate).id
+
+        // Act
+        val step = engine.handle(pending, DetectionEvent.UserSavedParking(T0 + 40_000))
+
+        // Assert — §11c: retired as a rejection would be, but it is not one; the effect
+        // carries no answer and nothing ends.
+        assertEquals(DetectionState.PARKED, step.state.state)
+        assertNull(step.state.candidate)
+        assertEquals(DetectionEffect.RetireCandidate(candidateId), step.effects.filterIsInstance<DetectionEffect.RetireCandidate>().single())
+        assertTrue(step.effects.none { it is DetectionEffect.EndActiveParking || it is DetectionEffect.MarkParkingActive })
+    }
+
+    @Test
+    fun `the drive a hand save interrupted produces no candidate when it ends`() {
+        // Arrange — saved from the driver's seat, then the phone reports the walk away.
+        val saved = driving().handle(DetectionEvent.UserSavedParking(T0 + 1_000))
+
+        // Act
+        val step = engine.handle(
+            saved.handle(DetectionEvent.VehicleExit(T0 + 2_000)),
+            DetectionEvent.WalkingEnter(T0 + 30_000),
+        )
+
+        // Assert
+        assertEquals(DetectionState.PARKED, step.state.state)
+        assertEquals(0, step.state.candidatesCreated)
+    }
+
+    @Test
+    fun `driving away from a hand-saved parking ends it where the car pulled away`() {
+        // Arrange — the field report behind §11c: saved by hand, never answered a prompt.
+        val parked = idle().handle(DetectionEvent.UserSavedParking(T0))
+
+        // Act — get in, clear §11's two bars, then §7's guard in full.
+        var state = parked.handle(DetectionEvent.VehicleEnter(T1))
+        var departureEnteredAt: Long? = null
+        val effects = mutableListOf<DetectionEffect>()
+        for (leg in 1..8) {
+            val step = engine.handle(
+                state,
+                DetectionEvent.Location(fix(T1 + leg * 30_000L, accuracyM = 5f, speedMps = 15f, north = leg * 250.0)),
+            )
+            state = step.state
+            effects += step.effects
+            if (state.state == DetectionState.DEPARTURE_CANDIDATE && departureEnteredAt == null) {
+                departureEnteredAt = state.stateEnteredAtMillis
+            }
+        }
+
+        // Assert
+        assertEquals(DetectionState.DRIVING, state.state)
+        val ended = effects.filterIsInstance<DetectionEffect.EndActiveParking>().single()
+        assertEquals(checkNotNull(departureEnteredAt) { "never reached DEPARTURE_CANDIDATE" }, ended.endedAtMillis)
+    }
+
     private fun createCandidate(effects: List<DetectionEffect>): DetectionEffect.CreateCandidate =
         effects.filterIsInstance<DetectionEffect.CreateCandidate>().single()
 

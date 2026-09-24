@@ -52,7 +52,7 @@ Vehicle activity ended/low speed. Wait bounded window for walking/stationary/loc
 Persist candidate + notify.
 
 ### PARKED
-User-confirmed or policy-confirmed active parking.
+User-confirmed or policy-confirmed active parking — or one the user saved themselves (§11c).
 
 ### DEPARTURE_CANDIDATE
 New meaningful vehicle session while PARKED.
@@ -84,6 +84,7 @@ field data exists. Neither platform may pick its own value for one.
 | `PARKED` | `DEPARTURE_CANDIDATE` | vehicle ≥ 90s **and** movement ≥ 500m (§11) |
 | `DEPARTURE_CANDIDATE` | `DRIVING` | departure confirmed (§11) |
 | `DEPARTURE_CANDIDATE` | `PARKED` | evidence lapses |
+| *any* | `PARKED` | `user_saved` — the user saved a parking themselves (§11c) |
 
 ### Constants
 
@@ -833,6 +834,45 @@ the record was never touched.
 
 No fixture covers this: §3a forbids a fixture that depends on a link event being present, so
 it is held by per-platform engine tests on both sides.
+
+### 11c. A parking the user saved arms the departure too (2026-09-24)
+
+**`user_saved` moves every state to `PARKED`.** §11 watches for a departure only from
+`PARKED`, and the one road into `PARKED` was answering a candidate. A parking saved from the
+home screen never told the engine anything, so the engine did not know a car was parked and
+a drive away from it was just a drive. Field report, iPhone, 2026-09-24: 4F saved by hand
+at 11:42, `vehicle_enter` at 12:33, a confirmed drive from 12:45 — and the record stayed
+open until the next save closed it. Most records on the device are `manual`, so in practice
+§11a almost never had anything to end.
+
+What the row does, identically on both platforms:
+- **From any state, to `PARKED`**, entered at the event's time. The user has said where the
+  car is; nothing the engine was inferring outranks that.
+- **Whatever was being inferred is dropped, silently.** An open driving session, a parking
+  transition, a departure's evidence: gone, location capture stopped, no candidate and no
+  `sessionEnded` report. The user just answered the question those were building toward.
+- **A pending candidate is retired**, as a rejection would retire it (§10) but without
+  counting as one — the user did not say "not parked", they said "parked, here".
+- **It ends nothing.** The app's save flow closes the previous record itself; the engine
+  emitting `EndActiveParking` here would close the record just written.
+- **Vehicle activity is over.** The next `vehicle_enter` opens a departure's evidence, which
+  §11's two bars and §7's guard then have to earn as before.
+
+**One known difference, outside the parity fields.** A candidate left behind by
+`CANDIDATE_PENDING → DRIVING_CANDIDATE` (§3a keeps it so the user can still answer it) is
+withdrawn by iOS on `user_saved`, and left to its 45-minute expiry by Android. Android's
+engine keeps the last candidate's snapshot after it is answered, so outside
+`CANDIDATE_PENDING` it cannot tell a live prompt from a settled one. Final state and
+candidate creation are identical; only how long a stale notification stays up differs.
+
+**The cost, accepted on 2026-09-24:** a parking saved by hand can now be ended by a ride in
+someone else's vehicle — a bus or taxi that clears §11's bars and §7's guard. Detected
+parkings already carried that risk (§2's fundamental limit); this extends it to every
+parking. No undo notification was added with it.
+
+`user_saved` is a contract event (docs/05_CROSS_PLATFORM_DOMAIN_CONTRACT.md §2), fixed by
+`platform-tests/manual_save_parks.json` and by per-platform engine tests for the departure
+that follows.
 
 ## 12. Taxi/Bus Mitigation
 - short trip guards
