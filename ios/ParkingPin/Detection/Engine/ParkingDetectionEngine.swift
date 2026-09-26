@@ -390,10 +390,18 @@ actor ParkingDetectionEngine {
     /// The record ends when the car pulled away — `checkpoint.stateEnteredAt` is when §11's
     /// two bars were first cleared — not now, which is however long §7's guard took to be
     /// satisfied afterwards.
+    ///
+    /// **The drive is confirmed here too.** §7's guard has just been met in full, which is a
+    /// stronger bar than the 90 s latch `promoteToDriving` sets. Leaving the latch unset made
+    /// `endDrivingSession` read this drive as unconfirmed and go straight to `IDLE`, so the
+    /// parking at the end of it was never detected — and since nearly every drive starts from
+    /// a parking, after the first one no parking was (iPhone, 2026-09-26: auto-ended at
+    /// 20:35, parked at 21:01, no candidate).
     private func confirmDeparture(now: Date) -> [DetectionEffect] {
         let departedAt = checkpoint.stateEnteredAt
         hasProducedCandidateInSession = false
-        return [.endActiveParking(at: departedAt)] + moveTo(.driving, now: now)
+        driving?.markConfirmed(at: now)
+        return [.endActiveParking(at: departedAt)] + moveTo(.driving, now: now) + [.drivingConfirmed(at: now)]
     }
 
     /// §11 `PARKED → DEPARTURE_CANDIDATE`: vehicle ≥ 90 s **and** movement ≥ 500 m.

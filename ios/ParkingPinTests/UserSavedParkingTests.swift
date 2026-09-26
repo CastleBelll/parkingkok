@@ -222,6 +222,41 @@ struct UserSavedParkingTests {
         #expect(ended == departureEnteredAt)
     }
 
+    /// Field data, iPhone, 2026-09-26: a parking was auto-ended at 20:35 by the departure,
+    /// the drive that followed parked at 21:01 — and no candidate was ever raised. The
+    /// departure moved to `DRIVING` without marking the drive confirmed, so the session end
+    /// read it as an unconfirmed drive and went straight to `IDLE`. In practice every drive
+    /// starts from a parking, so after the first one no parking was ever detected again.
+    @Test("The drive a departure opened can end in the next parking")
+    func departureDriveCanParkAgain() async throws {
+        // Arrange — parked, then driven away from (the test above).
+        let engine = await idleEngine()
+        _ = await engine.handle(.userSavedParking(at: at(0)))
+        let departAt = at(3600)
+        _ = await engine.handle(.vehicleEnter(at: departAt))
+        for step in 1 ... 12 {
+            _ = await engine.handle(
+                .location(fix(at: departAt.addingTimeInterval(Double(step) * 30), north: Double(step) * 300))
+            )
+        }
+        #expect(await engine.state == .driving)
+
+        // Act — arrive: the last fix where the car stopped, out of the car, walking away.
+        let arriveAt = departAt.addingTimeInterval(12 * 30)
+        var effects = await engine.handle(.location(fix(at: arriveAt.addingTimeInterval(20), north: 3600)))
+        effects += await engine.handle(.vehicleExit(at: arriveAt.addingTimeInterval(40)))
+        effects += await engine.handle(.walkingEnter(at: arriveAt.addingTimeInterval(60)))
+
+        // Assert
+        #expect(await engine.state == .candidatePending)
+        #expect(effects.contains {
+            if case .createCandidate = $0 {
+                return true
+            }
+            return false
+        })
+    }
+
     @Test("A saved parking survives process death as PARKED, and still arms the departure")
     func savedParkingSurvivesRestore() async throws {
         // Arrange — the checkpoint the save wrote, handed to a fresh process.
