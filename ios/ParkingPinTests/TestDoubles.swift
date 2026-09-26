@@ -155,12 +155,12 @@ final class StubBoundedLocationCapture: BoundedLocationCapturing, @unchecked Sen
     }
 
     /// The double reports the same shape the real capture does (docs/04_IOS §3a). It holds
-    /// no Core Location objects, so `holdsSessions` mirrors `isActive`.
+    /// no Core Location objects, so `isUpdating` mirrors `isActive`.
     func health() -> BoundedCaptureHealth {
         lock.withLock {
             BoundedCaptureHealth(
                 startedAt: lastStartedAt,
-                holdsSessions: active,
+                isUpdating: active,
                 updateCount: deliveredUpdates,
                 startedInForeground: lastStartedAt == nil ? nil : startsInForeground
             )

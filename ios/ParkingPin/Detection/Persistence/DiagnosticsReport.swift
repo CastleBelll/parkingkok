@@ -17,7 +17,7 @@ import Foundation
 struct DiagnosticsReport: Sendable, Equatable, Codable {
     /// Bumped to 9 by the §3a capture-health fields; 8 was the §7 distance-clause
     /// instrumentation.
-    static let schemaVersion = 10
+    static let schemaVersion = 11
 
     var schemaVersion: Int = DiagnosticsReport.schemaVersion
     var generatedAt: Date
@@ -71,7 +71,8 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
     /// started and Core Location said nothing" — the 2026-09-20 field data could not.
     var captureRequestedAt: Date?
     var captureStartedAt: Date?
-    var captureHoldsSessions: Bool
+    /// Schema 11 (was `captureHoldsSessions`): the capture is `CLLocationManager` now.
+    var captureIsUpdating: Bool
     var captureUpdateCount: Int
     /// Schema 10. Whether the capture began with the app active — see `BoundedCaptureHealth`.
     var captureStartedInForeground: Bool?
@@ -210,7 +211,7 @@ struct DiagnosticsReport: Sendable, Equatable, Codable {
         isCapturingDrivingLocation = snapshot.isCapturingDrivingLocation
         captureRequestedAt = snapshot.captureRequestedAt
         captureStartedAt = snapshot.captureHealth.startedAt
-        captureHoldsSessions = snapshot.captureHealth.holdsSessions
+        captureIsUpdating = snapshot.captureHealth.isUpdating
         captureUpdateCount = snapshot.captureHealth.updateCount
         captureStartedInForeground = snapshot.captureHealth.startedInForeground
         drivingSessionStartedAt = snapshot.drivingSessionStartedAt
