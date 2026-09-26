@@ -241,9 +241,12 @@ final class ParkingModel {
     /// Asks the OS where the car is and writes it onto a record already saved.
     ///
     /// Detached on purpose: the save has returned and the sheet has closed, so this is the
-    /// part the user never waits for. A fix that arrives after the parking was ended, or
-    /// after the record was deleted, updates nothing — `update` writes through the store,
-    /// which no longer has it.
+    /// part the user never waits for. A fix that arrives after the record was deleted
+    /// finds nothing to update. One that arrives after the parking was *ended* finds the
+    /// record in the history and is refused: a record the user has ended keeps the
+    /// coordinates it ended with — the rule Android's `SaveManualParkingUseCase` already
+    /// had. The comment once claimed the store refused it; it did not, and the 20 s deadline
+    /// made that window real.
     private func attachCurrentFix(to sessionID: UUID, improving existing: ParkedLocation?) {
         Task { [weak self, locationProvider] in
             guard let fix = await locationProvider.currentFix() else { return }
@@ -258,6 +261,12 @@ final class ParkingModel {
             guard let self, var session = self.session(id: sessionID) else {
                 #if PK_DEV
                     SaveLocationDiagnostics.note("attach", "sessionGone")
+                #endif
+                return
+            }
+            guard session.endedAt == nil else {
+                #if PK_DEV
+                    SaveLocationDiagnostics.note("attach", "sessionEnded")
                 #endif
                 return
             }
