@@ -790,6 +790,33 @@ class ParkingDetectionEngineTest {
         assertEquals(checkNotNull(departureEnteredAt) { "never reached DEPARTURE_CANDIDATE" }, ended.endedAtMillis)
     }
 
+    /**
+     * iPhone, 2026-09-26: a parking auto-ended at 20:35, the drive that followed parked at
+     * 21:01, and no candidate was raised — iOS moved the departure to DRIVING without
+     * marking the drive confirmed. Held here too so the platforms cannot drift on it.
+     */
+    @Test
+    fun `the drive a departure opened can end in the next parking`() {
+        // Arrange — parked, then driven away from (the test above).
+        var state = idle().handle(DetectionEvent.UserSavedParking(T0)).handle(DetectionEvent.VehicleEnter(T1))
+        for (leg in 1..8) {
+            state = state.handle(
+                DetectionEvent.Location(fix(T1 + leg * 30_000L, accuracyM = 5f, speedMps = 15f, north = leg * 250.0)),
+            )
+        }
+        assertEquals(DetectionState.DRIVING, state.state)
+
+        // Act — the car stops, the driver gets out and walks away.
+        val arrive = T1 + 8 * 30_000L
+        state = state.handle(DetectionEvent.Location(fix(arrive + 20_000, accuracyM = 5f, speedMps = 0f, north = 2_000.0)))
+        state = state.handle(DetectionEvent.VehicleExit(arrive + 40_000))
+        val step = engine.handle(state, DetectionEvent.WalkingEnter(arrive + 60_000))
+
+        // Assert
+        assertEquals(DetectionState.CANDIDATE_PENDING, step.state.state)
+        createCandidate(step.effects)
+    }
+
     private fun createCandidate(effects: List<DetectionEffect>): DetectionEffect.CreateCandidate =
         effects.filterIsInstance<DetectionEffect.CreateCandidate>().single()
 

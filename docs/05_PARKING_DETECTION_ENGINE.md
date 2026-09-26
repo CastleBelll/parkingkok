@@ -809,6 +809,15 @@ departure never confirmed — caught by the test written to prove it did.
 asks. Android never had this hazard because its `DrivingConfirmationGuard.evaluate` was
 already a function of the evidence rather than a flag on it.
 
+**The latch had a second hazard, found on 2026-09-26.** `DEPARTURE_CANDIDATE → DRIVING` never
+set it, so when that drive ended `endDrivingSession` read it as unconfirmed and went straight
+to `IDLE`: the parking at the end of a drive that began at a parking was never detected.
+Field data, iPhone: a parking auto-ended at 20:35, the car parked again at 21:01, no
+candidate. The departure now marks the drive confirmed and reports `drivingConfirmed`. It has
+just met §7's guard in full, which is the stronger bar. Held on both platforms by
+`The drive a departure opened can end in the next parking`. Android passed it unchanged, for
+the reason above.
+
 ### 11b. The car link opens a departure (2026-09-21)
 
 **`PARKED` + `car_link_connected` → `DEPARTURE_CANDIDATE`.** §3a already calls the link the
