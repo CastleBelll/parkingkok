@@ -92,6 +92,32 @@ class ParityFixtureTest {
     }
 
     @Test
+    fun `every committed draft is replayed`() {
+        // Arrange — the iOS runner lists the same eleven names (`ParityFixtureTests`), so a
+        // draft deleted together with its golden entry fails here too rather than vanishing
+        // from the golden gate on one platform.
+        val expected = setOf(
+            "field_s02_parked.json",
+            "field_s05_unknown.json",
+            "field_s06_parked.json",
+            "field_s22_unknown.json",
+            "field_s23_unknown.json",
+            "field_s24_unknown.json",
+            "field_s25_unknown.json",
+            "field_s27_unknown.json",
+            "field_s28_unknown.json",
+            "field_s29_unknown.json",
+            "field_s31_parked.json",
+        )
+
+        // Act
+        val drafts = draftFiles().map { it.name }.toSet()
+
+        // Assert
+        assertEquals(expected, drafts)
+    }
+
+    @Test
     fun `fixtures reach the state the contract expects`() {
         val failures = fixtureFiles().mapNotNull { file ->
             val fixture = json.decodeFromString<Fixture>(file.readText())

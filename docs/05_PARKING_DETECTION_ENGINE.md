@@ -615,7 +615,13 @@ not an engine choice:
   reboot, force-stop, app update, a revoked permission — the window must not survive either:
   the adapter closes it (rule 4's lost capture: the window goes, the candidate stays) before
   any other event of the new process is handled. A stored window whose capture is gone is
-  the state §19 forbids ("still holds the capture"), not a smaller window.
+  the state §19 forbids ("still holds the capture"), not a smaller window. "Running" is the
+  registration's own contract: a live record **and** both location permissions — foreground,
+  and on Android 10+ background (`FusedLocationSessionController.isCaptureRunning`). After a
+  downgrade to "only while using" Play services stops delivering to a background app, so a
+  window read as live on the foreground grant alone would let a later `vehicle_enter` resume a
+  drive nothing was recording; with the rule it is "Leaving a pending candidate behind"
+  (`DRIVING_CANDIDATE`, candidate kept), as on iOS.
 
 Neither difference is visible to a fixture (fixtures have no process death). Both are bounded
 by the same deadline: nothing resumes after `end + transitionWindow`, and the capture is
@@ -638,6 +644,73 @@ longer than `movementIdleWindow + transitionWindow` (8 minutes) with no
 movement still leaves a silent candidate behind, and a tunnel longer than that with no fix and
 no car link ends in `IDLE` — §13's "tunnel must remain DRIVING" holds only while a link is
 connected. Both are for §18 field tuning, not for a rule change on one trace.
+
+### Turning Smart Detection off (DECIDED 2026-09-28)
+
+The opt-out is the one boundary the user controls, and it must stop **every** location
+capture and close **every** window, on both platforms, the moment it is switched off — CLAUDE.md
+"no continuous location" and §19. It is one engine event with one outcome per state: iOS
+`endDrivingSession(reason: .smartDetectionDisabled)`, Android `DetectionEvent.SmartDetectionDisabled`,
+answered before any evidence is folded or any window judged (like `user_saved`):
+
+| state at the opt-out | result |
+|---|---|
+| `IDLE` | nothing |
+| `DRIVING_CANDIDATE`, `DRIVING`, `PARKING_TRANSITION` | the drive is dropped: `IDLE`, no candidate (iOS reports `sessionEnded(smart_detection_disabled)`) |
+| `CANDIDATE_PENDING` | a stop-only resume window closes; state and candidate stay (§10's 45 min still run) |
+| `PARKED` | a get-in session is dropped; `PARKED` |
+| `DEPARTURE_CANDIDATE` | `PARKED`, ending nothing, even with §7's guard met — turning detection off never closes a parking |
+
+In every state the result wants no capture, the vehicle-activity level ends, a candidate left
+behind by a new journey stays answerable, and **the car-link latch is cleared**: no link edge
+reaches the engine while detection is off (below), so a kept latch could outlive its link and
+hold `movementIdleWindow` off the next drive for good. The smallest rule that meets the goal:
+dropping only the capture (adapter-side) would leave a `DRIVING` whose window rows still run on
+the next event, and a new rule set per platform would be two rules to keep equal.
+
+**While detection is off, nothing reaches the engine that could open a capture.** No motion
+evidence, car-link edge or location fix is handed to it, and a relaunch while opted out ends
+whatever a process that died mid-opt-out left behind — without opening its capture first. The
+hand save (§11c) and the user's answer to a pending candidate still reach it: they open nothing.
+iOS: `BackgroundCoordinator.setSmartDetectionEnabled` (set before `rehydrate` on every launch)
+gates `rehydrate`'s motion replay, `handleSignificantChange`, `handleCarLink` and
+`handleDrivingFix`, and forgets the observed links so the first route sample after switching back
+on is a fresh edge. Android: `CarLinkReceiver` and `LocationUpdateReceiver` drop their input
+while `readDesiredEnabledOnce()` is false (the reboot path already refuses to reopen a capture
+the user switched off), and `DetectionRegistrationCoordinator.setDetectionEnabled(false)` feeds
+the opt-out event and stops the location session, releasing the foreground service. Android
+has no route to sample, so a link still connected when detection comes back on is heard at its
+next edge — an OS difference, not an engine one.
+
+**The relaunch sweep, per platform (DECIDED 2026-09-28).** The opt-out is two writes — the flag,
+then the engine's `.smartDetectionDisabled` end — and a process can die between them (or the
+second can fail). Whatever the engine state then holds is ended by the next launch that finds the
+flag off, before anything else reaches the engine: iOS `rehydrate` restores the checkpoint without
+opening its capture and applies the same end. Android does the same on app start and on
+reboot/package-replace recovery: when `readDesiredEnabledOnce()` is false and the stored engine
+state wants a capture or holds a session or window, the runtime's `handleSmartDetectionDisabled`
+runs (the same call the Settings toggle makes), and a failure of that end is caught and logged so
+it can never crash the Settings toggle — the next launch retries it. A stored state that wants
+nothing and holds nothing is left alone (no write). Without this, a stale `DRIVING` or stop-only
+window survived every gated batch and was judged against its old windows the day detection came
+back on — a different product outcome from iOS. Twins: iOS `DrivingSessionLifecycleTests` / Android
+`ParkingDetectionRuntimeTest` "A relaunch while Smart Detection is off ends the session a dead
+process left open" (flag off with `DRIVING` stored, fresh runtime → `IDLE`, no capture).
+
+Pinned on iOS by `ParkingTransitionEvidenceTests` "Opting out during DRIVING ends the session in
+IDLE and stops the capture" and "Opting out inside a stop-only window closes it and keeps the
+candidate" (then `vehicle_enter` → `DRIVING_CANDIDATE`, candidate not withdrawn),
+`DepartureTests` "The opt-out inside a departure returns to PARKED and ends nothing", and
+`DrivingSessionLifecycleTests` "While Smart Detection is off a car link connect opens no
+capture", "A relaunch while Smart Detection is off replays no motion into the engine", "A
+relaunch while Smart Detection is off ends the session a dead process left open" and "Turning
+Smart Detection back on hears a link that is already connected". Android's twins carry the
+engine-row names above (`ParkingDetectionEngineTest` `opting out during DRIVING ends the session
+in IDLE and stops the capture`, `opting out inside a stop-only window closes it and keeps the
+candidate`, `the opt-out inside a departure returns to PARKED and ends nothing`), and its
+entry-point gates are pinned by `ParkingDetectionRuntimeTest` `a car link while opted out opens
+no capture` and `a location batch while Smart Detection is off feeds nothing and releases the
+capture`.
 
 ### One candidate per travel session
 
@@ -1206,31 +1279,121 @@ the get-in", "A derived exit that confirms a departure also ends the drive" (And
 vehicle_exit that confirms a departure also ends the drive`), "A derived exit that does not meet
 the guard returns to PARKED" (`.walkingDetected`, `.vehicleEvidenceExpired`; twin `a
 vehicle_exit that does not meet the guard still returns to PARKED`), "The opt-out inside a
-departure returns to PARKED and ends nothing" (iOS only) and "A short departure restored before
+departure returns to PARKED and ends nothing" (§3a "Turning Smart Detection off") and "A short departure restored before
 its derived exit still becomes the next parking" (twin `a short departure restored before its
 exit still becomes the next parking`).
 
 **A lost capture decides nothing (DECIDED 2026-09-28).** A lost authorization or a failed
-capture (`.authorizationLost`, `.captureFailed`) in `PARKED` with a get-in open, or in
-`DEPARTURE_CANDIDATE`, only stops the capture: iOS emits `stopLocationCapture` and nothing else,
-and keeps the state, the session and the vehicle-activity level. The next walk, derived exit,
-edge or tick decides — §7's guard, §11's bars, the §11 lapse — exactly as it would have with the
-capture running and no fix arriving. This is the smallest rule both platforms can share: on
-Android a lost capture never reaches the engine (a revoked permission takes the Fused Location
-request and moves nothing), and iOS already reads it this way in `PARKING_TRANSITION`
-(`endInsideTransition`: the capture stops, motion stays free to confirm). The earlier iOS reading
-— a lost capture as a `vehicle_exit` — decided the departure on the spot and diverged whenever
-§7's duration clause came true after the loss while the vehicle evidence was still ≤ 300 s old:
-`shortDepartureBeforeTheExit` with the capture lost at +710 s went to `PARKED` on iOS, while
-Android's exit at +740 s met the guard by elapsed time, ended the parking at +700 s and raised the
-`medium` candidate. Pinned by iOS `DepartureTests` (each for `.authorizationLost` and
-`.captureFailed`) "Capture lost at +710 then exit at +740 still ends the parking at +700 and
-raises the medium candidate" (Android twin of the same name owed in `ParkingDetectionEngineTest`
-/ `ParkingDetectionRuntimeTest`: the same events, the loss being no engine event there),
-"Capture lost at +710 with no further edge lapses to PARKED stamped +900" (Android twin
-`ParkingDetectionRuntimeTest` `a departure that lost its capture lapses to PARKED and ends
-nothing`, whose next event at +950 s is a motion edge rather than a tick) and "A capture lost
-after getting back in keeps the get-in" (iOS only: Android's get-in is untouched by construction).
+capture (`.authorizationLost`, `.captureFailed`) in `PARKED` with a get-in open, in
+`DEPARTURE_CANDIDATE`, **and in `DRIVING_CANDIDATE` and `DRIVING`** (extended 2026-09-28), only
+stops the capture: iOS emits `stopLocationCapture` (and the
+checkpoint write that records the loss) and keeps the state, the session and the
+vehicle-activity level. The next walk, derived exit, edge or tick decides — §7's guard, §11's
+bars, the §11 lapse — exactly as it would have with the capture running and no fix arriving.
+This is the smallest rule both platforms can share: on Android a lost capture never reaches the
+engine (a revoked permission takes the Fused Location request and moves nothing), and iOS
+already reads it this way in `PARKING_TRANSITION` (`endInsideTransition`: the capture stops,
+motion stays free to confirm). The earlier iOS reading — a lost capture as a `vehicle_exit` —
+decided the departure on the spot and diverged whenever §7's duration clause came true after the
+loss while the vehicle evidence was still ≤ 300 s old: `shortDepartureBeforeTheExit` with the
+capture lost at +710 s went to `PARKED` on iOS, while Android's exit at +740 s met the guard by
+elapsed time, ended the parking at +700 s and raised the `medium` candidate.
+The same held for a drive: iOS used to end `DRIVING_CANDIDATE`/`DRIVING` in `IDLE` on a lost
+capture (no transition, no candidate), while on Android the drive stayed and the next
+`vehicle_exit` and walk raised the candidate — one real sequence, two final states. A drive that
+loses its capture now keeps its state, session and vehicle level on both platforms: a
+`DRIVING_CANDIDATE` still promotes on §3a's 90 s bar or lapses on its window, and a `DRIVING`
+still ends on its exit, walk, `movementIdle` or the adapter's silence bound.
+
+**A lost capture stays lost for its session (DECIDED 2026-09-28, N1).** Once a session —
+a get-in, a departure, a drive, and the `PARKING_TRANSITION` that drive ends in, including a
+drive that transition resumes — has no capture running, **nothing opens one for it again**
+until it ends, on either platform, whatever comes back in between: the permission granted
+again, a `vehicle_enter`, a `vehicle_exit`, a car-link connect, a process death. Only a session
+the engine opens afterwards starts with its own capture: a `vehicle_enter` in `IDLE`, in
+`PARKED` with no get-in open, or in `CANDIDATE_PENDING` with no stop-only window (§3a "Leaving a
+pending candidate behind"), and the fuel-stop reconnect in `CANDIDATE_PENDING` — on Android
+exactly the events that take the engine's want (`modeWantedBy`) from null to non-null. The one
+exception is §19's system reset on Android: a reboot or package replace dropped a capture the
+session still had, it did not lose one.
+
+What each platform does for it. iOS never reopens a capture on an authorization change — its
+capture starts only on the engine's `startBoundedLocationCapture` — and records the loss on
+the session (`isDrivingCaptureLost`, persisted as `DepartureCheckpoint.isCaptureLost`); a
+transition built from that session has `isCapturing: false`, a transition that loses its own
+capture records it the same way (`DetectionCheckpoint.departure` holds the transition's drive
+while it has no capture), and a restore of either reopens none. A drive resumed from a
+transition with no capture keeps the loss (`resumeDrivingFromTransition` no longer emits
+`startBoundedLocationCapture`). Android's follow never reopens a capture the engine already
+wanted (§19), and its **motion policy must not either**: an `ENTERED_VEHICLE` or
+`EXITED_VEHICLE` (or `STARTED_WALKING`) while no capture is registered and the engine's want
+*before* the event was already non-null opens nothing — the same test the follow applies
+(`wantedBefore != null && current == IDLE && !droppedBySystem` → stay `IDLE`). Before this,
+`LocationCaptureModePolicy.modeFor` opened `DRIVING_CANDIDATE` on the entry and
+`PARKING_TRANSITION` on the exit over a capture a revoked permission had stopped, so a regrant
+mid-drive gave Android kerb fixes — a moving one resumed `DRIVING`, the red light, no
+candidate — while iOS got none and confirmed the candidate; and iOS in turn rebuilt a restored
+transition with `isCapturing: true` and reopened its capture, and reopened one on a resume, so
+a later stop-only candidate got a resume window Android never opened. The alternative — both
+platforms reopening at the same edges once the permission is back — was rejected: iOS would
+have to feed authorization into the engine and define "the same edges" for every row, and a
+capture regained mid-session re-earns only part of the evidence the anchors needed, so the
+outcome would still depend on when the grant landed. Keeping the loss is one bit both engines
+already have.
+
+So a departure confirmed after the loss drives on with no
+capture, the transition that drive ends in has none (`isCapturing: false`), and a stop-only
+candidate there opens **no** resume window (§3a "The window lives exactly as long as its
+capture"): a `vehicle_enter` inside what would have been the window is "Leaving a pending
+candidate behind" — `DRIVING_CANDIDATE`, candidate kept — on both platforms. iOS used to build
+that transition with `isCapturing: true`, so the same `vehicle_enter` resumed `DRIVING` and
+withdrew the candidate on iOS only. A relaunch keeps the loss: a restored get-in, departure
+or drive that had lost its capture reopens none, and is decided as before by the next event.
+For a drive this needs its evidence as well as the bit — iOS rebuilds an ordinary restored drive
+from `stateEnteredAt` and reopens its capture to re-earn the anchors, but a drive with no capture
+can re-earn nothing, and a fresh one would never reach `movementIdle` — so iOS persists the session
+record (`DetectionCheckpoint.departure`, §14) in `DRIVING_CANDIDATE`/`DRIVING` exactly while the
+capture is lost, and restores the drive from it with no capture. Android reloads its whole engine
+state and its follow never reopens a capture the engine already wanted (§19), so it reaches the
+same next event with the same drive. iOS used to reopen the capture here (`restoreDrivingSession`
+emitted `startBoundedLocationCapture` and `restore` cleared the loss), which gave the next
+stop-only candidate a resume window and let a `vehicle_enter` inside it withdraw the parking that
+Android kept. A session
+opened afterwards (a new `vehicle_enter` in `IDLE` or `PARKED`, a fuel-stop reconnect) starts
+with its own capture.
+
+Pinned by twins with one name and one event sequence — `shortDepartureBeforeTheExit` (hand
+save, `vehicle_enter` +600 s, fixes +610 s / 0 m and +700 s / 600 m), capture lost at +710 s —
+iOS `DepartureTests` (each for `.authorizationLost` and `.captureFailed`) / Android
+`ParkingDetectionRuntimeTest` (the loss being a revoked permission, no engine event):
+"Capture lost at +710 then exit at +740 still ends the parking at +700 and raises the medium
+candidate"; "Capture lost at +710 with no further edge lapses to PARKED stamped +900" (next
+event a tick at +901 s); "A departure that lost its capture opens no resume window after it
+confirms" (tick +740 s → `DRIVING`, parking ended at +700 s; `stationary_enter` +890 s → stop-only
+candidate after `movementIdle` at +880 s; `vehicle_enter` +950 s → `DRIVING_CANDIDATE`, candidate
+kept); "A departure that lost its capture reopens none after a process death" and "A get-in that
+lost its capture reopens none after a process death"; "A departure that lost its capture reopens
+none after it confirms and the process dies" (loss +710 s, tick +740 s → `DRIVING`, process death,
+`stationary_enter` +890 s → stop-only candidate, `vehicle_enter` +950 s → `DRIVING_CANDIDATE`,
+candidate kept, nothing withdrawn). For N1, iOS `ParkingTransitionEvidenceTests` / Android
+`ParkingDetectionRuntimeTest` through the real `TransitionEventIngestor` (the loss a revoked
+permission, the regrant `foregroundGranted = true`): "A drive whose permission returns before
+the exit decides as it would without a capture" (`vehicle_enter` 0 s, tick +150 s → `DRIVING`,
+loss +200 s, regrant +300 s, `vehicle_exit` +600 s opens no capture, `walking_enter` +630 s →
+one candidate, `CANDIDATE_PENDING`); "A transition that lost its capture reopens none after a
+process death" (`DRIVING` at +90 s, moving fix +100 s, loss +120 s, tick +280 s →
+`PARKING_TRANSITION` by `movementIdle`, death, regrant, restore +285 s opens no capture,
+`stationary_enter` +300 s → candidate, `vehicle_enter` +330 s → `DRIVING_CANDIDATE`, candidate
+kept); "A transition that lost its capture resumes its drive without one" (loss +120 s in the
+drive, or +285 s inside the transition; `vehicle_enter` +300 s → `DRIVING` with no capture
+opened, and a relaunch reopens none). For a plain drive, iOS `ParkingTransitionEvidenceTests` /
+Android `ParkingDetectionRuntimeTest`: "A drive that loses its capture still parks on the next
+exit" (`vehicle_enter` 0 s, loss at +30 s in `DRIVING_CANDIDATE` or +120 s in `DRIVING`, tick
++150 s, `vehicle_exit` +600 s, `walking_enter` +630 s → one candidate, `CANDIDATE_PENDING`) and "A
+drive that lost its capture reopens none after a process death" (`DRIVING` at +90 s, moving fix
++100 s, loss +120 s, death, `stationary_enter` +290 s → candidate after `movementIdle` at +280 s).
+iOS alone: "A capture lost after getting back in keeps the get-in" (Android's get-in is untouched
+by construction).
 
 If uncertain -> suggestion, not destructive silent end.
 
@@ -1418,13 +1581,23 @@ same:
   movement anchor and moving-sample count, its last vehicle evidence — a §11b link edge
   included — and the vehicle-activity level §11's 90 s bar is measured from. iOS persists
   these as `DetectionCheckpoint.departure` (checkpoint schema 2), set while `PARKED` or
-  `DEPARTURE_CANDIDATE` holds a session and `nil` everywhere else, and writes it whenever it
+  `DEPARTURE_CANDIDATE` holds a session — and in `DRIVING_CANDIDATE`/`DRIVING` only while that
+  drive has lost its capture (§11 "A lost capture decides nothing"), and in `PARKING_TRANSITION`
+  the transition's drive only while the transition has no capture (§11 "A lost capture stays
+  lost for its session") — and `nil` everywhere else, and writes it whenever it
   changes — on every fix and link edge, not only on a state change — because a fix a process
-  death discarded would otherwise decide the departure differently from Android. It is on-device
-  only, like `lastReliableLocation`: it holds anchor fixes, is never logged, and never reaches
-  the diagnostics export, which flattens the checkpoint field by field.
+  death discarded would otherwise decide the departure differently from Android. It also records
+  whether the session has lost its capture (`isCaptureLost`, §11 "A lost capture decides
+  nothing"; absent in an older record, read as running). It is on-device only, like
+  `lastReliableLocation`: it holds anchor fixes, is never logged, and never reaches the
+  diagnostics export, which flattens the checkpoint field by field — pinned on the encoded bytes
+  by `DiagnosticsReportTests` "No departure anchor survives into the encoded report" and, for the
+  one checkpoint string that is logged (a failed load's `diagnosticDescription`), "A corrupt
+  departure checkpoint is reported without its coordinates".
 - **What a relaunch does** — the session is put back as it was and the bounded capture is
-  reopened (§19). A departure whose evidence is already past the §11 lapse at the relaunch
+  reopened (§19), unless the session had lost it (§11 "A lost capture decides nothing", "A
+  lost capture stays lost for its session" — which also holds for a `PARKING_TRANSITION` with
+  no capture, whose drive the record then carries). A departure whose evidence is already past the §11 lapse at the relaunch
   returns to `PARKED` stamped at the lapse, ending nothing and opening no capture — what the
   next event would have done on Android. A restored departure that later meets §7's guard ends
   the parking at `stateEnteredAt`, when the car pulled away, as the live one does. A `PARKED`
@@ -1453,7 +1626,11 @@ same:
   the recovery receiver clears the dead registration, and the adapter then reopens the capture
   the stored engine state still wants — read from the settled state (§19 rule 1), in the
   engine's mode, under the planner's own deadlines, never as a permanent foreground service.
-  A state whose window lapsed across the reset wants nothing and opens nothing. iOS has no
+  A state whose window lapsed across the reset wants nothing and opens nothing. Only a capture
+  record still live at the reset (its own expiry and hard deadline not yet passed) counts as
+  taken by the reset and is reopened; one whose deadline had already passed ended by itself —
+  that deadline is a §19 leak guard — and is cleaned up, not reopened with fresh deadlines
+  (`FusedLocationSessionController.reconcileAfterSystemReset`). iOS has no
   surviving registration to lose: every relaunch goes through `restore`, which emits
   `startBoundedLocationCapture`.
 
@@ -1660,8 +1837,9 @@ cost, they do not make it part of the design. Four precise rules:
    window whose deadline passed with no tick, wants nothing.
 2. **"Still holds the capture" is the window's existence.** On both platforms an open
    stop-only window always holds its capture (§3a "The window lives exactly as long as its
-   capture"), so neither keeps a separate bit. iOS never opens a window for a transition that
-   lost its capture, closes it on any capture loss, and rebuilds none on relaunch; Android
+   capture"), so neither keeps a separate bit for the window. iOS never opens a window for a
+   transition that lost its capture — or whose drive had lost it before it ended (§11 "A lost
+   capture decides nothing") — closes it on any capture loss, and rebuilds none on relaunch; Android
    represents it by `StopOnlyResumeWindow` being non-null, and its runtime removes a window
    whose capture is not running before the next batch. `CANDIDATE_PENDING` without a window
    wants nothing.
@@ -1672,6 +1850,11 @@ cost, they do not make it part of the design. Four precise rules:
    non-null (iOS: only on the engine's `startBoundedLocationCapture`). A motion event the
    engine did not act on leaves the want null and therefore opens nothing — not even for one
    batch.
+5. **Open only for a new session (2026-09-28, N1).** A settled want is necessary, not
+   sufficient: a capture is opened only when the want was null before the batch — a session
+   the engine just opened — or a system reset dropped it. A session that already wanted one
+   and has none running (a revoked permission, a failed request) gets none back, from the
+   motion policy or the follow (§11 "A lost capture stays lost for its session").
 
 Pinned by tests on each side: iOS `DrivingSessionLifecycleTests` "A fix after a movementIdle
 entry…" (the deadline releases with no state change) and `ParkingTransitionEvidenceTests`

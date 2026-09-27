@@ -103,5 +103,17 @@ sealed interface DetectionEvent {
      * engine was never told about is one no drive away could ever end.
      */
     data class UserSavedParking(override val atMillis: Long) : DetectionEvent
+
+    /**
+     * The user switched Smart Detection off (docs/05 §11 / §3a rule 4) — iOS's
+     * `endDrivingSession(reason: .smartDetectionDisabled)`.
+     *
+     * Not a sensor event and not a user answer: it drops whatever the engine was inferring and
+     * decides nothing. A drive or a transition goes to `IDLE` with no candidate, a departure
+     * or a get-in returns to `PARKED` ending nothing, and a stop-only candidate's resume window
+     * closes with the candidate kept. Turning detection off never closes a parking and never
+     * withdraws a candidate the user may still answer.
+     */
+    data class SmartDetectionDisabled(override val atMillis: Long) : DetectionEvent
 }
 

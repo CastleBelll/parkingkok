@@ -98,6 +98,40 @@ class LocationCaptureModePolicyTest {
     }
 
     @Test
+    fun `no motion edge reopens a capture the engine's session lost`() {
+        // docs/05 §11 "The kept session stays without a capture": the permission came back,
+        // but the session that lost the capture is still the engine's.
+        // Act
+        val modes = MotionEventKind.entries.associateWith {
+            LocationCaptureModePolicy.modeFor(
+                it,
+                LocationSessionMode.IDLE,
+                engineWantsCapture = true,
+                sessionLostCapture = true,
+            )
+        }
+
+        // Assert
+        assertEquals(MotionEventKind.entries.associateWith { LocationSessionMode.IDLE }, modes)
+    }
+
+    @Test
+    fun `a session that lost its capture leaves a running capture alone`() {
+        // A capture that is running belongs to no lost session (the diagnostics override);
+        // the loss rule only refuses to open one.
+        // Act
+        val mode = LocationCaptureModePolicy.modeFor(
+            MotionEventKind.EXITED_VEHICLE,
+            LocationSessionMode.DRIVING,
+            engineWantsCapture = true,
+            sessionLostCapture = true,
+        )
+
+        // Assert
+        assertEquals(LocationSessionMode.DRIVING, mode)
+    }
+
+    @Test
     fun `an exit the engine does not want leaves a capture it did not open alone`() {
         // The P0 diagnostics override runs with the engine IDLE; an exit neither narrows nor
         // ends it — the engine's follow is what releases captures it asked for.

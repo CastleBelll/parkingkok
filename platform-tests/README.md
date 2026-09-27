@@ -229,7 +229,7 @@ trace까지 왔다면 어댑터 결함이므로 변환기가 거부한다 — `p
 | 5 | 버스 반복 정차 → 알림 폭주 없음 | `bus` / `parked: false` | ✅ `bus_repeated_stops_no_storm.json` (+ 양 러너의 travel session당 후보 1개 검사) |
 | 6 | 터널 GPS 소실 → candidate 없음 | `car` / `parked: false` | ✅ `tunnel_no_parking.json` |
 | 7 | 프로세스 사망/재시작 → 중복 candidate 없음 | — | ⬜ ⚠️ (fixture 없음. `restore` 의미론은 테스트가 고정: docs/05 §3a 창 규칙은 엔진 단위 테스트, §14 "A restored departure keeps its evidence"는 iOS `DepartureTests` ↔ Android `ParkingDetectionRuntimeTest`의 같은 이름·같은 이벤트 twin) |
-| 8 | 이동 중 권한 회수 | — | ⬜ ⚠️ |
+| 8 | 이동 중 권한 회수 | — | ⬜ ⚠️ (fixture 없음. docs/05 §11 "A lost capture decides nothing" — 회수는 capture만 멈추고 상태·세션은 그대로 — 를 양 플랫폼 같은 이름 twin이 고정: `DRIVING`/`DRIVING_CANDIDATE`는 iOS `ParkingTransitionEvidenceTests` ↔ Android `ParkingDetectionRuntimeTest` "A drive that loses its capture still parks on the next exit", 출발은 iOS `DepartureTests` ↔ 같은 Android 파일의 "…lost its capture…" twin들. 권한이 돌아와도 그 세션의 capture는 다시 열리지 않는다 — §11 "A lost capture stays lost for its session" (N1): iOS `ParkingTransitionEvidenceTests` "A drive whose permission returns before the exit decides as it would without a capture", "A transition that lost its capture reopens none after a process death", "A transition that lost its capture resumes its drive without one". 같은 이름의 Android twin(실제 `TransitionEventIngestor` 경유)은 아직 커밋되지 않았다 — 그 전까지 Android 쪽은 증명되지 않음) |
 | 9 | 절전 모드 저하 동작 | — | ⬜ ⚠️ |
 | 10 | 앱이 기록을 갱신하는 중 위젯 편집 | — | ⬜ ⚠️ |
 
@@ -356,6 +356,10 @@ s17 55·s16 45·s33 45·s03 40 → `low`).
 
 - 키 집합이 디스크의 파일과 같아야 한다. fixture나 draft를 추가·삭제·개명하면 이 파일도
   같이 바꾼다
+- 양 러너는 커밋된 fixture·draft 이름 목록도 **정확히** 적어 둔다(iOS `ParityFixtureTests`
+  "Every fixture in platform-tests/ is loaded and replayed", Android `ParityFixtureTest`
+  `every committed fixture is replayed`·`every committed draft is replayed`). golden 항목과
+  파일을 함께 지우면 키 집합은 여전히 같으므로, 이 목록이 그 삭제를 잡는다
 - golden이 바뀌는 diff는 제품 동작의 변경이다. spec이 뒷받침하는 엔진 변경에서만
   재생성한다(Android `UPDATE_PARITY_GOLDEN=1`), 같은 변경에서 양 러너가 통과해야 한다
 - **사본은 이 파일 하나뿐이다.** Android는 fixture를 읽는 `fixtureDirectory()` 기준으로 이

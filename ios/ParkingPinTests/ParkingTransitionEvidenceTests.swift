@@ -265,7 +265,11 @@ struct ParkingTransitionEvidenceTests {
         let effects = await engine.handle(.walkingEnter(at: at(300)))
 
         // Assert
-        #expect(lost == [.stopLocationCapture])
+        // The capture stops, and the loss is written so a relaunch keeps it (§11).
+        #expect(lost.first == .stopLocationCapture)
+        #expect(lost.count == 2)
+        let recorded = lost.compactMap { if case let .persistCheckpoint(c) = $0 { c } else { nil } }.first
+        #expect(recorded?.departure?.isCaptureLost == true)
         #expect(await engine.snapshot().isLocationCaptureWanted == false)
         #expect(try #require(candidates(effects).first).reasonCodes.contains(.walkingAfterVehicle))
         #expect(!effects.contains(.stopLocationCapture))
@@ -987,6 +991,228 @@ struct ParkingTransitionEvidenceTests {
 
         // Assert — the candidate stands and the evidence opens a new journey.
         #expect(!confirming.contains(.stopLocationCapture))
+        #expect(!boarding.contains(.withdrawCandidate(id: candidate.id)))
+        #expect(await engine.state == .drivingCandidate)
+    }
+
+    // MARK: - §11 "A lost capture decides nothing" in DRIVING_CANDIDATE and DRIVING (2026-09-28)
+
+    private func lastPersisted(_ effects: [DetectionEffect]) throws -> DetectionCheckpoint {
+        let persisted = effects.compactMap {
+            if case let .persistCheckpoint(checkpoint) = $0 { return checkpoint }
+            return nil
+        }.last
+        return try #require(persisted, "nothing was persisted")
+    }
+
+    /// A lost capture only stops the capture, in an unconfirmed drive (+30 s) or a confirmed
+    /// one (+120 s): the drive, its vehicle level and its state stay, and the next exit and
+    /// walk decide the parking as they would with the capture running and no fix arriving.
+    /// Android twin: `ParkingDetectionRuntimeTest` `a drive that loses its capture still parks
+    /// on the next exit`, the loss being a revoked permission that never reaches the engine.
+    @Test(
+        "A drive that loses its capture still parks on the next exit",
+        arguments: [DrivingSessionEndReason.authorizationLost, .captureFailed], [30.0, 120.0]
+    )
+    func driveThatLosesItsCaptureStillParks(reason: DrivingSessionEndReason, lostAt: TimeInterval) async throws {
+        // Arrange
+        let engine = ParkingDetectionEngine()
+        _ = await engine.restore(nil, seedIfAbsent: false, now: t0)
+        _ = await engine.handle(.vehicleEnter(at: t0))
+        if lostAt > DrivingConfirmationPolicy.minimumVehicleDuration {
+            _ = await engine.handle(.timerTick(at: at(DrivingConfirmationPolicy.minimumVehicleDuration)))
+        }
+        let stateBeforeLoss = await engine.state
+
+        // Act
+        let lost = await engine.endDrivingSession(reason: reason, now: at(lostAt))
+        let stateAfterLoss = await engine.state
+        let wantedAfterLoss = await engine.snapshot().isLocationCaptureWanted
+        _ = await engine.handle(.timerTick(at: at(150)))
+        _ = await engine.handle(.vehicleExit(at: at(600)))
+        let walking = await engine.handle(.walkingEnter(at: at(630)))
+
+        // Assert
+        #expect(lost.contains(.stopLocationCapture))
+        #expect(!lost.contains { if case .sessionEnded = $0 { true } else { false } })
+        #expect(stateAfterLoss == stateBeforeLoss)
+        #expect(!wantedAfterLoss)
+        #expect(candidates(walking).count == 1)
+        #expect(await engine.state == .candidatePending)
+    }
+
+    /// docs/05 §14: the loss survives a process death in `DRIVING` — the drive is persisted
+    /// with its evidence and reopens no capture. Android twin: `ParkingDetectionRuntimeTest`
+    /// `a drive that lost its capture reopens none after a process death`.
+    @Test(
+        "A drive that lost its capture reopens none after a process death",
+        arguments: [DrivingSessionEndReason.authorizationLost, .captureFailed]
+    )
+    func driveThatLostItsCaptureReopensNoneOnRestore(reason: DrivingSessionEndReason) async throws {
+        // Arrange — confirmed at +90, moved at +100, lost at +120, died.
+        let original = await drivingEngine()
+        var effects = await original.handle(fix(100, speed: 9))
+        effects += await original.endDrivingSession(reason: reason, now: at(120))
+        let checkpoint = try lastPersisted(effects)
+        let engine = ParkingDetectionEngine()
+
+        // Act
+        let restored = await engine.restore(checkpoint, now: at(130))
+        let wanted = await engine.snapshot().isLocationCaptureWanted
+        // `movementIdle` at +280 from the kept +100 moving sample; stillness confirms it.
+        let stopped = await engine.handle(.stationaryEnter(at: at(290)))
+
+        // Assert
+        #expect(checkpoint.state == .driving)
+        #expect(!restored.contains(.startBoundedLocationCapture))
+        #expect(!wanted)
+        #expect(candidates(stopped).count == 1)
+        #expect(await engine.state == .candidatePending)
+    }
+
+    // MARK: - §11 "A lost capture stays lost for its session" (2026-09-28, N1)
+
+    /// The permission is revoked in `DRIVING` (+200 s) and granted again (+300 s) before the
+    /// exit (+600 s). The grant is not an engine event on iOS — nothing but a new session opens
+    /// a capture — so the exit and the walk decide the parking as they would without a
+    /// capture. Android twin: `ParkingDetectionRuntimeTest` `a drive whose permission returns
+    /// before the exit decides as it would without a capture`, through the real ingestor.
+    @Test(
+        "A drive whose permission returns before the exit decides as it would without a capture",
+        arguments: [DrivingSessionEndReason.authorizationLost, .captureFailed]
+    )
+    func driveWhosePermissionReturnsDecidesWithoutACapture(reason: DrivingSessionEndReason) async throws {
+        // Arrange
+        let engine = ParkingDetectionEngine()
+        _ = await engine.restore(nil, seedIfAbsent: false, now: t0)
+        _ = await engine.handle(.vehicleEnter(at: t0))
+        _ = await engine.handle(.timerTick(at: at(150)))
+        _ = await engine.endDrivingSession(reason: reason, now: at(200))
+
+        // Act
+        let exit = await engine.handle(.vehicleExit(at: at(600)))
+        let wantedAtTheKerb = await engine.snapshot().isLocationCaptureWanted
+        let walking = await engine.handle(.walkingEnter(at: at(630)))
+
+        // Assert
+        #expect(!exit.contains(.startBoundedLocationCapture))
+        #expect(!wantedAtTheKerb)
+        #expect(candidates(walking).count == 1)
+        #expect(await engine.state == .candidatePending)
+    }
+
+    /// A drive that lost its capture (+120 s) reaches `PARKING_TRANSITION` by `movementIdle`
+    /// (+280 s) and the process dies there. The restore reopens no capture, so the stop that
+    /// confirms the candidate opens no resume window, and `vehicle_enter` inside what would
+    /// have been one is a new journey: `DRIVING_CANDIDATE`, candidate kept. Android twin:
+    /// `ParkingDetectionRuntimeTest` `a transition that lost its capture reopens none after a
+    /// process death`, with the permission granted again after the death.
+    @Test(
+        "A transition that lost its capture reopens none after a process death",
+        arguments: [DrivingSessionEndReason.authorizationLost, .captureFailed]
+    )
+    func transitionThatLostItsCaptureReopensNoneOnRestore(reason: DrivingSessionEndReason) async throws {
+        // Arrange
+        let original = await drivingEngine()
+        var effects = await original.handle(fix(100, speed: 9))
+        effects += await original.endDrivingSession(reason: reason, now: at(120))
+        effects += await original.handle(.timerTick(at: at(100 + ParkingTransitionPolicy.movementIdleWindow)))
+        let checkpoint = try lastPersisted(effects)
+        let engine = ParkingDetectionEngine()
+
+        // Act
+        let restored = await engine.restore(checkpoint, now: at(285))
+        let wanted = await engine.snapshot().isLocationCaptureWanted
+        let stopped = await engine.handle(.stationaryEnter(at: at(300)))
+        let candidate = try #require(candidates(stopped).first)
+        let boarding = await engine.handle(.vehicleEnter(at: at(330)))
+
+        // Assert
+        #expect(checkpoint.state == .parkingTransition)
+        #expect(!restored.contains(.startBoundedLocationCapture))
+        #expect(!wanted)
+        #expect(!stopped.contains(.stopLocationCapture))
+        #expect(!boarding.contains(.withdrawCandidate(id: candidate.id)))
+        #expect(await engine.state == .drivingCandidate)
+    }
+
+    /// A transition with no capture — its drive lost it, or it lost its own — resumed by
+    /// `vehicle_enter` is the same session going on, so it goes on without a capture, and a
+    /// relaunch keeps the loss. Android: the follow never reopens a capture the engine already
+    /// wanted, and the motion policy opens none for a session it was already following.
+    @Test(
+        "A transition that lost its capture resumes its drive without one",
+        arguments: [true, false]
+    )
+    func transitionThatLostItsCaptureResumesWithoutOne(lostInTheDrive: Bool) async throws {
+        // Arrange
+        let engine = await drivingEngine()
+        var effects = await engine.handle(fix(100, speed: 9))
+        if lostInTheDrive {
+            effects += await engine.endDrivingSession(reason: .authorizationLost, now: at(120))
+        }
+        effects += await engine.handle(.timerTick(at: at(100 + ParkingTransitionPolicy.movementIdleWindow)))
+        if !lostInTheDrive {
+            effects += await engine.endDrivingSession(reason: .authorizationLost, now: at(285))
+        }
+
+        // Act
+        let resumed = await engine.handle(.vehicleEnter(at: at(300)))
+        let stateAfterResume = await engine.state
+        let wantedAfterResume = await engine.snapshot().isLocationCaptureWanted
+        let checkpoint = try lastPersisted(effects + resumed)
+        let relaunched = ParkingDetectionEngine()
+        let restored = await relaunched.restore(checkpoint, now: at(310))
+
+        // Assert
+        #expect(stateAfterResume == .driving)
+        #expect(!resumed.contains(.startBoundedLocationCapture))
+        #expect(!wantedAfterResume)
+        #expect(checkpoint.departure?.isCaptureLost == true)
+        #expect(!restored.contains(.startBoundedLocationCapture))
+        #expect(await relaunched.state == .driving)
+    }
+
+    // MARK: - Turning Smart Detection off (docs/05 §3a, 2026-09-28)
+
+    /// Android twin: `ParkingDetectionEngineTest` `opting out during DRIVING ends the session
+    /// in IDLE and stops the capture`.
+    @Test("Opting out during DRIVING ends the session in IDLE and stops the capture")
+    func optOutDuringDrivingEndsInIdle() async {
+        // Arrange
+        let engine = await drivingEngine()
+        _ = await engine.handle(.carLinkConnected(at: at(95), kind: .bluetoothAudio))
+
+        // Act
+        let effects = await engine.endDrivingSession(reason: .smartDetectionDisabled, now: at(120))
+
+        // Assert — and the link is forgotten: no latch survives into the next opt-in.
+        #expect(effects.contains(.sessionEnded(reason: .smartDetectionDisabled, at: at(120))))
+        #expect(effects.contains(.stopLocationCapture))
+        #expect(await engine.state == .idle)
+        #expect(await engine.snapshot().isLocationCaptureWanted == false)
+        #expect(await engine.snapshot().isVehicleActive == false)
+        #expect(await engine.snapshot().connectedCarLinks.isEmpty)
+    }
+
+    /// Android twin: `ParkingDetectionEngineTest` / `ParkingDetectionRuntimeTest` `opting out
+    /// inside a stop-only window closes it and keeps the candidate`.
+    @Test("Opting out inside a stop-only window closes it and keeps the candidate")
+    func optOutInsideAStopOnlyWindowKeepsTheCandidate() async throws {
+        // Arrange
+        let (engine, candidate) = try await stoppedInTrafficEngine()
+
+        // Act
+        let effects = await engine.endDrivingSession(reason: .smartDetectionDisabled, now: at(300))
+        let stateAfterOptOut = await engine.state
+        let vehicleAfterOptOut = await engine.snapshot().isVehicleActive
+        // Detection is back on and vehicle evidence arrives inside what was the window.
+        let boarding = await engine.handle(.vehicleEnter(at: at(330)))
+
+        // Assert
+        #expect(effects == [.stopLocationCapture])
+        #expect(stateAfterOptOut == .candidatePending)
+        #expect(!vehicleAfterOptOut)
         #expect(!boarding.contains(.withdrawCandidate(id: candidate.id)))
         #expect(await engine.state == .drivingCandidate)
     }

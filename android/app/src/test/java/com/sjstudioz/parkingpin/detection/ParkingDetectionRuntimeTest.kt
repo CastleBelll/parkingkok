@@ -410,7 +410,7 @@ class ParkingDetectionRuntimeTest {
         registrar.foregroundGranted = false
         withCapture.handleMotion(motion(MotionEventKind.BECAME_STATIONARY, STOP_ONLY_DRIVE_END + 20_000))
         val candidate = assertNotNull(store.readCandidateOnce())
-        assertNotNull("the engine alone opened a stop-only window", store.readEngineStateOnce()?.stopOnlyResumeWindow)
+        assertNull("no capture holds the window, so it is closed at once", store.readEngineStateOnce()?.stopOnlyResumeWindow)
 
         // Act — back in a vehicle while the window would still have been open.
         withCapture.handleMotion(motion(MotionEventKind.ENTERED_VEHICLE, STOP_ONLY_DRIVE_END + 50_000))
@@ -422,6 +422,462 @@ class ParkingDetectionRuntimeTest {
         assertEquals(candidate, store.readCandidateOnce())
         assertEquals(emptyList<String>(), notifier.withdrawn)
         assertFalse("no capture without the permission", registrar.isRegistered)
+    }
+
+    @Test
+    fun `background location revoked inside a stop-only window closes it and vehicle_enter keeps the candidate`() = runTest {
+        // Arrange — docs/05 §3a rule 4: a downgrade to "only while using" stops Play services
+        // delivering to the PendingIntent in the background, so the window's capture is gone
+        // even though foreground location is still granted.
+        val registrar = FakeLocationSessionRegistrar()
+        val controller = FusedLocationSessionController(store, registrar, clock)
+        val withCapture = ParkingDetectionRuntime(
+            store = store,
+            candidates = { coordinator },
+            followLocationCapture = { before, after -> controller.followEngine(before, after) },
+            captureRunning = { controller.isCaptureRunning() },
+        )
+        controller.onMotionEvent(motion(MotionEventKind.ENTERED_VEHICLE, START))
+        clock.epochMillis = STOP_ONLY_DRIVE_END
+        driveToStopOnlyCandidate(withCapture)
+        val candidate = assertNotNull(store.readCandidateOnce())
+        registrar.backgroundGranted = false
+
+        // Act — back in a vehicle while the window would still have been open.
+        withCapture.handleMotion(motion(MotionEventKind.ENTERED_VEHICLE, STOP_ONLY_DRIVE_END + 50_000))
+
+        // Assert — CANDIDATE_PENDING -> DRIVING_CANDIDATE, the candidate kept.
+        val state = withCapture.restore()
+        assertEquals(DetectionState.DRIVING_CANDIDATE, state.state)
+        assertEquals(candidate.id, state.candidate?.id)
+        assertEquals(emptyList<String>(), notifier.withdrawn)
+    }
+
+    // ── The Smart Detection opt-out (docs/05 §11 / §19) ────────────────────────────────
+    //
+    // Turning detection off must stop every capture and close every window, and nothing may
+    // open one again while it is off. The engine state it leaves is iOS's
+    // `endDrivingSession(reason: .smartDetectionDisabled)`.
+
+    /** Coordinator, runtime and controller wired the way `AppContainer` wires them. */
+    private class OptOutHarness(
+        val registrar: FakeLocationSessionRegistrar,
+        val controller: FusedLocationSessionController,
+        val runtime: ParkingDetectionRuntime,
+        val registration: DetectionRegistrationCoordinator,
+    )
+
+    private fun optOutHarness(registrar: FakeLocationSessionRegistrar = FakeLocationSessionRegistrar()): OptOutHarness {
+        val controller = FusedLocationSessionController(store, registrar, clock)
+        var nextId = 0
+        val wired = ParkingDetectionRuntime(
+            store = store,
+            candidates = { coordinator },
+            engine = ParkingDetectionEngine { "opt-out-candidate-${nextId++}" },
+            stopLocationCapture = { controller.stop() },
+            followLocationCapture = { before, after -> controller.followEngine(before, after) },
+            captureRunning = { controller.isCaptureRunning() },
+            detectionEnabled = { store.readDesiredEnabledOnce() },
+        )
+        val registration = DetectionRegistrationCoordinator(
+            store = store,
+            registrar = FakeTransitionRegistrar(),
+            clock = clock,
+            optOut = { atMillis -> wired.handleSmartDetectionDisabled(atMillis) },
+        )
+        return OptOutHarness(registrar, controller, wired, registration)
+    }
+
+    @Test
+    fun `a car link while opted out opens no capture`() = runTest {
+        // Arrange
+        val h = optOutHarness()
+        h.registration.setDetectionEnabled(false)
+
+        // Act
+        h.runtime.handleCarLink(DetectionEvent.CarLinkConnected(START))
+
+        // Assert
+        assertTrue("no Fused Location request", h.registrar.requestedConfigs.isEmpty())
+        assertFalse(h.registrar.isRegistered)
+        assertEquals(DetectionState.IDLE, h.runtime.restore().state)
+    }
+
+    @Test
+    fun `a location batch while Smart Detection is off feeds nothing and releases the capture`() = runTest {
+        // Arrange — a capture a drive opened, and the flag off with the capture still running.
+        val h = optOutHarness()
+        h.registration.setDetectionEnabled(true)
+        h.controller.onMotionEvent(motion(MotionEventKind.ENTERED_VEHICLE, START))
+        h.runtime.handleMotion(motion(MotionEventKind.ENTERED_VEHICLE, START))
+        store.setDesiredEnabled(false)
+        val before = h.runtime.restore()
+
+        // Act
+        h.runtime.handleLocations(listOf(fix(START + 30_000, speedMps = 9f)))
+
+        // Assert
+        assertEquals("the engine is not fed", before, h.runtime.restore())
+        assertFalse("the capture is released", h.registrar.isRegistered)
+    }
+
+    @Test
+    fun `opting out while driving stops the capture and ends the drive in IDLE`() = runTest {
+        // Arrange
+        val h = optOutHarness()
+        h.registration.setDetectionEnabled(true)
+        h.controller.onMotionEvent(motion(MotionEventKind.ENTERED_VEHICLE, START))
+        h.runtime.handleMotion(motion(MotionEventKind.ENTERED_VEHICLE, START))
+        h.runtime.handleTick(START + SUSTAIN)
+        h.runtime.handleLocations(listOf(fix(START + 100_000, speedMps = 9f)))
+        assertEquals(DetectionState.DRIVING, h.runtime.restore().state)
+        assertTrue(h.registrar.isRegistered)
+        clock.epochMillis = START + 120_000
+
+        // Act
+        h.registration.setDetectionEnabled(false)
+        h.runtime.handleCarLink(DetectionEvent.CarLinkConnected(START + 130_000))
+
+        // Assert
+        val state = h.runtime.restore()
+        assertEquals(DetectionState.IDLE, state.state)
+        assertNull(state.session)
+        assertFalse("the capture is stopped", h.registrar.isRegistered)
+        assertFalse("and nothing reopens it", h.controller.isCaptureRunning())
+    }
+
+    @Test
+    fun `opting out inside a stop-only window closes it and keeps the candidate`() = runTest {
+        // Arrange
+        val h = optOutHarness()
+        h.registration.setDetectionEnabled(true)
+        h.controller.onMotionEvent(motion(MotionEventKind.ENTERED_VEHICLE, START))
+        clock.epochMillis = STOP_ONLY_DRIVE_END
+        driveToStopOnlyCandidate(h.runtime)
+        val candidate = assertNotNull(store.readCandidateOnce())
+        assertTrue(h.registrar.isRegistered)
+
+        // Act
+        clock.epochMillis = STOP_ONLY_DRIVE_END + 20_000
+        h.registration.setDetectionEnabled(false)
+        h.runtime.handleLocations(listOf(fix(STOP_ONLY_DRIVE_END + 30_000, speedMps = 9f)))
+        h.runtime.handleLocations(listOf(fix(STOP_ONLY_DRIVE_END + 40_000, speedMps = 9f)))
+
+        // Assert — rule 4: the window closes, the candidate stands, nothing is withdrawn.
+        val state = h.runtime.restore()
+        assertEquals(DetectionState.CANDIDATE_PENDING, state.state)
+        assertNull(state.stopOnlyResumeWindow)
+        assertEquals(candidate, store.readCandidateOnce())
+        assertEquals(emptyList<String>(), notifier.withdrawn)
+        assertFalse("the capture is stopped", h.registrar.isRegistered)
+    }
+
+    /**
+     * docs/05 §3a "Turning Smart Detection off": the process died between writing the flag and
+     * the opt-out it asked for, so DRIVING and its capture (a Play services request that
+     * outlives the process) were left behind. iOS twin, same name: `DrivingSessionLifecycleTests`
+     * "A relaunch while Smart Detection is off ends the session a dead process left open".
+     */
+    @Test
+    fun `a relaunch while Smart Detection is off ends the session a dead process left open`() = runTest {
+        // Arrange
+        val registrar = FakeLocationSessionRegistrar()
+        val before = optOutHarness(registrar)
+        before.registration.setDetectionEnabled(true)
+        before.controller.onMotionEvent(motion(MotionEventKind.ENTERED_VEHICLE, START))
+        before.runtime.handleMotion(motion(MotionEventKind.ENTERED_VEHICLE, START))
+        before.runtime.handleTick(START + SUSTAIN)
+        before.runtime.handleLocations(listOf(fix(START + 100_000, speedMps = 9f)))
+        assertEquals(DetectionState.DRIVING, before.runtime.restore().state)
+        store.setDesiredEnabled(false)
+        val requestsBefore = registrar.requestedConfigs.size
+        clock.epochMillis = START + 120_000
+        val relaunched = optOutHarness(registrar)
+
+        // Act — what ParkingpinApplication.onCreate does on every process start.
+        relaunched.registration.reconcile()
+
+        // Assert
+        val state = relaunched.runtime.restore()
+        assertEquals(DetectionState.IDLE, state.state)
+        assertNull(state.session)
+        assertEquals("no capture is opened first", requestsBefore, registrar.requestedConfigs.size)
+        assertFalse("the left-over capture is stopped", registrar.isRegistered)
+    }
+
+    @Test
+    fun `a relaunch while Smart Detection is off leaves a settled state untouched`() = runTest {
+        // Arrange — a candidate pending with no window: the opt-out has nothing to end there.
+        val h = optOutHarness()
+        h.registration.setDetectionEnabled(true)
+        driveAndPark()
+        h.registration.setDetectionEnabled(false)
+        val settled = h.runtime.restore()
+        val relaunched = optOutHarness()
+
+        // Act
+        relaunched.registration.reconcile()
+
+        // Assert
+        assertEquals(DetectionState.CANDIDATE_PENDING, settled.state)
+        assertEquals(settled, relaunched.runtime.restore())
+    }
+
+    // ── docs/05 §11: a capture lost inside DRIVING_CANDIDATE or DRIVING ────────────────
+    //
+    // "A lost capture decides nothing" extends to a drive: on Android the loss (a revoked
+    // permission) never reaches the engine, so the drive keeps its state, session and
+    // vehicle level, and the next exit and walk decide it. iOS twins, same names and events,
+    // for `.authorizationLost` and `.captureFailed`: `ParkingTransitionEvidenceTests`.
+
+    /** Coordinator-free runtime whose capture is the real controller over [registrar]. */
+    private fun capturingRuntime(registrar: FakeLocationSessionRegistrar): ParkingDetectionRuntime {
+        val controller = FusedLocationSessionController(store, registrar, clock)
+        return ParkingDetectionRuntime(
+            store = store,
+            candidates = { coordinator },
+            followLocationCapture = { before, after -> controller.followEngine(before, after) },
+            captureRunning = { controller.isCaptureRunning() },
+        )
+    }
+
+    /**
+     * docs/05 §11's sequence: `vehicle_enter` 0 s, the loss at [lossAtSeconds], tick +150 s,
+     * `vehicle_exit` +600 s, `walking_enter` +630 s. Returns the state right after the loss.
+     */
+    private suspend fun driveLosingCaptureThenExit(lossAtSeconds: Long, registrar: FakeLocationSessionRegistrar): DetectionState {
+        val withCapture = capturingRuntime(registrar)
+        withCapture.handleMotion(motion(MotionEventKind.ENTERED_VEHICLE, START))
+        if (lossAtSeconds > 90) withCapture.handleTick(START + SUSTAIN)
+        assertTrue("the drive holds a capture", registrar.isRegistered)
+        clock.epochMillis = START + lossAtSeconds * 1_000
+        registrar.foregroundGranted = false
+        withCapture.handleTick(START + lossAtSeconds * 1_000)
+        val afterLoss = withCapture.restore().state
+        clock.epochMillis = START + 150_000
+        withCapture.handleTick(START + 150_000)
+        clock.epochMillis = START + 600_000
+        withCapture.handleMotion(motion(MotionEventKind.EXITED_VEHICLE, START + 600_000))
+        clock.epochMillis = START + 630_000
+        withCapture.handleMotion(motion(MotionEventKind.STARTED_WALKING, START + 630_000))
+        return afterLoss
+    }
+
+    @Test
+    fun `a drive that loses its capture still parks on the next exit`() = runTest {
+        // Arrange
+        val registrar = FakeLocationSessionRegistrar()
+        clock.epochMillis = START
+
+        // Act — the loss at +120 s, in DRIVING.
+        val afterLoss = driveLosingCaptureThenExit(lossAtSeconds = 120, registrar = registrar)
+
+        // Assert — the loss decided nothing; the exit and the walk made the parking.
+        assertEquals(DetectionState.DRIVING, afterLoss)
+        assertEquals(DetectionState.CANDIDATE_PENDING, runtime.restore().state)
+        assertNotNull(store.readCandidateOnce())
+        assertFalse(registrar.isRegistered)
+    }
+
+    @Test
+    fun `a drive that loses its capture still parks on the next exit - lost in DRIVING_CANDIDATE`() = runTest {
+        // Arrange
+        val registrar = FakeLocationSessionRegistrar()
+        clock.epochMillis = START
+
+        // Act — the loss at +30 s; the tick at +150 s still promotes on §3a's 90 s bar.
+        val afterLoss = driveLosingCaptureThenExit(lossAtSeconds = 30, registrar = registrar)
+
+        // Assert
+        assertEquals(DetectionState.DRIVING_CANDIDATE, afterLoss)
+        assertEquals(DetectionState.CANDIDATE_PENDING, runtime.restore().state)
+        assertNotNull(store.readCandidateOnce())
+        assertFalse(registrar.isRegistered)
+    }
+
+    @Test
+    fun `a drive that lost its capture reopens none after a process death`() = runTest {
+        // Arrange — DRIVING at +90 s, a moving fix at +100 s, the loss at +120 s, then a new
+        // process with the permission granted again.
+        val registrar = FakeLocationSessionRegistrar()
+        clock.epochMillis = START
+        val beforeDeath = capturingRuntime(registrar)
+        beforeDeath.handleMotion(motion(MotionEventKind.ENTERED_VEHICLE, START))
+        beforeDeath.handleTick(START + SUSTAIN)
+        beforeDeath.handleLocations(listOf(fix(START + 100_000, speedMps = 9f)))
+        clock.epochMillis = START + 120_000
+        registrar.foregroundGranted = false
+        beforeDeath.handleTick(START + 120_000)
+        registrar.foregroundGranted = true
+        val requestsBefore = registrar.requestedConfigs.size
+        val controller = FusedLocationSessionController(store, registrar, clock)
+        val restarted = ParkingDetectionRuntime(
+            store = store,
+            candidates = { coordinator },
+            followLocationCapture = { before, after -> controller.followEngine(before, after) },
+            captureRunning = { controller.isCaptureRunning() },
+        )
+        val ingestor = TransitionEventIngestor(store, clock, controller, restarted)
+
+        // Act — stillness at +290 s, after movementIdle at +280 s.
+        clock.epochMillis = START + 290_000
+        ingestor.ingest(listOf(TransitionEventIngestor.RawTransition(MotionActivity.STILL, TransitionKind.ENTER, START + 290_000)))
+
+        // Assert — the candidate, with no capture reopened and so no resume window.
+        val state = restarted.restore()
+        assertEquals(DetectionState.CANDIDATE_PENDING, state.state)
+        assertNotNull(store.readCandidateOnce())
+        assertNull(state.stopOnlyResumeWindow)
+        assertEquals("no capture is reopened", requestsBefore, registrar.requestedConfigs.size)
+    }
+
+    // ── docs/05 §11: the permission comes back while a session is capture-lost ─────────
+    //
+    // "The kept session stays without a capture": nothing reopens a capture the engine's
+    // current session lost, and that includes the motion edges `TransitionEventIngestor`
+    // shapes the capture on before the engine takes them. These go through the real ingestor
+    // for exactly that reason. iOS twins, same names and events: `ParkingTransitionEvidenceTests`.
+
+    /** The ingestor, runtime and controller wired the way `AppContainer` wires them. */
+    private class IngestingHarness(
+        val registrar: FakeLocationSessionRegistrar,
+        val runtime: ParkingDetectionRuntime,
+        val ingestor: TransitionEventIngestor,
+    )
+
+    private fun ingestingHarness(registrar: FakeLocationSessionRegistrar): IngestingHarness {
+        val controller = FusedLocationSessionController(store, registrar, clock)
+        val wired = capturingRuntimeOver(controller)
+        return IngestingHarness(registrar, wired, TransitionEventIngestor(store, clock, controller, wired))
+    }
+
+    private fun capturingRuntimeOver(controller: FusedLocationSessionController) = ParkingDetectionRuntime(
+        store = store,
+        candidates = { coordinator },
+        followLocationCapture = { before, after -> controller.followEngine(before, after) },
+        captureRunning = { controller.isCaptureRunning() },
+    )
+
+    private suspend fun IngestingHarness.transition(activity: MotionActivity, kind: TransitionKind, atMillis: Long) {
+        clock.epochMillis = atMillis
+        ingestor.ingest(listOf(TransitionEventIngestor.RawTransition(activity, kind, atMillis)))
+    }
+
+    /** A tick at [atMillis] with the permission revoked: the follow sees the loss. */
+    private suspend fun IngestingHarness.revokeAt(atMillis: Long) {
+        clock.epochMillis = atMillis
+        registrar.foregroundGranted = false
+        runtime.handleTick(atMillis)
+        assertFalse("the loss stops the capture", registrar.isRegistered)
+    }
+
+    @Test
+    fun `a drive whose permission returns before the exit decides as it would without a capture`() = runTest {
+        // Arrange — vehicle_enter 0 s, tick +150 s (DRIVING), the permission revoked at +200 s
+        // and granted again at +300 s.
+        val h = ingestingHarness(FakeLocationSessionRegistrar())
+        h.transition(MotionActivity.IN_VEHICLE, TransitionKind.ENTER, START)
+        clock.epochMillis = START + 150_000
+        h.runtime.handleTick(START + 150_000)
+        assertEquals(DetectionState.DRIVING, h.runtime.restore().state)
+        h.revokeAt(START + 200_000)
+        clock.epochMillis = START + 300_000
+        h.registrar.foregroundGranted = true
+        val requestsBefore = h.registrar.requestedConfigs.size
+
+        // Act — vehicle_exit +600 s, then walking_enter +630 s.
+        h.transition(MotionActivity.IN_VEHICLE, TransitionKind.EXIT, START + 600_000)
+        val stateAfterExit = h.runtime.restore().state
+        val kerbCaptureOpened = h.registrar.requestedConfigs.size > requestsBefore
+        h.transition(MotionActivity.WALKING, TransitionKind.ENTER, START + 630_000)
+
+        // Assert — no kerb capture, so no fix can resume the drive; the walk parks it.
+        assertEquals(DetectionState.PARKING_TRANSITION, stateAfterExit)
+        assertFalse("the exit reopens no capture the drive lost", kerbCaptureOpened)
+        assertEquals(DetectionState.CANDIDATE_PENDING, h.runtime.restore().state)
+        assertNotNull(store.readCandidateOnce())
+        assertEquals(requestsBefore, h.registrar.requestedConfigs.size)
+    }
+
+    @Test
+    fun `a drive whose permission returns reopens none on a repeated vehicle_enter`() = runTest {
+        // Arrange — the same drive; the OS repeats IN_VEHICLE ENTER at +400 s, mid-drive.
+        val h = ingestingHarness(FakeLocationSessionRegistrar())
+        h.transition(MotionActivity.IN_VEHICLE, TransitionKind.ENTER, START)
+        clock.epochMillis = START + 150_000
+        h.runtime.handleTick(START + 150_000)
+        h.revokeAt(START + 200_000)
+        h.registrar.foregroundGranted = true
+        val requestsBefore = h.registrar.requestedConfigs.size
+
+        // Act
+        h.transition(MotionActivity.IN_VEHICLE, TransitionKind.ENTER, START + 400_000)
+
+        // Assert — the same journey, still without a capture.
+        assertEquals(DetectionState.DRIVING, h.runtime.restore().state)
+        assertEquals(requestsBefore, h.registrar.requestedConfigs.size)
+        assertFalse(h.registrar.isRegistered)
+    }
+
+    @Test
+    fun `a journey opened after a capture-lost session ends starts with its own capture`() = runTest {
+        // Arrange — the capture-lost drive parks (exit +600 s, walk +630 s).
+        val h = ingestingHarness(FakeLocationSessionRegistrar())
+        h.transition(MotionActivity.IN_VEHICLE, TransitionKind.ENTER, START)
+        clock.epochMillis = START + 150_000
+        h.runtime.handleTick(START + 150_000)
+        h.revokeAt(START + 200_000)
+        h.registrar.foregroundGranted = true
+        h.transition(MotionActivity.IN_VEHICLE, TransitionKind.EXIT, START + 600_000)
+        h.transition(MotionActivity.WALKING, TransitionKind.ENTER, START + 630_000)
+        val candidate = assertNotNull(store.readCandidateOnce())
+
+        // Act — a new journey (§3a "Leaving a pending candidate behind").
+        h.transition(MotionActivity.IN_VEHICLE, TransitionKind.ENTER, START + 900_000)
+
+        // Assert — the loss belonged to the old session; the new one captures.
+        val state = h.runtime.restore()
+        assertEquals(DetectionState.DRIVING_CANDIDATE, state.state)
+        assertEquals(candidate.id, state.candidate?.id)
+        assertTrue("a new session opens its own capture", h.registrar.isRegistered)
+    }
+
+    @Test
+    fun `a transition that lost its capture reopens none after a process death`() = runTest {
+        // Arrange — DRIVING at +90 s, a moving fix at +100 s, the loss at +120 s, then
+        // movementIdle (+280 s) moves the drive into PARKING_TRANSITION with no capture. The
+        // process dies and the permission comes back.
+        val registrar = FakeLocationSessionRegistrar()
+        val beforeDeath = ingestingHarness(registrar)
+        beforeDeath.transition(MotionActivity.IN_VEHICLE, TransitionKind.ENTER, START)
+        clock.epochMillis = START + SUSTAIN
+        beforeDeath.runtime.handleTick(START + SUSTAIN)
+        clock.epochMillis = START + 100_000
+        beforeDeath.runtime.handleLocations(listOf(fix(START + 100_000, speedMps = 9f)))
+        beforeDeath.revokeAt(START + 120_000)
+        clock.epochMillis = START + 285_000
+        beforeDeath.runtime.handleTick(START + 285_000)
+        assertEquals(DetectionState.PARKING_TRANSITION, beforeDeath.runtime.restore().state)
+        registrar.foregroundGranted = true
+        val requestsBefore = registrar.requestedConfigs.size
+        val restarted = ingestingHarness(registrar)
+
+        // Act — stillness at +300 s confirms a stop-only candidate; back in a vehicle at
+        // +350 s, inside what would have been its resume window (+280 .. +580 s).
+        restarted.transition(MotionActivity.STILL, TransitionKind.ENTER, START + 300_000)
+        val candidate = assertNotNull(store.readCandidateOnce())
+        val windowAfterCandidate = restarted.runtime.restore().stopOnlyResumeWindow
+        val reopenedBeforeEnter = registrar.requestedConfigs.size > requestsBefore
+        restarted.transition(MotionActivity.IN_VEHICLE, TransitionKind.ENTER, START + 350_000)
+
+        // Assert — no window, so "Leaving a pending candidate behind": the candidate kept.
+        assertFalse("no capture is reopened for the transition", reopenedBeforeEnter)
+        assertNull(windowAfterCandidate)
+        val state = restarted.runtime.restore()
+        assertEquals(DetectionState.DRIVING_CANDIDATE, state.state)
+        assertEquals(candidate.id, state.candidate?.id)
+        assertEquals(candidate, store.readCandidateOnce())
+        assertEquals(emptyList<String>(), notifier.withdrawn)
     }
 
     /**
@@ -752,6 +1208,157 @@ class ParkingDetectionRuntimeTest {
         assertNull(state.session)
         assertEquals(emptyList<Long>(), endedAt)
         assertFalse(registrar.isRegistered)
+    }
+
+    /**
+     * docs/05 §11 "A lost capture decides nothing": the departure still confirms on elapsed
+     * time, but the drive it confirms has no capture, so the stop-only candidate that drive
+     * ends in holds none and gets no resume window. iOS twin, same name and events:
+     * `DepartureTests` "A departure that lost its capture opens no resume window after it
+     * confirms".
+     */
+    @Test
+    fun `a departure that lost its capture opens no resume window after it confirms`() = runTest {
+        // Arrange — capture lost at +710; the tick at +740 meets §7's guard by elapsed time;
+        // the +700 moving fix puts movementIdle at +880, and stillness at +890 confirms it.
+        val endedAt = mutableListOf<Long>()
+        val (withCapture, registrar) = departAndLoseCaptureAt710(endedAt)
+        clock.epochMillis = START + 740_000
+        withCapture.handleTick(START + 740_000)
+        assertEquals(DetectionState.DRIVING, withCapture.restore().state)
+        clock.epochMillis = START + 890_000
+        withCapture.handleMotion(motion(MotionEventKind.BECAME_STATIONARY, START + 890_000))
+        val candidate = assertNotNull(store.readCandidateOnce())
+
+        // Act — back in a vehicle inside what would have been the window (+880 .. +1180).
+        clock.epochMillis = START + 950_000
+        withCapture.handleMotion(motion(MotionEventKind.ENTERED_VEHICLE, START + 950_000))
+
+        // Assert — the parking ended at +700, the candidate is kept, and a new journey starts.
+        val state = withCapture.restore()
+        assertEquals(listOf(START + 700_000), endedAt)
+        assertEquals(DetectionState.DRIVING_CANDIDATE, state.state)
+        assertEquals(candidate.id, state.candidate?.id)
+        assertEquals(emptyList<String>(), notifier.withdrawn)
+        assertFalse(registrar.isRegistered)
+    }
+
+    /**
+     * docs/05 §11 "A lost capture decides nothing" / §14: a process death does not give a
+     * departure its lost capture back — on Android a new process reloads the same state, and
+     * the follow reopens only what a reboot dropped. iOS twin, same name: `DepartureTests` "A
+     * departure that lost its capture reopens none after a process death".
+     */
+    @Test
+    fun `a departure that lost its capture reopens none after a process death`() = runTest {
+        // Arrange — died right after the loss at +710; the permission is granted again.
+        val endedAt = mutableListOf<Long>()
+        val (_, registrar) = departAndLoseCaptureAt710(endedAt)
+        registrar.foregroundGranted = true
+        val requestsBefore = registrar.requestedConfigs.size
+        val controller = FusedLocationSessionController(store, registrar, clock)
+        val restarted = ParkingDetectionRuntime(
+            store = store,
+            candidates = { coordinator },
+            endParking = { at -> endedAt += at; null },
+            followLocationCapture = { before, after -> controller.followEngine(before, after) },
+            captureRunning = { controller.isCaptureRunning() },
+        )
+
+        // Act
+        clock.epochMillis = START + 720_000
+        restarted.handleTick(START + 720_000)
+        val reopened = registrar.requestedConfigs.size > requestsBefore
+        clock.epochMillis = START + 740_000
+        restarted.handleMotion(motion(MotionEventKind.EXITED_VEHICLE, START + 740_000))
+
+        // Assert — the departure is still judged exactly as without the death.
+        assertFalse("no capture is reopened", reopened)
+        assertEquals(listOf(START + 700_000), endedAt)
+        assertEquals(DetectionState.PARKING_TRANSITION, restarted.restore().state)
+    }
+
+    /**
+     * docs/05 §11 "The kept session stays without a capture" / §14: the departure confirms on
+     * elapsed time with no capture, the process dies, and the permission comes back. The
+     * vehicle_enter that follows opens a new journey's capture before the engine takes it
+     * (TransitionEventIngestor's order), and that capture must not revive a stop-only window
+     * the transition never held one for. iOS twin, same name and events: `DepartureTests` "A
+     * departure that lost its capture reopens none after it confirms and the process dies".
+     */
+    @Test
+    fun `a departure that lost its capture reopens none after it confirms and the process dies`() = runTest {
+        // Arrange — capture lost at +710, the tick at +740 confirms the departure (DRIVING),
+        // then a new process over the same store, with the permission granted again.
+        val endedAt = mutableListOf<Long>()
+        val (withCapture, registrar) = departAndLoseCaptureAt710(endedAt)
+        clock.epochMillis = START + 740_000
+        withCapture.handleTick(START + 740_000)
+        assertEquals(DetectionState.DRIVING, withCapture.restore().state)
+        registrar.foregroundGranted = true
+        val controller = FusedLocationSessionController(store, registrar, clock)
+        val restarted = ParkingDetectionRuntime(
+            store = store,
+            candidates = { coordinator },
+            endParking = { at -> endedAt += at; null },
+            followLocationCapture = { before, after -> controller.followEngine(before, after) },
+            captureRunning = { controller.isCaptureRunning() },
+        )
+        val ingestor = TransitionEventIngestor(store, clock, controller, restarted)
+
+        // Act — stillness at +890 confirms the stop-only candidate (movementIdle at +880), then
+        // back in a vehicle inside what would have been the window (+880 .. +1180).
+        clock.epochMillis = START + 890_000
+        ingestor.ingest(listOf(TransitionEventIngestor.RawTransition(MotionActivity.STILL, TransitionKind.ENTER, START + 890_000)))
+        val candidate = assertNotNull(store.readCandidateOnce())
+        clock.epochMillis = START + 950_000
+        ingestor.ingest(listOf(TransitionEventIngestor.RawTransition(MotionActivity.IN_VEHICLE, TransitionKind.ENTER, START + 950_000)))
+
+        // Assert — "Leaving a pending candidate behind": a new journey, the candidate kept.
+        val state = restarted.restore()
+        assertEquals(listOf(START + 700_000), endedAt)
+        assertEquals(DetectionState.DRIVING_CANDIDATE, state.state)
+        assertEquals(candidate.id, state.candidate?.id)
+        assertEquals(candidate, store.readCandidateOnce())
+        assertEquals(emptyList<String>(), notifier.withdrawn)
+    }
+
+    /** The same for `PARKED`'s get-in. iOS twin, same name, in `DepartureTests`. */
+    @Test
+    fun `a get-in that lost its capture reopens none after a process death`() = runTest {
+        // Arrange — PARKED with a get-in (+600 enter, +610 fix), the permission revoked at +650,
+        // then the process died and the permission came back.
+        val registrar = FakeLocationSessionRegistrar()
+        val controller = FusedLocationSessionController(store, registrar, clock)
+        fun capturingRuntime() = ParkingDetectionRuntime(
+            store = store,
+            candidates = { coordinator },
+            followLocationCapture = { before, after -> controller.followEngine(before, after) },
+            captureRunning = { controller.isCaptureRunning() },
+        )
+        clock.epochMillis = START + 600_000
+        val beforeDeath = capturingRuntime()
+        beforeDeath.handleUserSavedParking(START)
+        beforeDeath.handleMotion(motion(MotionEventKind.ENTERED_VEHICLE, START + 600_000))
+        beforeDeath.handleLocations(listOf(fixNorth(START + 610_000, northMeters = 0.0)))
+        clock.epochMillis = START + 650_000
+        registrar.foregroundGranted = false
+        beforeDeath.handleTick(START + 650_000)
+        assertFalse(registrar.isRegistered)
+        registrar.foregroundGranted = true
+        val requestsBefore = registrar.requestedConfigs.size
+        val restarted = capturingRuntime()
+
+        // Act
+        clock.epochMillis = START + 660_000
+        restarted.handleTick(START + 660_000)
+        val reopened = registrar.requestedConfigs.size > requestsBefore
+        clock.epochMillis = START + 700_000
+        restarted.handleLocations(listOf(fixNorth(START + 700_000, northMeters = 600.0)))
+
+        // Assert — the get-in is kept, without a capture, and can still open the departure.
+        assertFalse("no capture is reopened", reopened)
+        assertEquals(DetectionState.DEPARTURE_CANDIDATE, restarted.restore().state)
     }
 
     @Test

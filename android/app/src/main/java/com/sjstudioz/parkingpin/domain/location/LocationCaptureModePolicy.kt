@@ -35,12 +35,20 @@ object LocationCaptureModePolicy {
      * its own: the kerb capture after `EXITED_VEHICLE`. The settled answer and not the stored
      * one, because a lapsed `DRIVING_CANDIDATE` or a stop-only window this exit closes still
      * reads as wanting one on disk (docs/05 §19).
+     *
+     * [sessionLostCapture] is whether the engine's session, carried on through this event, is
+     * one whose capture a revoked location permission took. No edge reopens it, whatever the
+     * permission is now (docs/05 §11 "The kept session stays without a capture"): iOS records
+     * the loss on the session and reopens nothing for it, so a kerb capture here fed a moving
+     * fix that resumed `DRIVING` on Android while the same drive parked on an iPhone. A new
+     * session — one the event opens — is not lost, and captures as usual.
      */
     fun modeFor(
         event: MotionEventKind,
         current: LocationSessionMode,
         engineWantsCapture: Boolean,
-    ): LocationSessionMode = when (event) {
+        sessionLostCapture: Boolean = false,
+    ): LocationSessionMode = if (sessionLostCapture) current else when (event) {
         // Vehicle evidence opens a cheap confirmation window; §7's guard promotes it.
         MotionEventKind.ENTERED_VEHICLE -> when (current) {
             LocationSessionMode.DRIVING -> LocationSessionMode.DRIVING

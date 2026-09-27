@@ -2169,6 +2169,116 @@ class ParkingDetectionEngineTest {
         assertEquals(2, step.state.candidatesCreated)
     }
 
+    // ── The Smart Detection opt-out (docs/05 §11 / §3a rule 4) ─────────────────────────
+    // Android twins of iOS `endDrivingSession(reason: .smartDetectionDisabled)`: the same
+    // events, the same resulting state. Turning detection off drops whatever the engine was
+    // inferring, never closes a parking and never withdraws a candidate the user may answer.
+
+    @Test
+    fun `the opt-out inside a departure returns to PARKED and ends nothing`() {
+        // Arrange — iOS twin: `DepartureTests` of the same name.
+        val departing = shortDepartureBeforeTheExit()
+
+        // Act — +740: the guard is met by elapsed time.
+        val step = engine.handle(departing, DetectionEvent.SmartDetectionDisabled(at(740)))
+
+        // Assert
+        assertEquals(DetectionState.PARKED, step.state.state)
+        assertNull(step.state.session)
+        assertNull("the capture is released", LocationCaptureModePolicy.modeWantedBy(step.state))
+        assertTrue(step.effects.none { it is DetectionEffect.EndActiveParking })
+    }
+
+    @Test
+    fun `turning Smart Detection off inside the transition drops it and releases the capture`() {
+        // Arrange — iOS twin: `ParkingTransitionEvidenceTests` of the same name.
+        val transition = idleTransition()
+        assertEquals(DetectionState.PARKING_TRANSITION, transition.state)
+
+        // Act
+        val step = engine.handle(transition, DetectionEvent.SmartDetectionDisabled(at(290)))
+        val walk = engine.handle(step.state, DetectionEvent.WalkingEnter(at(300)))
+
+        // Assert
+        assertEquals(DetectionState.IDLE, step.state.state)
+        assertNull(LocationCaptureModePolicy.modeWantedBy(step.state))
+        assertTrue(walk.effects.none { it is DetectionEffect.CreateCandidate })
+    }
+
+    @Test
+    fun `opting out during DRIVING ends the session in IDLE and stops the capture`() {
+        // Arrange — iOS twin: `ParkingTransitionEvidenceTests` of the same name.
+        val driving = drivenFromEnter().handle(DetectionEvent.CarLinkConnected(at(95)))
+        assertEquals(DetectionState.DRIVING, driving.state)
+
+        // Act
+        val step = engine.handle(driving, DetectionEvent.SmartDetectionDisabled(at(120)))
+
+        // Assert — and the link is forgotten: no latch survives into the next opt-in.
+        assertEquals(DetectionState.IDLE, step.state.state)
+        assertEquals(at(120), step.state.stateEnteredAtMillis)
+        assertNull(step.state.session)
+        assertNull("the capture is released", LocationCaptureModePolicy.modeWantedBy(step.state))
+        assertFalse(step.state.carLinkConnected)
+        assertTrue(step.effects.none { it is DetectionEffect.CreateCandidate || it is DetectionEffect.RetireCandidate })
+    }
+
+    @Test
+    fun `opting out inside a stop-only window closes it and keeps the candidate`() {
+        // Arrange — iOS twin: `ParkingTransitionEvidenceTests` of the same name.
+        val (pending, candidate) = stoppedInTraffic()
+
+        // Act
+        val step = engine.handle(pending, DetectionEvent.SmartDetectionDisabled(at(300)))
+        // Detection is back on and vehicle evidence arrives inside what was the window.
+        val boarding = engine.handle(step.state, DetectionEvent.VehicleEnter(at(330)))
+
+        // Assert — rule 4: the window closes, the candidate stands, and the vehicle_enter is a
+        // new journey rather than the jam moving on.
+        assertEquals(DetectionState.CANDIDATE_PENDING, step.state.state)
+        assertNull(step.state.stopOnlyResumeWindow)
+        assertNull("the vehicle level ends", step.state.session?.vehicleActiveSinceMillis)
+        assertEquals(candidate, step.state.candidate)
+        assertNull(LocationCaptureModePolicy.modeWantedBy(step.state))
+        assertTrue(step.effects.none { it is DetectionEffect.RetireCandidate })
+        assertTrue(boarding.effects.none { it is DetectionEffect.RetireCandidate })
+        assertEquals(DetectionState.DRIVING_CANDIDATE, boarding.state.state)
+        assertEquals(candidate.id, boarding.state.candidate?.id)
+    }
+
+    @Test
+    fun `turning Smart Detection off after getting back in keeps the parking and drops the get-in`() {
+        // Arrange
+        val gotIn = idle()
+            .handle(DetectionEvent.UserSavedParking(at(0)))
+            .handle(DetectionEvent.VehicleEnter(at(600)))
+            .handle(DetectionEvent.Location(fix(at(610), accuracyM = 5f, speedMps = 12f)))
+        assertNotNull(gotIn.session)
+
+        // Act
+        val step = engine.handle(gotIn, DetectionEvent.SmartDetectionDisabled(at(650)))
+
+        // Assert
+        assertEquals(DetectionState.PARKED, step.state.state)
+        assertEquals("the parking keeps its own entry", at(0), step.state.stateEnteredAtMillis)
+        assertNull(step.state.session)
+        assertNull(LocationCaptureModePolicy.modeWantedBy(step.state))
+        assertTrue(step.effects.none { it is DetectionEffect.EndActiveParking })
+    }
+
+    @Test
+    fun `turning Smart Detection off while idle changes nothing`() {
+        // Arrange
+        val idle = idle()
+
+        // Act
+        val step = engine.handle(idle, DetectionEvent.SmartDetectionDisabled(at(10)))
+
+        // Assert
+        assertEquals(idle, step.state)
+        assertTrue(step.effects.isEmpty())
+    }
+
     @Test
     fun `answering a stop-only candidate closes its window`() {
         // Arrange

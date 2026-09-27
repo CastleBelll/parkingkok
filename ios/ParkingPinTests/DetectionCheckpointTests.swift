@@ -117,6 +117,30 @@ struct DetectionCheckpointTests {
         #expect(result == .restored(checkpoint))
     }
 
+    /// docs/05 §11 "A lost capture decides nothing": a departure record written before
+    /// `isCaptureLost` existed describes a session whose capture was running.
+    @Test("A departure record without isCaptureLost reads as a running capture")
+    func departureRecordWithoutCaptureFlagReadsAsRunning() throws {
+        // Arrange — encode a record, then drop the field the older writer did not have.
+        let record = DepartureCheckpoint(
+            drive: DrivingEvidence(startedAt: TestTime.offset(0), lastVehicleEvidenceAt: TestTime.offset(0)),
+            vehicleActiveSince: TestTime.offset(0),
+            isCaptureLost: true
+        )
+        var object = try #require(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(record)) as? [String: Any]
+        )
+        #expect(object.removeValue(forKey: "isCaptureLost") != nil)
+        let older = try JSONSerialization.data(withJSONObject: object)
+
+        // Act
+        let decoded = try JSONDecoder().decode(DepartureCheckpoint.self, from: older)
+
+        // Assert
+        #expect(!decoded.isCaptureLost)
+        #expect(decoded.drive == record.drive)
+    }
+
     @Test("Reads a schema 1 checkpoint, which has no departure evidence")
     func readsSchemaOneCheckpoint() throws {
         // Arrange — the shape every install wrote before 2026-09-28.

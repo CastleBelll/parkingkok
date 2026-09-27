@@ -406,6 +406,9 @@ class ParkingDetectionEngine(
         // judged: the user has said where the car is, and nothing the engine was inferring
         // — including a window that happened to close at this instant — outranks that.
         if (event is DetectionEvent.UserSavedParking) return userSavedParking(state, event.atMillis)
+        // The opt-out likewise, and for iOS's reason: `endDrivingSession` acts on the state as
+        // it stands, with no window judged first.
+        if (event is DetectionEvent.SmartDetectionDisabled) return smartDetectionDisabled(state, event.atMillis)
 
         val effects = mutableListOf<DetectionEffect>()
 
@@ -718,8 +721,10 @@ class ParkingDetectionEngine(
             is DetectionEvent.UserRejectedParking,
             -> state
 
-            // Answered in [handle] before any fold, so it never reaches here.
-            is DetectionEvent.UserSavedParking -> state
+            // Answered in [handle] before any fold, so they never reach here.
+            is DetectionEvent.UserSavedParking,
+            is DetectionEvent.SmartDetectionDisabled,
+            -> state
         }
     }
 
@@ -1187,6 +1192,56 @@ class ParkingDetectionEngine(
             ),
             listOfNotNull(live?.let { DetectionEffect.RetireCandidate(it.id) }),
         ).withCheckpoint()
+    }
+
+    /**
+     * The Smart Detection opt-out — iOS `endDrivingSession(reason: .smartDetectionDisabled)`,
+     * state for state (docs/05 §11 "The opt-out decides nothing", §3a rule 4).
+     *
+     * - `DRIVING_CANDIDATE`, `DRIVING`, `PARKING_TRANSITION`: the drive is dropped, straight to
+     *   `IDLE` with no candidate — the app lost the drive, the drive did not end.
+     * - `CANDIDATE_PENDING`: a stop-only resume window closes and the vehicle level it kept
+     *   ends; the candidate stands.
+     * - `PARKED` with a get-in open: the get-in goes, the parking stays.
+     * - `DEPARTURE_CANDIDATE`: back to `PARKED`, ending nothing even when §7's guard is met.
+     *   Turning detection off must not close a parking.
+     *
+     * Every one of them leaves a state that wants no capture
+     * ([com.sjstudioz.parkingpin.domain.location.LocationCaptureModePolicy.modeWantedBy]). A
+     * candidate left behind by a new journey is kept, as iOS keeps it. The car-link latch is
+     * dropped in every state: while detection is off no link edge is heard, so a latch kept
+     * would outlive a disconnect nobody delivered — the one thing [DetectionEngineState.carLinkConnected]
+     * must never do — and suppress `movementIdleWindow` on the next drive.
+     */
+    private fun smartDetectionDisabled(state: DetectionEngineState, atMillis: Long): EngineStep {
+        val unlinked = state.copy(carLinkConnected = false)
+        return when (state.state) {
+            DetectionState.IDLE -> EngineStep(unlinked)
+
+            DetectionState.DRIVING_CANDIDATE,
+            DetectionState.DRIVING,
+            DetectionState.PARKING_TRANSITION,
+            -> unlinked.endSession(atMillis)
+
+            DetectionState.CANDIDATE_PENDING ->
+                if (state.stopOnlyResumeWindow == null) {
+                    EngineStep(unlinked)
+                } else {
+                    EngineStep(
+                        unlinked.copy(
+                            stopOnlyResumeWindow = null,
+                            session = state.session?.copy(vehicleActiveSinceMillis = null),
+                        ),
+                    )
+                }
+
+            DetectionState.PARKED ->
+                if (state.session == null) EngineStep(unlinked) else EngineStep(unlinked.copy(session = null)).withCheckpoint()
+
+            DetectionState.DEPARTURE_CANDIDATE -> EngineStep(
+                unlinked.copy(state = DetectionState.PARKED, stateEnteredAtMillis = atMillis, session = null),
+            ).withCheckpoint()
+        }
     }
 
     // ── Shared moves ────────────────────────────────────────────────────────────────

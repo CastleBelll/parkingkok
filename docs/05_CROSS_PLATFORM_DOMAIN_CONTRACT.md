@@ -234,6 +234,11 @@ and compare the result, with `expected` ignored, to one committed golden:
   outcomes and are not recorded.
 - The golden's key set must equal the files on disk, so a new fixture or draft fails until
   its trace is recorded.
+- Each runner also lists the exact committed names — the fixtures and the drafts — so a file
+  deleted together with its golden entry fails too, rather than leaving both key sets equal and
+  smaller. iOS `ParityFixtureTests` "Every fixture in platform-tests/ is loaded and replayed";
+  Android `ParityFixtureTest` `every committed fixture is replayed` and `every committed draft
+  is replayed` (the same eleven draft names).
 
 This is the committed proof behind "same result on both platforms": two engines that each
 match one golden agree with each other at every event — final state, candidate created,

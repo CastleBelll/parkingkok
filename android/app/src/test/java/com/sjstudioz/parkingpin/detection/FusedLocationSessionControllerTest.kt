@@ -320,6 +320,42 @@ class FusedLocationSessionControllerTest {
     }
 
     @Test
+    fun `a capture without background location is not running`() = runTest {
+        // Arrange — a downgrade to "only while using": Play services stops delivering to the
+        // PendingIntent once the app is backgrounded, and the process dies with the service.
+        val f = fixture()
+        f.controller.setDesiredMode(LocationSessionMode.DRIVING)
+
+        // Act
+        f.registrar.backgroundGranted = false
+
+        // Assert
+        assertFalse(f.controller.isCaptureRunning())
+    }
+
+    @Test
+    fun `a system reset cleans a record that had already expired instead of marking it dropped`() = runTest {
+        // Arrange — the drive's capture outlived its own hard deadline on disk (the process
+        // never ran again to tear it down), then the phone rebooted.
+        val f = fixture()
+        f.controller.onMotionEvent(motion(MotionEventKind.ENTERED_VEHICLE, startMillis))
+        f.clock.epochMillis = startMillis +
+            LocationSessionProfiles.maxSessionMillis(LocationSessionMode.DRIVING_CANDIDATE) + 1
+        val requestsBefore = f.registrar.requestedConfigs.size
+
+        // Act
+        val state = f.controller.reconcileAfterSystemReset()
+        val followed = f.controller.followEngine(LocationSessionMode.DRIVING_CANDIDATE, LocationSessionMode.DRIVING_CANDIDATE)
+
+        // Assert — ended by its deadline, so the engine's follow does not reopen it.
+        assertNull(state.record)
+        assertEquals(LocationSessionStopReason.DEADLINE_REACHED, state.lastStopReason)
+        assertEquals(LocationSessionMode.IDLE, followed.mode)
+        assertEquals(requestsBefore, f.registrar.requestedConfigs.size)
+        assertFalse(f.registrar.isRegistered)
+    }
+
+    @Test
     fun `a system reset forgets the registration the system dropped`() = runTest {
         // Arrange — a reboot or an app update drops the Play services request while the
         // DataStore record survives; trusted, it would call a dead capture live.
@@ -364,6 +400,72 @@ class FusedLocationSessionControllerTest {
         // Assert
         assertEquals(LocationSessionStopReason.PERMISSION_LOST, state.lastStopReason)
         assertFalse(f.registrar.isRegistered)
+    }
+
+    @Test
+    fun `a regranted permission reopens nothing for the session that lost the capture`() = runTest {
+        // Arrange — docs/05 §11 "The kept session stays without a capture".
+        val f = fixture()
+        f.controller.onMotionEvent(motion(MotionEventKind.ENTERED_VEHICLE, startMillis))
+        f.registrar.foregroundGranted = false
+        f.controller.reconcile()
+        f.registrar.foregroundGranted = true
+        val requestsBefore = f.registrar.requestedConfigs.size
+
+        // Act
+        val state = f.controller.onMotionEvent(
+            motion(MotionEventKind.EXITED_VEHICLE, startMillis + 60_000),
+            engineWantsCapture = true,
+            continuesEngineSession = true,
+        )
+
+        // Assert
+        assertEquals(LocationSessionMode.IDLE, state.mode)
+        assertEquals(LocationSessionStopReason.PERMISSION_LOST, state.lastStopReason)
+        assertEquals(requestsBefore, f.registrar.requestedConfigs.size)
+    }
+
+    @Test
+    fun `a regranted permission opens a capture for a new session`() = runTest {
+        // Arrange
+        val f = fixture()
+        f.controller.onMotionEvent(motion(MotionEventKind.ENTERED_VEHICLE, startMillis))
+        f.registrar.foregroundGranted = false
+        f.controller.reconcile()
+        f.registrar.foregroundGranted = true
+
+        // Act — the engine's session ended; this vehicle_enter opens another.
+        val state = f.controller.onMotionEvent(
+            motion(MotionEventKind.ENTERED_VEHICLE, startMillis + 600_000),
+            engineWantsCapture = true,
+            continuesEngineSession = false,
+        )
+
+        // Assert
+        assertEquals(LocationSessionMode.DRIVING_CANDIDATE, state.mode)
+        assertNull(state.lastStopReason)
+        assertTrue(f.registrar.isRegistered)
+    }
+
+    @Test
+    fun `a capture its own deadline ended still reopens for the same session`() = runTest {
+        // Arrange — only a lost permission sticks to the session; a deadline is a leak guard
+        // for one request, and the kerb capture after it is the engine's to ask for.
+        val f = fixture()
+        f.controller.onMotionEvent(motion(MotionEventKind.ENTERED_VEHICLE, startMillis))
+        f.clock.epochMillis = startMillis + LocationSessionProfiles.maxSessionMillis(LocationSessionMode.DRIVING_CANDIDATE)
+        f.controller.reconcile()
+        assertFalse(f.registrar.isRegistered)
+
+        // Act
+        val state = f.controller.onMotionEvent(
+            motion(MotionEventKind.EXITED_VEHICLE, f.clock.epochMillis),
+            engineWantsCapture = true,
+            continuesEngineSession = true,
+        )
+
+        // Assert
+        assertEquals(LocationSessionMode.PARKING_TRANSITION, state.mode)
     }
 
     @Test

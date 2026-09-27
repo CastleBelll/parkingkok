@@ -75,7 +75,8 @@ class FusedLocationSessionController(
     }
 
     /**
-     * Forgets a registration the system dropped, then leaves the capture off.
+     * Forgets a registration the system dropped, then leaves the capture off. A record whose
+     * own deadline had already passed is cleaned as expired, not as dropped, so nothing reopens it.
      *
      * Use after reboot or app update ([RegistrationRecoveryReceiver]): Play services no longer
      * holds the request, but the record survives in DataStore, and [reconcile] would trust it —
@@ -89,21 +90,37 @@ class FusedLocationSessionController(
      */
     suspend fun reconcileAfterSystemReset(): LocationSessionState = mutex.withLock {
         val stored = store.readLocationSessionStateOnce()
-        if (stored.record == null) return@withLock stored
+        val record = stored.record ?: return@withLock stored
         val failure = registrar.remove()
+        // Only a capture the reset actually took is marked as dropped by the system, which is
+        // what lets the engine's follow reopen it. One whose own expiry or hard deadline had
+        // already passed ended by itself — that deadline is a leak guard — and is cleaned up
+        // as the ordinary reconcile would have.
+        val reason = if (record.isLiveAt(clock.nowEpochMillis())) {
+            LocationSessionStopReason.SYSTEM_RESET
+        } else {
+            LocationSessionStopReason.DEADLINE_REACHED
+        }
         store.updateLocationSessionState {
-            stored.stopped(LocationSessionStopReason.SYSTEM_RESET, failure).copy(ownedByDiagnostics = false)
+            stored.stopped(reason, failure).copy(ownedByDiagnostics = false)
         }
     }
 
     /**
      * Whether a bounded capture is delivering right now: a registration recorded, still live
-     * by its own expiry and deadline, and the location permission still granted. The runtime
+     * by its own expiry and deadline, and both location permissions still granted. The runtime
      * reads it to close a stop-only window whose capture is gone (docs/05 §3a / §19).
+     *
+     * Background location too, as [LocationSessionRegistrar.hasBackgroundLocationPermission]
+     * states: after a downgrade to "only while using" Play services stops delivering to the
+     * PendingIntent once the app leaves the foreground, and the foreground service dies with
+     * the process, so a record that still reads as live describes a capture that is not.
      */
     suspend fun isCaptureRunning(): Boolean = mutex.withLock {
         val record = store.readLocationSessionStateOnce().record ?: return@withLock false
-        record.isLiveAt(clock.nowEpochMillis()) && registrar.hasForegroundLocationPermission()
+        record.isLiveAt(clock.nowEpochMillis()) &&
+            registrar.hasForegroundLocationPermission() &&
+            registrar.hasBackgroundLocationPermission()
     }
 
     /**
@@ -112,14 +129,24 @@ class FusedLocationSessionController(
      * [engineWantsCapture] is whether the detection engine wanted a capture before this event
      * (see [LocationCaptureModePolicy.modeFor]). It defaults to true for the compositions with
      * no engine, which is what this method did before the engine existed.
+     *
+     * [continuesEngineSession] is whether the engine, having taken this event, is still on the
+     * session it was on before it. Such a session keeps a loss: after a
+     * [LocationSessionStopReason.PERMISSION_LOST] stop, no edge of it reopens a capture, even
+     * with the permission granted again (docs/05 §11 "The kept session stays without a
+     * capture"). False — no engine, or a new session — captures as usual.
      */
     suspend fun onMotionEvent(
         event: MotionDomainEvent,
         engineWantsCapture: Boolean = true,
+        continuesEngineSession: Boolean = false,
     ): LocationSessionState = mutex.withLock {
         val now = clock.nowEpochMillis()
         val state = store.readLocationSessionStateOnce()
-        val desiredMode = LocationCaptureModePolicy.modeFor(event.kind, state.mode, engineWantsCapture)
+        val sessionLostCapture = continuesEngineSession &&
+            state.record == null &&
+            state.lastStopReason == LocationSessionStopReason.PERMISSION_LOST
+        val desiredMode = LocationCaptureModePolicy.modeFor(event.kind, state.mode, engineWantsCapture, sessionLostCapture)
         applyPlan(
             stored = state,
             state = state.copy(evidence = evidenceAfter(state.evidence, event)),

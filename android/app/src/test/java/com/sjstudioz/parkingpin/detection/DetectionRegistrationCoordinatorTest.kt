@@ -137,4 +137,54 @@ class DetectionRegistrationCoordinatorTest {
         coordinator.reconcile()
         assertEquals(2, registrar.registerCalls)
     }
+
+    // ── docs/05 §3a "Turning Smart Detection off": the relaunch sweep ─────────────────
+
+    @Test
+    fun reconcileWhileOptedOut_endsWhatAnInterruptedOptOutLeftBehind() = runTest {
+        // Arrange — the flag was written, then the process died before the opt-out ran.
+        val optOuts = mutableListOf<Long>()
+        val relaunched = DetectionRegistrationCoordinator(store, registrar, clock, optOut = { optOuts += it })
+        store.setDesiredEnabled(false)
+
+        // Act — what ParkingpinApplication.onCreate and the recovery receiver do.
+        relaunched.reconcile()
+        relaunched.reconcileAfterSystemReset()
+
+        // Assert
+        assertEquals(listOf(clock.epochMillis, clock.epochMillis), optOuts)
+    }
+
+    @Test
+    fun reconcileWhileOptedIn_runsNoOptOut() = runTest {
+        // Arrange
+        val optOuts = mutableListOf<Long>()
+        val relaunched = DetectionRegistrationCoordinator(store, registrar, clock, optOut = { optOuts += it })
+        store.setDesiredEnabled(true)
+
+        // Act
+        relaunched.reconcile()
+
+        // Assert
+        assertEquals(emptyList<Long>(), optOuts)
+    }
+
+    @Test
+    fun aFailingOptOut_doesNotFailTheSettingsToggle() = runTest {
+        // Arrange — the runtime's DataStore write throws.
+        val failing = DetectionRegistrationCoordinator(
+            store,
+            registrar,
+            clock,
+            optOut = { throw java.io.IOException("disk full") },
+        )
+        failing.setDetectionEnabled(true)
+
+        // Act
+        val status = failing.setDetectionEnabled(false)
+
+        // Assert — the opt-out itself stands.
+        assertEquals(RegistrationStatus.Disabled, status)
+        assertEquals(false, store.readDesiredEnabledOnce())
+    }
 }
