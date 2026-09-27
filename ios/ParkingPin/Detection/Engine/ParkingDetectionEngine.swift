@@ -165,14 +165,16 @@ actor ParkingDetectionEngine {
     }
 
     /// The window in which a stop-only candidate can still turn out to be a long light.
+    ///
+    /// Exists exactly while the bounded capture the transition kept is running (§3a "The
+    /// window lives exactly as long as its capture"): it is never opened without one, and
+    /// every door that stops the capture closes it.
     private struct CandidateResume {
         /// The drive's end — the transition's entry. A fix older than this says nothing
         /// about whether the car moved on.
         let driveEndedAt: Date
         /// `driveEndedAt + transitionWindow`: the deadline the transition itself had.
         let deadline: Date
-        /// Whether the bounded capture the transition kept is still running.
-        let isCapturing: Bool
         /// Fixes inside the window that reported moving speed. §7's "one event alone never
         /// confirms": a single Doppler spike under a slab must not withdraw a parking.
         var reportedMovingFixes = 0
@@ -206,7 +208,7 @@ actor ParkingDetectionEngine {
             reliableLocationRejectCount: reliableLocationRejectCount,
             lastReliableLocationRejection: lastReliableLocationRejection,
             isLocationCaptureWanted: driving != nil || transition?.isCapturing == true
-                || candidateResume?.isCapturing == true
+                || candidateResume != nil
         )
     }
 
@@ -759,7 +761,7 @@ actor ParkingDetectionEngine {
             // the trip can still produce the real parking later — as the same trip, so
             // its drive is read before the retirement clears it.
             let drive = candidateDrive
-            let captureRunning = candidateResume?.isCapturing == true
+            let captureRunning = candidateResume != nil
             return retirePendingCandidate(now: now)
                 + resumeDrivingFromCandidate(drive, captureRunning: captureRunning, now: now)
         case .parkingTransition:
@@ -896,7 +898,7 @@ actor ParkingDetectionEngine {
         // A bounded capture runs exactly while `driving` is set — including the one
         // `PARKED` opens on `vehicle_enter` to measure §11's bars — or while a transition
         // is still deciding.
-        if driving != nil || transition?.isCapturing == true || candidateResume?.isCapturing == true {
+        if driving != nil || transition?.isCapturing == true || candidateResume != nil {
             effects.append(.stopLocationCapture)
         }
         driving = nil
@@ -1033,9 +1035,9 @@ actor ParkingDetectionEngine {
     /// Ends a stop-only candidate's resume window, releasing the capture it kept. The
     /// candidate is untouched.
     private func closeCandidateResume() -> [DetectionEffect] {
-        guard let hold = candidateResume else { return [] }
+        guard candidateResume != nil else { return [] }
         candidateResume = nil
-        return hold.isCapturing ? [.stopLocationCapture] : []
+        return [.stopLocationCapture]
     }
 
     /// §3a. Only a **confirmed** `DRIVING` session goes on to decide whether it parked;
@@ -1115,7 +1117,7 @@ actor ParkingDetectionEngine {
     /// On vehicle evidence the idle clock is re-anchored at the resume, as in the
     /// transition; a resume on a moving fix is anchored by that fix, already folded.
     private func resumeFromStopOnlyCandidate(vehicleEvidenceAt: Date?, now: Date) -> [DetectionEffect] {
-        guard let hold = candidateResume, var drive = candidateDrive else { return [] }
+        guard candidateResume != nil, var drive = candidateDrive else { return [] }
         var effects: [DetectionEffect] = []
         if let candidate = pendingCandidate {
             effects.append(.withdrawCandidate(id: candidate.id))
@@ -1131,11 +1133,8 @@ actor ParkingDetectionEngine {
         driving = drive
         isVehicleActive = true
         vehicleActiveSince = vehicleActiveSince ?? now
-        effects += moveTo(.driving, now: now)
-        if !hold.isCapturing {
-            effects.append(.startBoundedLocationCapture)
-        }
-        return effects
+        // The window holds the capture it kept (§3a), so the resumed drive already has one.
+        return effects + moveTo(.driving, now: now)
     }
 
     // MARK: - Fixes
@@ -1323,7 +1322,11 @@ actor ParkingDetectionEngine {
         // §3a "A stop-only candidate can still be a long light": when nothing but absence
         // ended the drive, the capture it kept outlives the transition until the drive's
         // own window runs out, so the car moving on can still take the candidate back.
-        let resumable = Self.isStopOnly(transition, evidence: evidence)
+        //
+        // Only while that capture is still running: a transition that lost it opens no
+        // window, so an open window always holds its capture — on Android the window's
+        // existence is that bit (R4-B1).
+        let resumable = transition.isCapturing && Self.isStopOnly(transition, evidence: evidence)
         var effects = closeTransition(keepingCapture: resumable)
         // §10a: a new travel session's candidate retires the older one first. A stale
         // prompt about a previous trip is worse than no prompt.
@@ -1340,8 +1343,7 @@ actor ParkingDetectionEngine {
         candidateResume = resumable
             ? CandidateResume(
                 driveEndedAt: transition.enteredAt,
-                deadline: transition.enteredAt.addingTimeInterval(ParkingTransitionPolicy.transitionWindow),
-                isCapturing: transition.isCapturing
+                deadline: transition.enteredAt.addingTimeInterval(ParkingTransitionPolicy.transitionWindow)
             )
             : nil
         // §9: `low` posts nothing. The candidate above is already written, so the app still

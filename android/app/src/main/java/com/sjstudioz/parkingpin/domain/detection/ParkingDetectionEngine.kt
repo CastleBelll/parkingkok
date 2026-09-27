@@ -1319,7 +1319,12 @@ class ParkingDetectionEngine(
         )
         return EngineStep(
             next,
-            listOf(
+            // §10a: a new travel session's candidate retires the one an earlier trip left
+            // unanswered. Contract §8 fixes the shape — withdraw-then-create, adjacent, as iOS
+            // emits it — because the storm counter tells a supersession from a self-withdrawal
+            // by exactly that adjacency.
+            listOfNotNull(
+                candidate?.let { DetectionEffect.RetireCandidate(it.id) },
                 DetectionEffect.CreateCandidate(
                     candidateId = id,
                     confidence = confidence,

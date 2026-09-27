@@ -937,6 +937,8 @@
  ],
  "expected": {
   "candidate": true,
-  "finalState": "CANDIDATE_PENDING"
+  "finalState": "CANDIDATE_PENDING",
+  "confidence": "low",
+  "requiredReasons": ["location_stopped", "recent_vehicle_activity", "reliable_location_captured", "vehicle_distance_met", "vehicle_duration_met"]
  }
 }

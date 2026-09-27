@@ -816,6 +816,29 @@ struct ParkingTransitionEvidenceTests {
         #expect(await relaunched.state == .drivingCandidate)
     }
 
+    /// docs/05 §3a "The window lives exactly as long as its capture" (R4-B1): a transition
+    /// that lost its capture — authorization or a capture failure — opens no resume window,
+    /// so "an open window always holds its capture" is true on both platforms. Android
+    /// reaches the same outcome by closing the window in its runtime before the next batch.
+    /// Without this, iOS withdrew the parking on the same `vehicle_enter` Android treated as
+    /// a new journey.
+    @Test("A stop-only candidate whose transition lost its capture opens no resume window")
+    func captureLostTransitionOpensNoResumeWindow() async throws {
+        // Arrange — a movementIdle transition that loses its capture, then a stop confirms it.
+        let engine = await idleTransitionEngine()
+        _ = await engine.endDrivingSession(reason: .authorizationLost, now: at(285))
+        let confirming = await engine.handle(.stationaryEnter(at: at(300)))
+        let candidate = try #require(candidates(confirming).first)
+
+        // Act — vehicle evidence inside what would have been the window.
+        let boarding = await engine.handle(.vehicleEnter(at: at(330)))
+
+        // Assert — the candidate stands and the evidence opens a new journey.
+        #expect(!confirming.contains(.stopLocationCapture))
+        #expect(!boarding.contains(.withdrawCandidate(id: candidate.id)))
+        #expect(await engine.state == .drivingCandidate)
+    }
+
     @Test("A drive resumed from a stop-only candidate can still produce the real parking")
     func resumedDriveCanStillPark() async throws {
         // Arrange

@@ -1,12 +1,15 @@
 package com.sjstudioz.parkingpin.domain.detection
 
+import com.sjstudioz.parkingpin.analytics.DetectionProperties
 import com.sjstudioz.parkingpin.domain.location.LocationSample
 import com.sjstudioz.parkingpin.domain.parking.ConfidenceBucket
 import com.sjstudioz.parkingpin.domain.trace.LocationQualityBucket
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -45,6 +48,13 @@ import kotlin.math.PI
 class ParityFixtureTest {
 
     private val json = Json { ignoreUnknownKeys = true }
+
+    @OptIn(ExperimentalSerializationApi::class)
+    private val goldenJson = Json {
+        prettyPrint = true
+        prettyPrintIndent = "  "
+        explicitNulls = false
+    }
 
     @Test
     fun `every committed fixture is replayed`() {
@@ -121,22 +131,77 @@ class ParityFixtureTest {
         val perSession = candidatesPerTravelSession(effects)
 
         // Assert
-        assertEquals(2, effects.count { it is DetectionEffect.CreateCandidate })
+        val creates = effects.filterIsInstance<DetectionEffect.CreateCandidate>()
+        assertEquals(2, creates.size)
+        assertEquals(
+            "contract §8: the supersession is withdraw-then-create, adjacent",
+            creates[1],
+            effects[effects.indexOf(DetectionEffect.RetireCandidate(creates[0].candidateId)) + 1],
+        )
         assertEquals(listOf(1, 1), perSession)
     }
 
+    /**
+     * docs/05 §17 `long_stop_in_traffic`, replayed by the loop above like every fixture, and
+     * kept as its own test for what the loop cannot say: the candidate was silent (§9 `low`
+     * posts nothing), the session withdrew it, and contract §8's per-session count is `[0]`.
+     * iOS twin: `longStopInTrafficResumesTheDrive`.
+     */
     @Test
-    fun `the storm counter does not count a candidate the session took back`() {
-        // Arrange — docs/05 §17 `long_stop_in_traffic`: a silent stop-only candidate the drive
-        // moved on from (§3a) is withdrawn by the session itself, so it is no storm.
-        val effects = replay(fixtureNamed("long_stop_in_traffic.json")).effects
+    fun `long_stop_in_traffic - a jam that moves on retires its silent candidate`() {
+        // Arrange
+        val fixture = fixtureNamed("long_stop_in_traffic.json")
 
         // Act
-        val perSession = candidatesPerTravelSession(effects)
+        val outcome = replay(fixture)
+
+        // Assert — one silent candidate, withdrawn, and the drive carries on.
+        assertEquals(DetectionState.valueOf(fixture.expected.finalState), outcome.state.state)
+        val created = outcome.effects.filterIsInstance<DetectionEffect.CreateCandidate>().single()
+        assertEquals(ConfidenceBucket.LOW, created.confidence)
+        assertTrue(DetectionEffect.RetireCandidate(created.candidateId) in outcome.effects)
+        assertFalse("§9: low posts nothing", candidateAsStored(created).isNotifiable)
+        assertEquals(listOf(0), candidatesPerTravelSession(outcome.effects))
+    }
+
+    /**
+     * GAP2 / GAP7: every committed fixture **and every draft** replays to the outcome trace
+     * recorded in `platform-tests/[GOLDEN_TRACE_PATH]`. `expected` is ignored here — a draft has none, or one
+     * no conformant engine can meet — so what is pinned is the engine's behaviour, event by
+     * event: each event that changed the state, created, withdrew or ended a parking, with the
+     * candidate's bucket and full reason set.
+     *
+     * The iOS runner must assert the same file (see [OutcomeTraceEntry] for the labels): two
+     * engines agreeing with one golden agree with each other at every event, and a draft can
+     * no longer drift on one platform unseen. Regenerate after a deliberate, spec-backed
+     * behaviour change with `UPDATE_PARITY_GOLDEN=1`, and review the diff as a product change.
+     */
+    @Test
+    fun `every fixture and draft replays to its golden outcome trace`() {
+        // Arrange
+        val actual = (fixtureFiles().map { it.name to it } + draftFiles().map { "drafts/${it.name}" to it })
+            .associate { (key, file) ->
+                val input = json.decodeFromString<ReplayInput>(file.readText())
+                key to replay(input.name, DetectionState.valueOf(input.initialState), input.events).trace
+            }
+        val goldenFile = goldenTraceFile()
+        if (System.getenv(UPDATE_GOLDEN_ENV) == "1") {
+            goldenFile.absoluteFile.parentFile?.mkdirs()
+            goldenFile.writeText(goldenJson.encodeToString(OutcomeTraceGolden(actual.toSortedMap())) + "\n")
+        }
+
+        // Act
+        val golden = goldenJson.decodeFromString<OutcomeTraceGolden>(goldenFile.readText()).fixtures
 
         // Assert
-        assertEquals(1, effects.count { it is DetectionEffect.CreateCandidate })
-        assertEquals(listOf(0), perSession)
+        assertEquals("the golden covers exactly the fixtures and drafts on disk", actual.keys, golden.keys)
+        val diverged = actual.mapNotNull { (key, trace) ->
+            val expected = golden.getValue(key)
+            if (trace == expected) return@mapNotNull null
+            val at = trace.indices.firstOrNull { trace[it] != expected.getOrNull(it) } ?: trace.size
+            "$key: first difference at trace entry $at — golden ${expected.getOrNull(at)}, replay ${trace.getOrNull(at)}"
+        }
+        assertTrue(diverged.joinToString("\n"), diverged.isEmpty())
     }
 
     @Test
@@ -163,27 +228,46 @@ class ParityFixtureTest {
 
     // ── replay ──────────────────────────────────────────────────────────────────────
 
-    /** The final state and every effect the engine emitted, in order. */
-    private data class Replay(val state: DetectionEngineState, val effects: List<DetectionEffect>)
+    /**
+     * The final state, every effect the engine emitted in order, and the [OutcomeTraceEntry]s
+     * of the events that changed the product outcome.
+     */
+    private data class Replay(
+        val state: DetectionEngineState,
+        val effects: List<DetectionEffect>,
+        val trace: List<OutcomeTraceEntry>,
+    )
 
-    private fun replay(fixture: Fixture): Replay {
+    private fun replay(fixture: Fixture): Replay = replay(fixture.name, fixture.initialState(), fixture.events)
+
+    private fun replay(name: String, initialState: DetectionState, events: List<FixtureEvent>): Replay {
         var ids = 0
-        val engine = ParkingDetectionEngine { "${fixture.name}-candidate-${ids++}" }
+        val engine = ParkingDetectionEngine { "$name-candidate-${ids++}" }
         // Relative seconds become absolute milliseconds on an arbitrary epoch. The engine
         // reads time only from the events, so the origin cannot change the outcome.
-        var state = DetectionEngineState.startingIn(fixture.initialState(), EPOCH)
+        var state = DetectionEngineState.startingIn(initialState, EPOCH)
         val effects = mutableListOf<DetectionEffect>()
+        val trace = mutableListOf<OutcomeTraceEntry>()
         var northMeters = 0.0
 
-        for (event in fixture.events) {
+        events.forEachIndexed { index, event ->
             val atMillis = EPOCH + (event.t * MILLIS_PER_SECOND).toLong()
             if (event.type == "location") northMeters += event.distanceFromPreviousM ?: 0.0
-            val detectionEvent = event.toDetectionEvent(atMillis, northMeters) ?: continue
-            val step = engine.handle(state, detectionEvent)
+            val step = engine.handle(state, event.toDetectionEvent(atMillis, northMeters))
+            val labels = step.effects.mapNotNull(::outcomeLabel)
+            val stateChanged = step.state.state != state.state
+            if (stateChanged || labels.isNotEmpty()) {
+                trace += OutcomeTraceEntry(
+                    event = index,
+                    t = event.t,
+                    state = step.state.state.name.takeIf { stateChanged },
+                    effects = labels,
+                )
+            }
             state = step.state
             effects += step.effects
         }
-        return Replay(state, effects)
+        return Replay(state, effects, trace)
     }
 
     /** Hand-written events from `IDLE`, for the counter's own tests. */
@@ -198,6 +282,19 @@ class ParityFixtureTest {
         json.decodeFromString(File(fixtureDirectory(), name).readText())
 
     private fun at(seconds: Long): Long = EPOCH + seconds * 1_000L
+
+    /** The candidate as the runtime stores it, which is what decides whether it is posted. */
+    private fun candidateAsStored(created: DetectionEffect.CreateCandidate) = ParkingCandidate.of(
+        id = created.candidateId,
+        detectedAtMillis = EPOCH,
+        lastReliableLocation = created.lastReliableLocation,
+        evidence = DetectionProperties(
+            confidenceBucket = created.confidence,
+            walkingEvidence = created.walkingEvidence,
+            gpsDegradation = created.gpsDegradation,
+            optionalVehicleSignal = created.optionalVehicleSignal,
+        ),
+    )
 
     private fun sampleAt(atMillis: Long, northMeters: Double, speedMps: Float?) = LocationSample(
         atMillis = atMillis,
@@ -231,7 +328,7 @@ class ParityFixtureTest {
         return problems.takeIf { it.isNotEmpty() }?.joinToString("; ")
     }
 
-    private fun FixtureEvent.toDetectionEvent(atMillis: Long, northMeters: Double): DetectionEvent? = when (type) {
+    private fun FixtureEvent.toDetectionEvent(atMillis: Long, northMeters: Double): DetectionEvent = when (type) {
         "vehicle_enter" -> DetectionEvent.VehicleEnter(atMillis)
         "vehicle_exit" -> DetectionEvent.VehicleExit(atMillis)
         "walking_enter" -> DetectionEvent.WalkingEnter(atMillis)
@@ -282,6 +379,20 @@ class ParityFixtureTest {
             "platform-tests holds no fixtures"
         }.sortedBy { it.name }
 
+    private fun draftFiles(): List<File> =
+        checkNotNull(File(fixtureDirectory(), DRAFT_DIRECTORY_NAME).listFiles { file -> file.extension == "json" }) {
+            "platform-tests/$DRAFT_DIRECTORY_NAME is missing"
+        }.sortedBy { it.name }
+
+    /**
+     * The one shared golden under `platform-tests/`, the same file the iOS runner asserts.
+     * Android both reads it and, with `UPDATE_PARITY_GOLDEN=1`, rewrites it in place — a
+     * private copy would let one platform regenerate while the other asserts a stale file.
+     */
+    private fun goldenTraceFile(): File = File(fixtureDirectory(), GOLDEN_TRACE_PATH).also {
+        check(it.isFile || System.getenv(UPDATE_GOLDEN_ENV) == "1") { "no golden at ${it.absolutePath}" }
+    }
+
     private fun fixtureDirectory(): File {
         var directory: File? = File("").absoluteFile
         while (directory != null) {
@@ -316,6 +427,14 @@ class ParityFixtureTest {
         val toBucket: LocationQualityBucket? = null,
     )
 
+    /** A fixture or a draft, read for its events alone: a draft may have no `expected`. */
+    @Serializable
+    private data class ReplayInput(
+        val name: String,
+        val initialState: String,
+        val events: List<FixtureEvent>,
+    )
+
     @Serializable
     private data class FixtureExpectation(
         val candidate: Boolean,
@@ -326,6 +445,9 @@ class ParityFixtureTest {
 
     private companion object {
         const val FIXTURE_DIRECTORY_NAME = "platform-tests"
+        const val DRAFT_DIRECTORY_NAME = "drafts"
+        const val GOLDEN_TRACE_PATH = "goldens/outcome-traces.golden.json"
+        const val UPDATE_GOLDEN_ENV = "UPDATE_PARITY_GOLDEN"
         const val EPOCH = 1_700_000_000_000L
         const val MILLIS_PER_SECOND = 1_000.0
 
@@ -356,8 +478,9 @@ class ParityFixtureTest {
  *   taking its candidate back (a link reconnect, a stop-only resume, an expiry) and no longer
  *   counts. One followed by a create is a supersession, and both stay counted.
  *
- * Android's engine supersedes by creating the next candidate without a retire effect (the
- * store replaces the old one), which the second rule already counts correctly.
+ * Both engines emit a supersession as `RetireCandidate(old)` immediately followed by
+ * `CreateCandidate(new)` (contract §8; pinned on Android by `ParkingDetectionEngineTest` "a
+ * candidate superseded by the next journey is retired directly before the new one is created").
  */
 internal fun candidatesPerTravelSession(effects: List<DetectionEffect>): List<Int> {
     val counts = mutableListOf(0)
@@ -391,4 +514,37 @@ internal fun candidatesPerTravelSession(effects: List<DetectionEffect>): List<In
         }
     }
     return counts
+}
+
+/**
+ * One event of a replay that changed the product outcome — the unit of the golden outcome
+ * trace both runners assert (`every fixture and draft replays to its golden outcome trace`).
+ *
+ * Platform-neutral on purpose, so the Swift runner can produce the identical file:
+ * - [event] is the index into the fixture's `events`, [t] its relative time;
+ * - [state] is the engine state after the event, present only when the event changed it;
+ * - [effects] are, in emission order, `withdraw`, `create <bucket> <sorted wire codes>` and
+ *   `endActiveParking` — the §15 effects contract §8 compares. Checkpoints, notifications and
+ *   capture requests are not outcomes and are not recorded.
+ */
+@Serializable
+internal data class OutcomeTraceEntry(
+    val event: Int,
+    val t: Double,
+    val state: String? = null,
+    val effects: List<String> = emptyList(),
+)
+
+@Serializable
+internal data class OutcomeTraceGolden(val fixtures: Map<String, List<OutcomeTraceEntry>>)
+
+/** The [OutcomeTraceEntry] label of [effect], or null for an effect that is not an outcome. */
+internal fun outcomeLabel(effect: DetectionEffect): String? = when (effect) {
+    is DetectionEffect.CreateCandidate ->
+        "create ${effect.confidence.name.lowercase()} ${effect.reasons.map { it.wire }.sorted().joinToString(",")}"
+    is DetectionEffect.RetireCandidate -> "withdraw"
+    is DetectionEffect.EndActiveParking -> "endActiveParking"
+    is DetectionEffect.MarkParkingActive,
+    is DetectionEffect.PersistCheckpoint,
+    -> null
 }

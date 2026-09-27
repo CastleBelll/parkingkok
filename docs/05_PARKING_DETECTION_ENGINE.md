@@ -562,8 +562,8 @@ the deadline the transition itself had:
    immediately by a `createCandidate`, which is how contract §8's storm counter tells this
    from a supersession;
 2. one `persistCheckpoint` with `state = DRIVING` and no `candidateId`;
-3. `startBoundedLocationCapture` **only** if the window no longer held the capture (it
-   always does in production; a restored or capture-lost engine may not).
+3. no `startBoundedLocationCapture`: an open window always holds its capture (below), so
+   the resumed drive already has one.
 
 No `drivingConfirmed` and no `sessionEnded`: the drive never ended as far as the product is
 concerned, and it is already confirmed. The session kept is the candidate's own (start,
@@ -582,7 +582,17 @@ inside the window, and with the fallback counted s03 would end in `DRIVING` inst
 its parking. In the transition a false resume only delays a decision; here it would withdraw a
 real parking.
 
-**The window lives exactly as long as its capture (round 4, 2026-09-27).** It is not part of
+**The window lives exactly as long as its capture (round 4, 2026-09-27; R4-B1 closed
+2026-09-27).** It is never opened without the capture: a transition that lost its capture
+(lost authorization, capture failure) and is then confirmed by a stop-only signal produces
+its candidate with **no** window, so a `vehicle_enter` after it is "Leaving a pending
+candidate behind" — `CANDIDATE_PENDING → DRIVING_CANDIDATE`, candidate kept — on both
+platforms. iOS applies this when the candidate is created (`resumable` requires
+`transition.isCapturing`); Android's engine records the window and its runtime closes it
+before the next batch because the capture is not running — the same product outcome. Pinned
+by iOS `ParkingTransitionEvidenceTests` "A stop-only candidate whose transition lost its
+capture opens no resume window"; Android must pin the same sequence at the runtime level.
+The window is not part of
 the §14 `DetectionCheckpoint`, and both engines apply one rule to a process death inside it:
 rule 4's "lost capture" — the window closes, the candidate stays, as it did before this rule.
 What differs is only whether the capture itself survives the process, which is an OS fact,
@@ -591,9 +601,10 @@ not an engine choice:
 - **iOS** — the capture is a Core Location session owned by the process. It dies with the
   process, so a relaunch inside the window finds none, and the engine rebuilds no window
   (`restore` of `CANDIDATE_PENDING` opens nothing, wants no capture, emits no
-  `startBoundedLocationCapture`). A moving fix or `vehicle_enter` after the relaunch is §3a
-  "Leaving a pending candidate behind": `CANDIDATE_PENDING → DRIVING_CANDIDATE`, candidate
-  kept.
+  `startBoundedLocationCapture`). A `vehicle_enter` after the relaunch is §3a "Leaving a
+  pending candidate behind": `CANDIDATE_PENDING → DRIVING_CANDIDATE`, candidate kept. A
+  moving fix after the relaunch changes nothing — no session is open, and a fix outside one
+  is ignored — so the state stays `CANDIDATE_PENDING`.
 - **Android** — the capture is a Fused Location request registered with a `PendingIntent`.
   Play services keeps delivering it to a new process after the old one died; that is how the
   platform works for every capture this app runs, and the runtime reloads the whole engine
@@ -1372,13 +1383,16 @@ iPhone15,3 trace 2개에 대해서만 확인됐고, **둘 다 지하철이다. �
 
 **Field drafts that no conformant engine can pass (2026-09-27).** Of the ten drafts labelled
 "parked", three end without a candidate on both engines, identically at every event, and the
-reason is the recording, not the engine. They are parity inputs, not accuracy targets:
+reason is the recording, not the engine. They are parity inputs, not accuracy targets. "At
+every event" is committed, not measured by hand: contract §8's outcome traces
+(`platform-tests/goldens/outcome-traces.golden.json`) hold each draft's per-event trace and both
+runners assert it:
 
 | draft | outcome on both | why |
 |---|---|---|
 | s02 | `IDLE` | old sparse capture. The session opened at `vehicle_enter` t=1908 and hit the 2-hour ceiling at 9108; the real final drive (8696–9068) and its stop have no vehicle evidence of their own, and §3a opens a session only on `vehicle_enter` or a link |
 | s06 | `IDLE` | the drive goes underground (no speed after 2737, accuracy 429→1414 m); `movementIdle` opens the transition and nothing — no walk, no stillness, no exit, no speed-bearing fix — arrives before it lapses. GPS degradation alone cannot confirm (§6) |
-| s31 | `PARKING_TRANSITION` | the recording ends 23 s into the 300 s window, with no confirming signal yet. Check whether the source trace was split (contract §9 `splitFrom`) before re-converting |
+| s31 | `PARKING_TRANSITION` | the last fix reporting ≥ 2.0 m/s is t=826, so `movementIdle` is due at 826 + 180 = 1006 and the transition is entered, stamped at that deadline, by the first event after it (the fix at t=1016). The recording ends at t=1039 — 33 s into the 300 s window — with no confirming signal. The car was probably still creeping: the reported speeds after 826 are 0–1.7 m/s, and the speedless fixes from 885 to 1039 (accuracy 18–51 m) cover ~15–40 m per 17 s. Replayed on the straight line those pairs clear the 2σ floor but average only 1.2–2.0 m/s, under §7's 2.0 m/s — and the straight line is the **largest** displacement the recorded legs admit, so this is not a replay artefact: a device measuring real chords would register no movement either. A car circling a car park at walking pace is below §7's travel bar by design, which is why the transition opened so late. Whether the source trace was split (contract §9 `splitFrom`) is unverified; check it before re-converting |
 
 The old-capture drafts (s02–s17) have sparse, km-grade fixes: the §7 fallback rejects pairs
 more than 180 s apart and displacements inside 2σ, so movement is rarely registered without
@@ -1442,12 +1456,13 @@ cost, they do not make it part of the design. Four precise rules:
    question (`TransitionEventIngestor.engineWantsCapture`) must settle the stored state the
    same way: a stored `DRIVING_CANDIDATE` whose `drivingCandidateWindow` ran out, or a stop-only
    window whose deadline passed with no tick, wants nothing.
-2. **"Still holds the capture" is engine state.** iOS keeps it as `CandidateResume.isCapturing`
-   (a capture loss closes the iOS window outright, and a relaunched iOS engine rebuilds none);
-   Android keeps the same bit on
-   `StopOnlyResumeWindow`. A lost capture clears it (§3a "The window lives exactly as long as
-   its capture"). `CANDIDATE_PENDING` with a window that no longer holds its capture wants
-   nothing.
+2. **"Still holds the capture" is the window's existence.** On both platforms an open
+   stop-only window always holds its capture (§3a "The window lives exactly as long as its
+   capture"), so neither keeps a separate bit. iOS never opens a window for a transition that
+   lost its capture, closes it on any capture loss, and rebuilds none on relaunch; Android
+   represents it by `StopOnlyResumeWindow` being non-null, and its runtime removes a window
+   whose capture is not running before the next batch. `CANDIDATE_PENDING` without a window
+   wants nothing.
 3. **Release after every batch, whatever the edge.** After each batch, if the settled want is
    none and a capture the *engine* opened is running, the adapter releases it. A capture the
    diagnostics screen forced on is not the engine's and is not released by this rule.

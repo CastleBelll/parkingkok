@@ -1614,6 +1614,34 @@ class ParkingDetectionEngineTest {
         assertEquals(candidateBefore, state.candidate)
     }
 
+    /**
+     * Contract §8: "Engines therefore emit a supersession as withdraw-then-create, adjacent".
+     * iOS appends `.withdrawCandidate(old)` directly before `.createCandidate(new)`; the storm
+     * counter tells a supersession from a self-withdrawal by exactly that adjacency.
+     */
+    @Test
+    fun `a candidate superseded by the next journey is retired directly before the new one is created`() {
+        // Arrange — the first journey's candidate is left unanswered, and a second journey
+        // sustains its vehicle activity.
+        val pending = pendingCandidate()
+        val first = checkNotNull(pending.candidate)
+        val secondDrive = pending
+            .handle(DetectionEvent.VehicleEnter(T0 + 900_000))
+            .handle(DetectionEvent.TimerTick(T0 + 900_000 + SUSTAIN))
+            .handle(DetectionEvent.VehicleExit(T0 + 1_100_000))
+
+        // Act
+        val step = engine.handle(secondDrive, DetectionEvent.WalkingEnter(T0 + 1_110_000))
+
+        // Assert
+        val retireAt = step.effects.indexOf(DetectionEffect.RetireCandidate(first.id))
+        val created = createCandidate(step.effects)
+        assertTrue("the superseded candidate is withdrawn", retireAt >= 0)
+        assertEquals("withdraw-then-create, adjacent", created, step.effects[retireAt + 1])
+        assertEquals(1, step.effects.count { it is DetectionEffect.RetireCandidate })
+        assertEquals(created.candidateId, step.state.candidate?.id)
+    }
+
     // ── §3a "A stop-only candidate can still be a long light" (DECIDED 2026-09-27) ──────
     // Twins of iOS `ParkingTransitionEvidenceTests` "A silent stop that moves on is a long
     // light": the same events, the same outcomes, so the two engines cannot disagree on

@@ -384,6 +384,44 @@ class ParkingDetectionRuntimeTest {
         assertEquals(DetectionState.CANDIDATE_PENDING, withCapture.restore().state)
     }
 
+    @Test
+    fun `a capture lost inside the transition leaves a stop-only candidate no resume window`() = runTest {
+        // Arrange — R4-B1, docs/05 §3a / §19 "an open window always holds its capture": the
+        // location permission is revoked while PARKING_TRANSITION decides, so the stop-only
+        // candidate that stillness then confirms has no capture to hold. iOS twin in
+        // `ParkingTransitionEvidenceTests`: the same sequence must end in the same state with
+        // the same candidate on both platforms.
+        val registrar = FakeLocationSessionRegistrar()
+        val controller = FusedLocationSessionController(store, registrar, clock)
+        val withCapture = ParkingDetectionRuntime(
+            store = store,
+            candidates = { coordinator },
+            followLocationCapture = { before, after -> controller.followEngine(before, after) },
+            captureRunning = { controller.isCaptureRunning() },
+        )
+        controller.onMotionEvent(motion(MotionEventKind.ENTERED_VEHICLE, START))
+        withCapture.handleMotion(motion(MotionEventKind.ENTERED_VEHICLE, START))
+        withCapture.handleTick(START + SUSTAIN)
+        withCapture.handleLocations(listOf(fix(START + 100_000, speedMps = 9f)))
+        withCapture.handleTick(STOP_ONLY_DRIVE_END)
+        assertEquals(DetectionState.PARKING_TRANSITION, withCapture.restore().state)
+        registrar.foregroundGranted = false
+        withCapture.handleMotion(motion(MotionEventKind.BECAME_STATIONARY, STOP_ONLY_DRIVE_END + 20_000))
+        val candidate = assertNotNull(store.readCandidateOnce())
+        assertNotNull("the engine alone opened a stop-only window", store.readEngineStateOnce()?.stopOnlyResumeWindow)
+
+        // Act — back in a vehicle while the window would still have been open.
+        withCapture.handleMotion(motion(MotionEventKind.ENTERED_VEHICLE, STOP_ONLY_DRIVE_END + 50_000))
+
+        // Assert — §3a "Leaving a pending candidate behind", not a resume.
+        val state = withCapture.restore()
+        assertEquals(DetectionState.DRIVING_CANDIDATE, state.state)
+        assertEquals(candidate.id, state.candidate?.id)
+        assertEquals(candidate, store.readCandidateOnce())
+        assertEquals(emptyList<String>(), notifier.withdrawn)
+        assertFalse("no capture without the permission", registrar.isRegistered)
+    }
+
     /**
      * Sustained vehicle evidence, one moving fix, then stopped fixes: `movementIdle` ends the
      * drive at [STOP_ONLY_DRIVE_END] and the same stopped fix confirms it — a silent low
