@@ -2,6 +2,7 @@ package com.sjstudioz.parkingpin.domain.detection
 
 import com.sjstudioz.parkingpin.domain.location.LocationSample
 import com.sjstudioz.parkingpin.domain.parking.ConfidenceBucket
+import com.sjstudioz.parkingpin.domain.trace.LocationQualityBucket
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -9,6 +10,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import kotlin.math.PI
 
 /**
  * Replays the JSON fixtures in `platform-tests` through [ParkingDetectionEngine] and
@@ -52,6 +54,15 @@ class ParityFixtureTest {
             "the whole committed suite must run — a renamed fixture must fail loudly, not vanish",
             setOf(
                 "bus_repeated_stops_no_storm.json",
+                // Real iPhone drives the user confirmed ended in a parking (promoted 2026-09-27).
+                "field_s03_parked.json",
+                "field_s04_parked.json",
+                "field_s16_parked.json",
+                "field_s17_parked.json",
+                "field_s26_parked.json",
+                "field_s32_parked.json",
+                "field_s33_parked.json",
+                "long_stop_in_traffic.json",
                 "manual_save_parks.json",
                 "quiet_transition_expires_no_candidate.json",
                 "red_light_no_candidate.json",
@@ -67,30 +78,134 @@ class ParityFixtureTest {
     fun `fixtures reach the state the contract expects`() {
         val failures = fixtureFiles().mapNotNull { file ->
             val fixture = json.decodeFromString<Fixture>(file.readText())
-            replay(fixture).failureAgainst(fixture)?.let { "${file.name}: $it" }
+            replay(fixture).state.failureAgainst(fixture)?.let { "${file.name}: $it" }
         }
 
         assertTrue(failures.joinToString("\n"), failures.isEmpty())
     }
 
+    /**
+     * §12 / §3a: a bus that stops four times must not notify four times. The fixture's
+     * `expected` fixes the final state; this says the thing the user would actually feel.
+     *
+     * Counted **per travel session**, as contract §8 and docs/05 §3a "A recording can hold two
+     * travel sessions" define it — iOS's `noSessionProducesACandidateStorm` counts the same way
+     * ([candidatesPerTravelSession]). Counting per fixture gave the two gates opposite
+     * verdicts on identical engine output: field draft s03 holds two journeys with one
+     * candidate each, and passed on iOS while failing here.
+     */
+    @Test
+    fun `no travel session produces more than one candidate`() {
+        val storms = fixtureFiles().mapNotNull { file ->
+            val fixture = json.decodeFromString<Fixture>(file.readText())
+            val perSession = candidatesPerTravelSession(replay(fixture).effects)
+            "${file.name} produced $perSession candidates per travel session".takeIf { perSession.any { it > 1 } }
+        }
+
+        assertTrue(storms.joinToString("\n"), storms.isEmpty())
+    }
+
+    @Test
+    fun `the storm counter keeps a superseded candidate in its own travel session`() {
+        // Arrange — two drives, each ended by an exit and a walk; the second candidate
+        // supersedes the first. The user was asked twice, once per trip. iOS twin:
+        // `supersededCandidateStillCounts`.
+        val effects = replayEffects(
+            DetectionEvent.VehicleEnter(at(0)), DetectionEvent.TimerTick(at(150)),
+            DetectionEvent.VehicleExit(at(160)), DetectionEvent.WalkingEnter(at(170)),
+            DetectionEvent.VehicleEnter(at(200)), DetectionEvent.TimerTick(at(350)),
+            DetectionEvent.VehicleExit(at(360)), DetectionEvent.WalkingEnter(at(370)),
+        )
+
+        // Act
+        val perSession = candidatesPerTravelSession(effects)
+
+        // Assert
+        assertEquals(2, effects.count { it is DetectionEffect.CreateCandidate })
+        assertEquals(listOf(1, 1), perSession)
+    }
+
+    @Test
+    fun `the storm counter does not count a candidate the session took back`() {
+        // Arrange — docs/05 §17 `long_stop_in_traffic`: a silent stop-only candidate the drive
+        // moved on from (§3a) is withdrawn by the session itself, so it is no storm.
+        val effects = replay(fixtureNamed("long_stop_in_traffic.json")).effects
+
+        // Act
+        val perSession = candidatesPerTravelSession(effects)
+
+        // Assert
+        assertEquals(1, effects.count { it is DetectionEffect.CreateCandidate })
+        assertEquals(listOf(0), perSession)
+    }
+
+    @Test
+    fun `the storm counter opens a travel session on a confirmed departure`() {
+        // Arrange — a parking confirmed, then a drive away that §11 confirms as a departure:
+        // that drive is a new travel session with its own allowance.
+        val effects = replayEffects(
+            DetectionEvent.VehicleEnter(at(0)), DetectionEvent.TimerTick(at(150)),
+            DetectionEvent.VehicleExit(at(160)), DetectionEvent.WalkingEnter(at(170)),
+            DetectionEvent.UserConfirmedParking(at(180)),
+            DetectionEvent.VehicleEnter(at(1_000)),
+            DetectionEvent.Location(sampleAt(at(1_030), northMeters = 0.0, speedMps = 12f)),
+            DetectionEvent.Location(sampleAt(at(1_100), northMeters = 900.0, speedMps = 12f)),
+            DetectionEvent.Location(sampleAt(at(1_130), northMeters = 1_300.0, speedMps = 12f)),
+        )
+
+        // Act
+        val perSession = candidatesPerTravelSession(effects)
+
+        // Assert
+        assertTrue(effects.any { it is DetectionEffect.EndActiveParking })
+        assertEquals(listOf(1, 0), perSession)
+    }
+
     // ── replay ──────────────────────────────────────────────────────────────────────
 
-    private fun replay(fixture: Fixture): DetectionEngineState {
+    /** The final state and every effect the engine emitted, in order. */
+    private data class Replay(val state: DetectionEngineState, val effects: List<DetectionEffect>)
+
+    private fun replay(fixture: Fixture): Replay {
         var ids = 0
         val engine = ParkingDetectionEngine { "${fixture.name}-candidate-${ids++}" }
         // Relative seconds become absolute milliseconds on an arbitrary epoch. The engine
         // reads time only from the events, so the origin cannot change the outcome.
         var state = DetectionEngineState.startingIn(fixture.initialState(), EPOCH)
+        val effects = mutableListOf<DetectionEffect>()
         var northMeters = 0.0
 
         for (event in fixture.events) {
             val atMillis = EPOCH + (event.t * MILLIS_PER_SECOND).toLong()
             if (event.type == "location") northMeters += event.distanceFromPreviousM ?: 0.0
             val detectionEvent = event.toDetectionEvent(atMillis, northMeters) ?: continue
-            state = engine.handle(state, detectionEvent).state
+            val step = engine.handle(state, detectionEvent)
+            state = step.state
+            effects += step.effects
         }
-        return state
+        return Replay(state, effects)
     }
+
+    /** Hand-written events from `IDLE`, for the counter's own tests. */
+    private fun replayEffects(vararg events: DetectionEvent): List<DetectionEffect> {
+        var ids = 0
+        val engine = ParkingDetectionEngine { "counter-candidate-${ids++}" }
+        var state = DetectionEngineState.startingIn(DetectionState.IDLE, EPOCH)
+        return events.flatMap { event -> engine.handle(state, event).also { state = it.state }.effects }
+    }
+
+    private fun fixtureNamed(name: String): Fixture =
+        json.decodeFromString(File(fixtureDirectory(), name).readText())
+
+    private fun at(seconds: Long): Long = EPOCH + seconds * 1_000L
+
+    private fun sampleAt(atMillis: Long, northMeters: Double, speedMps: Float?) = LocationSample(
+        atMillis = atMillis,
+        latitude = ORIGIN_LATITUDE + northMeters / METERS_PER_DEGREE_LATITUDE,
+        longitude = ORIGIN_LONGITUDE,
+        horizontalAccuracyM = 8f,
+        speedMps = speedMps,
+    )
 
     private fun DetectionEngineState.failureAgainst(fixture: Fixture): String? {
         val expected = fixture.expected
@@ -132,7 +247,14 @@ class ParityFixtureTest {
             ),
         )
 
-        "location_quality_degraded" -> DetectionEvent.LocationQualityDegraded(atMillis)
+        // The buckets are the event's meaning: §8b credits only a fall into `poor`, so a
+        // good→fair drop replayed without them would read as a drop to `poor` and earn a
+        // weight iOS — whose runner passes them — does not give (field draft s17).
+        "location_quality_degraded" -> DetectionEvent.LocationQualityDegraded(
+            atMillis = atMillis,
+            fromBucket = fromBucket,
+            toBucket = toBucket,
+        )
         // §2's four link spellings and no others. Android's engine does not distinguish
         // projection from Bluetooth — §3a treats them as one signal — but the *names* are
         // the contract, and accepting a fifth here would let a fixture pass on this
@@ -190,8 +312,8 @@ class ParityFixtureTest {
         val speed: Float? = null,
         val distanceFromPreviousM: Double? = null,
         val confidence: String? = null,
-        val fromBucket: String? = null,
-        val toBucket: String? = null,
+        val fromBucket: LocationQualityBucket? = null,
+        val toBucket: LocationQualityBucket? = null,
     )
 
     @Serializable
@@ -209,6 +331,64 @@ class ParityFixtureTest {
 
         const val ORIGIN_LATITUDE = 37.5
         const val ORIGIN_LONGITUDE = 127.0
-        const val METERS_PER_DEGREE_LATITUDE = 111_320.0
+        /**
+         * Metres per degree on the sphere [com.sjstudioz.parkingpin.domain.location.GeoDistance]
+         * measures on, so a rebuilt step is exactly the `distanceFromPreviousM` the file
+         * recorded — as iOS's runner does against its own sphere. The 111 320 m this used to
+         * be under-read every step by 0.11 %, enough to move a leg across the noise floor
+         * or a drive across 800 m that iOS replays on the other side.
+         */
+        const val METERS_PER_DEGREE_LATITUDE = 6_371_008.8 * PI / 180
     }
+}
+
+/**
+ * Contract §8's storm counter: how many candidates each travel session produced, in order.
+ *
+ * The port of iOS `ParityFixtureOutcome.candidatesPerTravelSession`, rule for rule, so the two
+ * parity gates judge the same engine output the same way:
+ *
+ * - a travel session opens when a checkpoint enters `DRIVING_CANDIDATE` from another state,
+ *   or enters `DRIVING` from `DEPARTURE_CANDIDATE` (a confirmed departure, §11) — the places
+ *   the engine itself starts a trip. An empty session is reused rather than a new one opened;
+ * - a [DetectionEffect.CreateCandidate] counts for the session it was created in;
+ * - a [DetectionEffect.RetireCandidate] not immediately followed by a create is the session
+ *   taking its candidate back (a link reconnect, a stop-only resume, an expiry) and no longer
+ *   counts. One followed by a create is a supersession, and both stay counted.
+ *
+ * Android's engine supersedes by creating the next candidate without a retire effect (the
+ * store replaces the old one), which the second rule already counts correctly.
+ */
+internal fun candidatesPerTravelSession(effects: List<DetectionEffect>): List<Int> {
+    val counts = mutableListOf(0)
+    val sessionOfCandidate = mutableMapOf<String, Int>()
+    var previousState: DetectionState? = null
+    effects.forEachIndexed { index, effect ->
+        when (effect) {
+            is DetectionEffect.PersistCheckpoint -> {
+                val state = effect.checkpoint.state
+                val opensSession =
+                    (state == DetectionState.DRIVING_CANDIDATE && previousState != DetectionState.DRIVING_CANDIDATE) ||
+                        (state == DetectionState.DRIVING && previousState == DetectionState.DEPARTURE_CANDIDATE)
+                if (opensSession && counts.last() != 0) counts += 0
+                previousState = state
+            }
+
+            is DetectionEffect.CreateCandidate -> {
+                sessionOfCandidate[effect.candidateId] = counts.lastIndex
+                counts[counts.lastIndex] += 1
+            }
+
+            is DetectionEffect.RetireCandidate -> {
+                val supersedes = effects.getOrNull(index + 1) is DetectionEffect.CreateCandidate
+                val session = sessionOfCandidate[effect.candidateId]
+                if (!supersedes && session != null) counts[session] -= 1
+            }
+
+            is DetectionEffect.MarkParkingActive,
+            is DetectionEffect.EndActiveParking,
+            -> Unit
+        }
+    }
+    return counts
 }

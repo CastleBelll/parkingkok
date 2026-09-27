@@ -11,11 +11,11 @@ import com.sjstudioz.parkingpin.domain.parking.ConfidenceBucket
  * sees the integer except diagnostics.
  *
  * ### How a weight is earned
- * Every positive weight is keyed to a §4 reason code the engine has already accumulated,
- * with one exception noted below. That is deliberate: §3a says reason codes accumulate as
- * evidence arrives and are never recomputed at the end from the final state, so scoring
- * from the accumulated codes is scoring from the evidence, in arrival order, rather than
- * re-deriving it from a snapshot.
+ * Every positive weight is keyed to a §4 reason code, with one exception noted below. The
+ * engine derives those codes from facts the travel session recorded as they arrived — the
+ * stop, the confirming signal, the time of a quality drop — never from the device's
+ * situation at scoring time (§3a), so scoring the codes is scoring the evidence. One code,
+ * one meaning, on both platforms: see `ParkingDetectionEngine.candidateReasons`.
  *
  * The exception is `route duration/distance comfortably over minimum`, which is a
  * statement about the §7 minimums rather than about one piece of evidence, so it takes the
@@ -56,9 +56,9 @@ object ParkingConfidencePolicy {
     const val COMFORTABLE_MULTIPLE: Int = 2
 
     /**
-     * @param reasons the §4 codes accumulated by the travel session, in arrival order.
-     * @param durationMillis how long vehicle evidence spanned, first sighting to session end.
-     * @param distanceMeters §7's accumulated travel distance for the same session.
+     * @param reasons the §4 codes the candidate carries.
+     * @param durationMillis how long the drive lasted, first vehicle evidence to the stop.
+     * @param distanceMeters §7's accumulated travel distance at the stop.
      */
     fun score(
         reasons: Collection<EvidenceReasonCode>,

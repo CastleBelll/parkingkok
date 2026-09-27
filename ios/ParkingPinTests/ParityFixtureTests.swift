@@ -56,14 +56,77 @@ struct ParityFixtureTests {
         }
     }
 
-    /// §12 / §3a: a bus that stops four times must not notify four times. The fixture
-    /// already fixes the final state; this says the thing the user would actually feel.
-    @Test("No fixture produces more than one candidate")
-    func noFixtureProducesACandidateStorm() async throws {
+    /// §12 / §3a "One candidate per travel session": a bus that stops four times must not
+    /// notify four times.
+    ///
+    /// Counted per travel session, which is what §12 says — not per fixture. A recording
+    /// can hold two journeys (field draft s03: a 128 s ride, a walk, then a new
+    /// `vehicle_enter` and a fifty-minute drive), and §3a makes the second a new travel
+    /// session that is allowed its own candidate. A travel session starts where the engine
+    /// opens one: entering `DRIVING_CANDIDATE`, or a confirmed departure (§11).
+    @Test("No travel session produces more than one candidate")
+    func noSessionProducesACandidateStorm() async throws {
         for fixture in try ParityFixtureLoader.loadAll() {
             let outcome = try await ParityFixtureRunner.run(fixture)
-            #expect(outcome.candidates.count <= 1, "\(fixture.name) produced \(outcome.candidates.count) candidates")
+            let perSession = ParityFixtureOutcome.candidatesPerTravelSession(outcome.effects)
+            #expect(
+                perSession.allSatisfy { $0 <= 1 },
+                "\(fixture.name) produced \(perSession) candidates per travel session"
+            )
         }
+    }
+
+    /// Contract §8's storm counter, pinned on the one case the fixtures do not yet hold: a
+    /// candidate superseded by the next journey's (withdraw immediately followed by create)
+    /// still counts for the session that made it — the user was asked twice, once per trip.
+    @Test("The storm counter keeps a superseded candidate in its own travel session")
+    func supersededCandidateStillCounts() async throws {
+        // Arrange — two drives, each ended by an exit and a walk.
+        let t0 = TestTime.offset(0)
+        func at(_ seconds: TimeInterval) -> Date { t0.addingTimeInterval(seconds) }
+        let engine = ParkingDetectionEngine()
+        _ = await engine.restore(nil, seedIfAbsent: false, now: t0)
+        let events: [DetectionEvent] = [
+            .vehicleEnter(at: at(0)), .timerTick(at: at(150)),
+            .vehicleExit(at: at(160)), .walkingEnter(at: at(170)),
+            .vehicleEnter(at: at(200)), .timerTick(at: at(350)),
+            .vehicleExit(at: at(360)), .walkingEnter(at: at(370))
+        ]
+
+        // Act
+        var effects: [DetectionEffect] = []
+        for event in events {
+            effects += await engine.handle(event)
+        }
+
+        // Assert
+        let created = effects.filter { if case .createCandidate = $0 { true } else { false } }
+        #expect(created.count == 2)
+        #expect(ParityFixtureOutcome.candidatesPerTravelSession(effects) == [1, 1])
+    }
+
+    /// docs/05 §17 `long_stop_in_traffic`, now committed to `platform-tests/` and replayed by
+    /// the loop above like every fixture. Kept as its own test for what the loop cannot say:
+    /// the candidate was silent, withdrawn, and contract §8's per-session count is `[0]`.
+    @Test("long_stop_in_traffic: a jam that moves on retires its silent candidate")
+    func longStopInTrafficResumesTheDrive() async throws {
+        // Arrange
+        let fixture = try #require(
+            try ParityFixtureLoader.loadAll().first { $0.name == "long_stop_in_traffic" },
+            "docs/05 §17 fixture missing from platform-tests/"
+        )
+
+        // Act
+        let outcome = try await ParityFixtureRunner.run(fixture)
+
+        // Assert — one silent candidate, withdrawn, and the drive carries on.
+        #expect(outcome.finalState == fixture.expected.finalState)
+        #expect(outcome.didCreateCandidate == fixture.expected.candidate)
+        let candidate = try #require(outcome.candidates.first)
+        #expect(candidate.confidenceBucket == .low)
+        #expect(outcome.effects.contains(.withdrawCandidate(id: candidate.id)))
+        #expect(!outcome.effects.contains(.issueCandidateNotification(candidate)))
+        #expect(ParityFixtureOutcome.candidatesPerTravelSession(outcome.effects) == [0])
     }
 
     /// §3a: "No fixture may depend on a link event being present." Stated as a test so the

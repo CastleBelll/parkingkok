@@ -165,8 +165,12 @@ class FieldTraceReplayTest {
         // Assert — these exact figures are asserted on iOS too; a difference is a parity
         // defect, not a tuning difference.
         assertEquals(4_120.30, recordedSteps, 0.01)
-        assertEquals(3_966.49, subway.travelDistanceMeters, 0.1)
-        assertEquals(50, subway.distanceNoiseFloorRejectCount)
+        // 3966.49 m / 50 before docs/05 §7's coarse-anchor rule (2026-09-27): a fix at
+        // least twice as accurate as the anchor now replaces it after a refused leg, and
+        // that refused leg — inside a several-hundred-metre floor, so indistinguishable
+        // from jitter — is no longer recovered by a later, longer chord.
+        assertEquals(3_050.54, subway.travelDistanceMeters, 0.1)
+        assertEquals(48, subway.distanceNoiseFloorRejectCount)
         assertEquals(43.82, walk.travelDistanceMeters, 0.1)
         assertEquals(33, walk.distanceNoiseFloorRejectCount)
     }

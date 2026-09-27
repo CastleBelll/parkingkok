@@ -443,6 +443,10 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
         analytics = { analyticsRecorder },
         // §11c: a hand save answers the question a running capture was gathering fixes for.
         stopLocationCapture = { locationSessionController.stop() },
+        // docs/05 §3a / §19: the capture runs while PARKING_TRANSITION decides and is
+        // released when the engine leaves it — edges no motion event marks.
+        followLocationCapture = { before, after -> locationSessionController.followEngine(before, after) },
+        captureRunning = { locationSessionController.isCaptureRunning() },
     )
 
     val transitionEventIngestor: TransitionEventIngestor = TransitionEventIngestor(

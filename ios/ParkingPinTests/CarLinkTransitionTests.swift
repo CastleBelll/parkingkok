@@ -156,7 +156,10 @@ struct CarLinkTransitionTests {
         #expect(effects.contains(.stopLocationCapture))
     }
 
-    @Test("Disconnecting before the drive was confirmed creates nothing")
+    /// docs/05 §3a car-link table (2026-09-27): the driver got in and changed their mind.
+    /// Android always ended the session here; iOS used to ignore the disconnect and let the
+    /// 90 s bar promote a drive the phone had already left.
+    @Test("Disconnecting before the drive was confirmed ends the session and creates nothing")
     func disconnectingFromDrivingCandidateCreatesNothing() async {
         // Arrange — paired, pulled away, changed mind 30 s later.
         let engine = await idleEngine()
@@ -168,7 +171,7 @@ struct CarLinkTransitionTests {
 
         // Assert
         #expect(candidates(effects).isEmpty)
-        #expect(await engine.state == .drivingCandidate)
+        #expect(await engine.state == .idle)
     }
 
     // MARK: - Row 3: CANDIDATE_PENDING → DRIVING

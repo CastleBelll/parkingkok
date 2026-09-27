@@ -73,6 +73,13 @@ data class LocationSessionState(
     val lastStopReason: LocationSessionStopReason? = null,
     /** Short, coordinate-free reason the last Play services call was rejected. */
     val lastFailure: String? = null,
+    /**
+     * The running capture was started by the P0 diagnostics override, not for a drive the
+     * engine follows, so the engine's per-batch release (docs/05 §19) must leave it alone.
+     * Cleared when the capture ends, and when the engine comes to want a capture — from then
+     * on it is following a real drive and has to be able to end it.
+     */
+    val ownedByDiagnostics: Boolean = false,
 ) {
     val mode: LocationSessionMode
         get() = record?.mode ?: LocationSessionMode.IDLE

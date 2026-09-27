@@ -15,6 +15,7 @@ struct ParkingCandidatePolicyTests {
 
     /// A drive that confirmed and ended. Every test starts here and adds one thing.
     private func endedDrive(
+        exit: Bool = true,
         walking: Bool = false,
         stationary: Bool = false,
         locationStopped: Bool = false,
@@ -26,12 +27,12 @@ struct ParkingCandidatePolicyTests {
         ParkingEvidence(
             hasMeaningfulVehicleSession: true,
             vehicleEnded: true,
+            vehicleExitDetected: exit,
             walkingAfterVehicle: walking,
             stationaryAfterVehicle: stationary,
             locationStopped: locationStopped,
             gpsQualityDegraded: gpsDegraded,
             carProjectionDisconnected: projection,
-            reliableLocationCaptured: true,
             driveDuration: duration,
             driveDistanceMeters: distance
         )
@@ -84,6 +85,28 @@ struct ParkingCandidatePolicyTests {
 
         // Act & Assert
         #expect(evaluate(evidence) == nil)
+    }
+
+    /// F16: `location_stopped` is a §8 weight. Only a stop *observed inside the
+    /// transition* is §6's confirming signal — otherwise a movementIdle entry would
+    /// satisfy the rule on its own the moment it happened.
+    @Test("location_stopped as a weight is not a confirming signal")
+    func locationStoppedWeightDoesNotConfirm() {
+        // Arrange
+        let evidence = endedDrive(locationStopped: true)
+
+        // Act & Assert
+        #expect(evaluate(evidence) == nil)
+    }
+
+    @Test("A location stop observed in the transition is a confirming signal")
+    func locationStopConfirms() {
+        // Arrange
+        var evidence = endedDrive(locationStopped: true)
+        evidence.locationStopConfirmed = true
+
+        // Act & Assert
+        #expect(evaluate(evidence) != nil)
     }
 
     // MARK: - §9: buckets
@@ -174,6 +197,42 @@ struct ParkingCandidatePolicyTests {
         // Assert
         #expect(!candidate.reasonCodes.contains(.vehicleDurationMet))
         #expect(!candidate.reasonCodes.contains(.vehicleDistanceMet))
+    }
+
+    /// §8 "trip below minimum -15" (F8). Android always applied it; iOS left it out.
+    @Test("A drive under both §7 minimums costs fifteen points")
+    func tripBelowMinimumIsPenalised() throws {
+        // Arrange — 100 s and 300 m: past the 90 s promotion bar, under 120 s and 800 m.
+        let evidence = endedDrive(walking: true, duration: 100, distance: 300)
+
+        // Act
+        let candidate = try #require(evaluate(evidence))
+
+        // Assert — 25 + 15 + 30 - 15.
+        #expect(candidate.score == 55)
+        #expect(candidate.confidenceBucket == .low)
+    }
+
+    @Test("Meeting either §7 minimum avoids the penalty")
+    func eitherMinimumAvoidsThePenalty() throws {
+        // Arrange
+        let byDistance = try #require(evaluate(endedDrive(walking: true, duration: 100, distance: 900)))
+        let byDuration = try #require(evaluate(endedDrive(walking: true, duration: 130, distance: 300)))
+
+        // Assert — 25 + 15 + 30, and nothing comfortably over.
+        #expect(byDistance.score == 70)
+        #expect(byDuration.score == 70)
+    }
+
+    /// A transition restored from a checkpoint has lost the drive's duration. Unknown is
+    /// not short, so it is not penalised.
+    @Test("An unknown drive duration is not a short trip")
+    func unknownDurationIsNotPenalised() throws {
+        // Arrange
+        let candidate = try #require(evaluate(endedDrive(walking: true, duration: nil, distance: 300)))
+
+        // Assert
+        #expect(candidate.score == 70)
     }
 
     // MARK: - docs/17 §3: what may be reported

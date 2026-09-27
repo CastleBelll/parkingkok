@@ -14,9 +14,11 @@ import kotlinx.coroutines.launch
  * recovery clears the transition record first and lets reconciliation re-register exactly
  * once (docs/04_ANDROID_IMPLEMENTATION.md §6).
  *
- * The location session is reconciled too, for the opposite reason: a reboot drops the
- * Fused Location request as well, so a session record that outlived it describes a
- * registration that no longer exists and has to be cleared rather than trusted.
+ * The location session is reset too, for the same reason: both events drop the Fused
+ * Location request as well, so a session record that outlived it describes a registration
+ * that no longer exists and has to be cleared rather than trusted. Clearing it is also what
+ * closes a stop-only resume window that capture was holding (docs/05 §3a "The window lives
+ * exactly as long as its capture").
  */
 class RegistrationRecoveryReceiver : BroadcastReceiver() {
 
@@ -31,7 +33,7 @@ class RegistrationRecoveryReceiver : BroadcastReceiver() {
         container.applicationScope.launch {
             try {
                 container.registrationCoordinator.reconcileAfterSystemReset()
-                container.locationSessionController.reconcile()
+                container.locationSessionController.reconcileAfterSystemReset()
                 container.diagnosticsExporter.export()
             } finally {
                 pendingResult.finish()

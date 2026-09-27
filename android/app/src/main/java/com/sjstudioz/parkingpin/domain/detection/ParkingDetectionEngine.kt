@@ -3,6 +3,7 @@ package com.sjstudioz.parkingpin.domain.detection
 import com.sjstudioz.parkingpin.domain.location.DrivingConfirmationGuard
 import com.sjstudioz.parkingpin.domain.location.DrivingSessionEvidence
 import com.sjstudioz.parkingpin.domain.location.LocationSample
+import com.sjstudioz.parkingpin.domain.location.MovementAnchor
 import com.sjstudioz.parkingpin.domain.location.MovementEvidencePolicy
 import com.sjstudioz.parkingpin.domain.location.ReliableLocationDecision
 import com.sjstudioz.parkingpin.domain.location.ReliableLocationSelector
@@ -22,48 +23,45 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class TravelSession(
     /**
-     * When the current, uninterrupted stretch of vehicle activity began.
-     *
-     * Not the same as when the session opened: §3a's promotion bar asks whether vehicle
-     * activity has been *sustained*, so a session that dipped out of the vehicle and back
-     * in has to earn the 90 s again from the later entry.
+     * The §7 evidence object. Its `vehicleFirstSeenAtMillis` is when this journey began, and
+     * is what §7's duration, the 2 h ceiling and §5's inheritance bound are measured from.
+     * Reused unchanged — see [DrivingSessionEvidence].
      */
-    val vehicleActivityStartedAtMillis: Long,
-    /** The §7 evidence object, reused unchanged — see [DrivingSessionEvidence]. */
     val evidence: DrivingSessionEvidence,
-    /** §4 codes in arrival order. Appended to, never rebuilt. */
-    val reasons: List<EvidenceReasonCode> = emptyList(),
     /** When vehicle activity ended, by exit or by car-link disconnect. */
     val vehicleEndedAtMillis: Long? = null,
     /**
-     * Last moment a fix cleared §7's movement bar, or `null` if none ever has.
+     * The `movementIdleWindow` anchor: the last moment a fix cleared §7's movement bar, or
+     * the moment a stopped drive resumed — or `null` if neither has happened.
      *
      * **Null is not "long ago", and the difference is the underground car park.** A drive
      * with no fix at all has no movement that could have stopped, so `movementIdleWindow`
      * must not fire on it — seeded with the session start it would, 180 s into every
      * underground drive, because "no sky" is not "not moving". iOS has always read it this
-     * way (`isMovementIdle` returns false for a nil sample) and this is Android catching up
-     * to it, which is what let the timeout rows finally be armed in production.
+     * way (`isMovementIdle` returns false for a nil sample).
+     *
+     * A resume re-anchors it (see [ParkingDetectionEngine]'s resume move) because the window
+     * measures "stopped for 180 s", and a car that has just pulled away from a red light has
+     * not been: left at the old value, the settle after a `vehicle_enter` resume re-fired the
+     * row at once and bounced the drive straight back to `PARKING_TRANSITION`.
+     *
+     * It is also §8b's "the drive's last moving sample" for `location_stopped`, re-anchor
+     * included: iOS's `lastMovingSampleAt` is one field serving both rules, and a stop from
+     * before a resume is a red light the drive left, not how it ended.
      */
     val lastMovementEvidenceAtMillis: Long? = null,
     /**
-     * §3a "DECIDED 2026-09-20: a connected car link suppresses every timeout row".
+     * The newest accepted fix that **reported** a speed below §7's movement threshold —
+     * docs/05 §8b `location_stopped`, iOS's `lastStoppedFixAt`.
      *
-     * True between a `projection_connected`/`bluetooth_car_connected` and the matching
-     * disconnect. While it holds, no elapsed-time row may end or downgrade this session: a
-     * phone still attached to the car's audio during a 180-second gap is at a red light, in
-     * a tunnel or on a ramp, not in a car that has been left.
-     *
-     * **It must not outlive the link.** The engine is pure and cannot poll, so §3a makes it
-     * the adapter's obligation to re-assert the real state on process start and feed a
-     * disconnect when the link is gone. A latch stuck at `true` would suppress timeouts for
-     * ever and kill detection outright.
+     * Only a reported speed counts: underground there is no Doppler speed, and reading a
+     * speedless fix as stillness would hand every underground drive a weight it did not earn.
      */
-    val carLinkConnected: Boolean = false,
+    val lastStoppedFixAtMillis: Long? = null,
     /**
      * When motion last said this device is *in a vehicle*, or null if it has not said so.
      *
-     * Separate from [vehicleActivityStartedAtMillis] because a car link opens a session
+     * Separate from the session's first vehicle evidence because a car link opens a session
      * too, and §3a is explicit that it must not buy the promotion bar: "Connecting does
      * **not** promote straight to `DRIVING`: people sit in parked cars." Without this,
      * 90 seconds of Bluetooth in a stationary car promoted the session, and the disconnect
@@ -82,23 +80,88 @@ data class TravelSession(
      */
     val candidateProduced: Boolean = false,
     /**
-     * The §2 quality bucket of the last valid fix, so a drop to a worse one can be seen.
+     * The newest moment the fix quality fell **into** `poor` — a `location_quality_degraded`
+     * event ending in `poor` (or naming no bucket), or an accepted fix in `poor` whose
+     * accepted predecessor was `good` or `fair` (docs/05 §8b `location_quality_degraded`).
      *
-     * Android has no adapter that emits `LocationQualityDegraded`: Fused Location reports
-     * accuracies, not transitions between them, and the one place that already derives the
-     * event derives it for the *trace* file. Deriving it here too, from the same fixed §2
-     * edges, is what makes §8's "GPS quality degraded near end" reachable on a real device
-     * rather than only in a fixture that spells the event out.
+     * Kept as a time rather than a flag because "near end" is judged against the stop, which
+     * has not happened yet when the drop arrives: a drop ten minutes before the car stopped
+     * is a tunnel on the way, not the car park at the end of it. A drive that was `poor` from
+     * its first fix never *fell* into it, so it has none — that is iOS's reading too.
      */
-    val lastQualityBucket: LocationQualityBucket? = null,
-) {
+    val lastDegradedToPoorAtMillis: Long? = null,
+    /**
+     * How the vehicle session ended or stopped, captured at that moment and cleared when the
+     * drive resumes. `null` while driving.
+     *
+     * Captured rather than recomputed at candidate time, because a candidate can be
+     * confirmed minutes later and §3a forbids reading the device's situation then: the
+     * duration, the distance and the ending fix belong to the moment the car stopped.
+     */
+    val stop: VehicleStop? = null,
+)
 
-    fun plusReason(code: EvidenceReasonCode): TravelSession =
-        if (code in reasons) this else copy(reasons = reasons + code)
+/**
+ * The moment a drive ended or stopped — §8b's "end" — in the terms §8 scores it.
+ *
+ * Contract §6 asks for "evidence that vehicle session ended/stopped", and every way into
+ * `PARKING_TRANSITION` is that evidence. *How* it ended is what §8b weighs, and the two
+ * inferences must not be counted twice: an explicit exit earns `vehicle_exit_detected`, while
+ * `movementIdleWindow` — an inference from absence — earns `location_stopped` instead.
+ */
+@Serializable
+data class VehicleStop(
+    /** §8b's end: the transition's entry, stamped at the window's deadline for `movementIdle`. */
+    val atMillis: Long,
+    /** Entered through `movementIdleWindow`, which is itself §8's "location movement stopped". */
+    val byMovementIdle: Boolean,
+    /** §7's accumulated distance at the stop; later jitter in the car park is not the drive. */
+    val distanceMeters: Double,
+    /**
+     * docs/05 §8b `vehicle_exit_detected`: an explicit exit ended this drive — the transition
+     * was entered by `vehicle_exit` or a car-link disconnect, or one of them arrived while it
+     * was open. A `movementIdle` entry alone is not one (field drafts s16, s33: crediting it
+     * scored MEDIUM here and LOW on iOS, and only this platform notified).
+     */
+    val exitDetected: Boolean = false,
+)
 
-    fun plusReasons(codes: Iterable<EvidenceReasonCode>): TravelSession =
-        codes.fold(this) { session, code -> session.plusReason(code) }
-}
+/**
+ * docs/05 §3a "A stop-only candidate can still be a long light" (DECIDED 2026-09-27): the
+ * window in which a candidate that nothing but absence produced can still turn out to be a
+ * long red light or a jam. iOS's `CandidateResume`.
+ *
+ * Open only while `CANDIDATE_PENDING` holds a *stop-only* candidate — its transition entered
+ * by `movementIdle`, no exit, no link disconnect and no walk before it was created — from the
+ * candidate's creation until [deadlineMillis]. While it is open the candidate's drive keeps
+ * recording fixes and the bounded capture keeps running
+ * ([com.sjstudioz.parkingpin.domain.location.LocationCaptureModePolicy.modeWantedBy]), because
+ * both ways the drive can resume are location or motion rows.
+ *
+ * **Lives exactly as long as its capture** (docs/05 §3a, round 4). It is not part of the §14
+ * [DetectionCheckpoint], but it is on the engine state and persisted with it: the Android
+ * capture is a Fused Location `PendingIntent` that Play services keeps delivering to a new
+ * process, and every broadcast reloads the state from disk, so a window dropped at process
+ * start would almost never fire here. Where the capture does not survive — reboot,
+ * force-stop, app update, a revoked permission — the adapter closes the window before the new
+ * process handles anything ([com.sjstudioz.parkingpin.detection.ParkingDetectionRuntime]),
+ * which is rule 4's lost capture: the window goes, the candidate stays. So on this platform an
+ * open window always holds its capture, and iOS's separate `isCapturing` bit has no state to
+ * describe.
+ */
+@Serializable
+data class StopOnlyResumeWindow(
+    /** The drive's end — the transition's entry. A fix older than this says nothing. */
+    val driveEndedAtMillis: Long,
+    /** `driveEndedAtMillis + transitionWindow`: the deadline the transition itself had. */
+    val deadlineMillis: Long,
+    /**
+     * Accepted fixes at or after [driveEndedAtMillis] that *reported* a speed at or above §7's
+     * threshold. §7's "one event alone never confirms": a single Doppler spike under a slab
+     * must not withdraw a parking, so the resume needs [DrivingConfirmationGuard.MIN_MOVING_SAMPLES].
+     */
+    val reportedMovingFixes: Int = 0,
+)
 
 /**
  * The candidate the engine last created, in the terms the contract checks.
@@ -120,8 +183,8 @@ data class CandidateSnapshot(
 /**
  * Everything [ParkingDetectionEngine] needs to keep between two events.
  *
- * Serializable in full, because §14 requires a checkpoint on every meaningful transition
- * and a process started by a broadcast has to be able to pick the trip up mid-drive.
+ * Serializable in full, because §14 requires a checkpoint on every meaningful transition and a
+ * process started by a broadcast has to be able to pick the trip up mid-drive.
  */
 @Serializable
 data class DetectionEngineState(
@@ -140,6 +203,27 @@ data class DetectionEngineState(
      * candidate created.
      */
     val candidatesCreated: Int = 0,
+    /**
+     * §3a "DECIDED 2026-09-20: a connected car link suppresses `movementIdleWindow`".
+     *
+     * True between a `projection_connected`/`bluetooth_car_connected` and the matching
+     * disconnect. It suppresses that one row only — `drivingCandidateWindow`, the transition
+     * window and the 2 h ceiling still fire. It lives on the state rather than on the travel
+     * session because the link outlives sessions: sitting in the car with the radio on lets
+     * `drivingCandidateWindow` retire a session while the link stays up, and a latch dropped
+     * with it made the next drive idle out at the first long red light. iOS keeps
+     * `connectedCarLinks` across sessions for the same reason.
+     *
+     * **It must not outlive the link.** The engine is pure and cannot poll, so §3a makes it
+     * the adapter's obligation to re-assert the real state on process start and feed a
+     * disconnect when the link is gone.
+     */
+    val carLinkConnected: Boolean = false,
+    /**
+     * Non-null only in `CANDIDATE_PENDING`, while a stop-only candidate may still be retired.
+     * Persisted: see [StopOnlyResumeWindow] for why it survives exactly when its capture does.
+     */
+    val stopOnlyResumeWindow: StopOnlyResumeWindow? = null,
 ) {
 
     /**
@@ -170,9 +254,11 @@ data class DetectionEngineState(
          * already happened, so one is seeded: without it the very first `vehicle_exit`
          * would have no session to end and no evidence to score, and every `initialState:
          * DRIVING` fixture would describe a trip the engine never believed in. The seeded
-         * session is deliberately the weakest one consistent with the claim — vehicle
-         * activity that started exactly [ParkingDetectionEngine.MINIMUM_VEHICLE_DURATION_MILLIS]
-         * ago, so the state is legitimately reachable, and nothing more.
+         * session is the one iOS's runner restores for the same fixture: vehicle activity and
+         * the drive both begin at [atMillis], and nothing more. It used to start
+         * [ParkingDetectionEngine.MINIMUM_VEHICLE_DURATION_MILLIS] earlier, which made every
+         * seeded drive 90 s longer here than on iOS — a different §8 duration code for the
+         * same bytes.
          */
         fun startingIn(state: DetectionState, atMillis: Long): DetectionEngineState {
             val session = when (state) {
@@ -186,16 +272,13 @@ data class DetectionEngineState(
             )
         }
 
-        private fun seededSession(atMillis: Long): TravelSession {
-            val vehicleStartedAt = atMillis - ParkingDetectionEngine.MINIMUM_VEHICLE_DURATION_MILLIS
-            return TravelSession(
-                vehicleActivityStartedAtMillis = vehicleStartedAt,
-                evidence = DrivingSessionEvidence(
-                    vehicleFirstSeenAtMillis = vehicleStartedAt,
-                    lastVehicleEvidenceAtMillis = atMillis,
-                ),
-            )
-        }
+        private fun seededSession(atMillis: Long): TravelSession = TravelSession(
+            evidence = DrivingSessionEvidence(
+                vehicleFirstSeenAtMillis = atMillis,
+                lastVehicleEvidenceAtMillis = atMillis,
+            ),
+            vehicleActiveSinceMillis = atMillis,
+        )
     }
 }
 
@@ -207,10 +290,11 @@ data class DetectionEngineState(
  * function of (state, event) and can be replayed from JSON on either platform; the SDK
  * calls live in [com.sjstudioz.parkingpin.detection.ParkingDetectionRuntime].
  *
- * `startBoundedLocationCapture` / `stopLocationCapture` are **not** here on purpose:
- * [com.sjstudioz.parkingpin.domain.location.LocationCaptureModePolicy] already decides the shape
- * of the Fused Location request from the same motion events, and two owners of one
- * registration is the bug that leaks a session.
+ * `startBoundedLocationCapture` / `stopLocationCapture` are **not** here on purpose: the
+ * capture is derived from the engine's *state* instead
+ * ([com.sjstudioz.parkingpin.domain.location.LocationCaptureModePolicy.modeWantedBy]), which the
+ * runtime reports to the one owner of the Fused Location request whenever a batch changes
+ * it. Two owners of one registration is the bug that leaks a session.
  */
 sealed interface DetectionEffect {
 
@@ -275,9 +359,10 @@ data class EngineStep(
  * (`ParityFixtureTest`), which is the only evidence of parity this project has.
  *
  * ### The one rule the table does not state
- * §3a mixes conditions that *become true by holding* with conditions that are *timeouts*,
- * and they fire at different moments. [DetectionEvent.TimerTick] documents which is which
- * and why the distinction is load bearing.
+ * §3a mixes conditions that *become true by holding* with conditions that are *timeouts*.
+ * Both are judged on every event, against that event's own timestamp, in the order ingest,
+ * windows, edge, windows — see [handle] for why that order is the one that survived the
+ * field traces, and [DetectionEvent.TimerTick] for the drive that produces no events.
  *
  * ### What movement evidence is for
  * Not promotion. §3a "Movement evidence does not gate promotion" is a correction made
@@ -311,11 +396,10 @@ class ParkingDetectionEngine(
      * `subway_commute_underground` to `IDLE`: the windows were judged before the fix that
      * would have advanced them. An edge is also evidence, and evidence is folded first.
      *
-     * ### What this still does not do
-     * iOS examines the windows *before* the edge as well, so a `walking_enter` that arrives
-     * after `transitionWindow` has already closed confirms nothing there, while here it
-     * still opens a candidate. Reaching that needs Android's fold split into evidence and
-     * edge halves the way iOS's `ingest`/`applyEdge` already are — docs/05 §3a.
+     * The windows are judged **before** the edge too — ingest, windows, edge, windows — so
+     * a `walking_enter` that arrives after `transitionWindow` has already closed finds
+     * `IDLE` and confirms nothing, exactly as on iOS (docs/05 §3a "The windows are judged
+     * before the edge too").
      */
     fun handle(state: DetectionEngineState, event: DetectionEvent): EngineStep {
         // §3a's `any -> PARKED` row is answered before any evidence is folded or any window
@@ -352,14 +436,32 @@ class ParkingDetectionEngine(
      * after `transitionWindow` has closed finds `IDLE` and confirms nothing, which is what
      * iOS has always done and Android did not.
      */
-    private fun ingestEvidence(state: DetectionEngineState, event: DetectionEvent): DetectionEngineState =
-        when (event) {
+    private fun ingestEvidence(state: DetectionEngineState, event: DetectionEvent): DetectionEngineState {
+        // A pending candidate's drive is finished: iOS holds it aside and folds nothing into
+        // it, so a car-link reconnect (§3a, the fuel stop) resumes the drive exactly as it
+        // ended rather than with the walk around the pump added to its distance and anchors.
+        //
+        // Except a stop-only candidate's, inside its resume window (§3a rule 1): that drive
+        // may still be a long light, so it keeps recording fixes — §5 gate, anchors, distance
+        // — and a resume continues from where the car actually is. `foldLocation` does not run
+        // §6's selection in this state. Judged on the window as it stands before the settle,
+        // as iOS folds before its windows close.
+        if (state.state == DetectionState.CANDIDATE_PENDING) {
+            val foldsFix = event is DetectionEvent.Location && state.stopOnlyResumeWindow != null
+            return if (foldsFix) foldLocation(state, event.sample) else state
+        }
+        return when (event) {
             is DetectionEvent.Location -> foldLocation(state, event.sample)
-            is DetectionEvent.LocationQualityDegraded -> state.copy(
-                session = state.session?.plusReason(EvidenceReasonCode.LOCATION_QUALITY_DEGRADED),
-            )
+            // Only a fall into `poor` is §8b's "GPS quality degraded"; whether it was *near
+            // the end* is judged against the stop when the candidate is scored.
+            is DetectionEvent.LocationQualityDegraded -> if (event.reachedPoor) {
+                state.copy(session = state.session?.notingFallIntoPoor(event.atMillis))
+            } else {
+                state
+            }
             else -> state
         }
+    }
 
     /**
      * Runs [timeoutRow] to a fixed point, because one event can be minutes after the last
@@ -390,6 +492,7 @@ class ParkingDetectionEngine(
      * `null` means no row applies, which is the ordinary answer.
      */
     private fun timeoutRow(state: DetectionEngineState, atMillis: Long): EngineStep? {
+        leftBehindCandidateExpiry(state, atMillis)?.let { return it }
         val session = state.session
         return when (state.state) {
             DetectionState.DRIVING_CANDIDATE -> when {
@@ -405,7 +508,7 @@ class ParkingDetectionEngine(
                 // Not gated on the link: a link connected with no drive is someone sitting
                 // in a parked car with the radio on, which is what this row is for.
                 atMillis - state.stateEnteredAtMillis >= DRIVING_CANDIDATE_WINDOW_MILLIS ->
-                    state.endSession(atMillis)
+                    state.endSession(state.stamp(state.stateEnteredAtMillis + DRIVING_CANDIDATE_WINDOW_MILLIS, atMillis))
 
                 else -> null
             }
@@ -423,37 +526,59 @@ class ParkingDetectionEngine(
                 // foreground service up for ever, which is the battery cost §19 exists to
                 // bound.
                 atMillis - session.evidence.vehicleFirstSeenAtMillis >= SESSION_MAXIMUM_DURATION_MILLIS ->
-                    state.endSession(atMillis)
+                    state.endSession(
+                        state.stamp(session.evidence.vehicleFirstSeenAtMillis + SESSION_MAXIMUM_DURATION_MILLIS, atMillis),
+                    )
 
-                isMovementIdle(session, atMillis) ->
-                    state.moveTo(DetectionState.PARKING_TRANSITION, atMillis)
+                // Entered when the window closed, which is also §8b's end for this drive:
+                // the stop the candidate's duration, near-end horizon and inheritance bound
+                // are all measured from.
+                isMovementIdle(state, session, atMillis) ->
+                    state.enterParkingTransition(
+                        state.stamp(checkNotNull(session.lastMovementEvidenceAtMillis) + MOVEMENT_IDLE_WINDOW_MILLIS, atMillis),
+                        byMovementIdle = true,
+                    )
 
                 else -> null
             }
 
             DetectionState.PARKING_TRANSITION ->
                 if (atMillis - state.stateEnteredAtMillis >= TRANSITION_WINDOW_MILLIS) {
-                    state.endSession(atMillis)
+                    state.endSession(state.stamp(state.stateEnteredAtMillis + TRANSITION_WINDOW_MILLIS, atMillis))
                 } else {
                     null
                 }
 
-            DetectionState.CANDIDATE_PENDING ->
-                state.candidate
+            // The stop-only resume window lapsing moves nothing — the candidate stands and only
+            // the capture goes (§3a rule 3). It is judged first and is its own step, so an
+            // expiry due on the same late event is still seen on the next pass. No checkpoint:
+            // nothing §14 records changed.
+            DetectionState.CANDIDATE_PENDING -> when {
+                state.stopOnlyResumeWindow?.let { atMillis >= it.deadlineMillis } == true ->
+                    EngineStep(state.copy(stopOnlyResumeWindow = null))
+
+                else -> state.candidate
                     ?.takeIf { atMillis >= it.expiresAtMillis }
-                    ?.let { state.expireCandidate(atMillis, it) }
+                    ?.let { state.expireCandidate(state.stamp(it.expiresAtMillis, atMillis), it) }
+            }
 
             // §11: the vehicle evidence that opened the departure went stale before §7's
             // guard was ever satisfied. The car never actually left.
+            //
+            // Strictly *past* the window: §7 counts evidence exactly `RECENT_VEHICLE_WINDOW`
+            // old as still recent (`<=`), so at that instant the guard can still confirm, and
+            // a lapse that fired first — the settle runs before the edge — would drop a real
+            // departure that iOS, which asks the guard first, confirms.
             DetectionState.DEPARTURE_CANDIDATE ->
                 if (session != null &&
-                    atMillis - session.evidence.lastVehicleEvidenceAtMillis >=
+                    atMillis - session.evidence.lastVehicleEvidenceAtMillis >
                     DrivingConfirmationGuard.RECENT_VEHICLE_WINDOW_MILLIS
                 ) {
+                    val lapse = session.evidence.lastVehicleEvidenceAtMillis + DrivingConfirmationGuard.RECENT_VEHICLE_WINDOW_MILLIS
                     EngineStep(
                         state.copy(
                             state = DetectionState.PARKED,
-                            stateEnteredAtMillis = atMillis,
+                            stateEnteredAtMillis = state.stamp(lapse, atMillis),
                             session = null,
                         ),
                     ).withCheckpoint()
@@ -466,6 +591,18 @@ class ParkingDetectionEngine(
     }
 
     /**
+     * docs/05 §3a "A window row is stamped at its deadline, not at the event that noticed it"
+     * (2026-09-27): no earlier than the current state's own entry, no later than now.
+     *
+     * Stamped at observation, the next window started late by however long the device
+     * happened to be quiet, so the same trace replayed differently with and without an
+     * unrelated tick — and differently from iOS, which stamps at the deadline (field drafts
+     * s25 and s27 ended `IDLE` there and in a candidate or a transition here).
+     */
+    private fun DetectionEngineState.stamp(deadlineMillis: Long, nowMillis: Long): Long =
+        minOf(nowMillis, maxOf(deadlineMillis, stateEnteredAtMillis))
+
+    /**
      * §3a `movementIdleWindow`, suppressed while the phone is still attached to the car.
      *
      * Two guards, and both are about the same mistake — inferring a parking from an absence.
@@ -473,40 +610,68 @@ class ParkingDetectionEngine(
      * phone still on the car's audio during a 180-second gap is at a red light, in a tunnel
      * or on a ramp.
      */
-    private fun isMovementIdle(session: TravelSession, atMillis: Long): Boolean {
-        if (session.carLinkConnected) return false
+    private fun isMovementIdle(state: DetectionEngineState, session: TravelSession, atMillis: Long): Boolean {
+        if (state.carLinkConnected) return false
         val lastMovement = session.lastMovementEvidenceAtMillis ?: return false
         return atMillis - lastMovement >= MOVEMENT_IDLE_WINDOW_MILLIS
     }
 
+    /**
+     * §10's 45-minute expiry for a candidate left behind by a new journey.
+     *
+     * `CANDIDATE_PENDING -> DRIVING_CANDIDATE` keeps the candidate so the user can still
+     * answer it, and the expiry used to be judged only in `CANDIDATE_PENDING` — so a prompt
+     * whose new journey produced nothing outlived its 45 minutes in the engine. The state is
+     * not moved: the journey in progress has nothing to do with an old prompt going stale.
+     */
+    private fun leftBehindCandidateExpiry(state: DetectionEngineState, atMillis: Long): EngineStep? {
+        if (state.state == DetectionState.CANDIDATE_PENDING) return null
+        val candidate = state.candidate?.takeIf { atMillis >= it.expiresAtMillis } ?: return null
+        return EngineStep(
+            state.copy(candidate = null),
+            listOf(DetectionEffect.RetireCandidate(candidate.id)),
+        ).withCheckpoint()
+    }
+
     // ── Evidence folding ────────────────────────────────────────────────────────────
-    // Runs before the transition and independently of it: §3a says codes accumulate as
-    // evidence arrives, so what a fix or a transition *means* cannot depend on which state
-    // happens to be current when it lands.
+    // Records what each event observed, as facts with their timestamps. The §4 codes are
+    // derived from these facts once, when a candidate is created (see [candidateReasons]),
+    // which is how iOS has always built them — and the reason is parity rather than taste:
+    // codes appended per event credited evidence the drive never had (a red light early in
+    // the drive as "location stopped", a walk after a 100 s drive as "duration met"), and the
+    // same field draft scored HIGH here and MEDIUM on iOS.
 
     private fun fold(state: DetectionEngineState, event: DetectionEvent): DetectionEngineState {
         return when (event) {
-            is DetectionEvent.VehicleEnter -> state.copy(
-                session = openOrExtendSession(state.session, event.atMillis).let {
-                    it.copy(vehicleActiveSinceMillis = it.vehicleActiveSinceMillis ?: event.atMillis)
-                },
-            )
+            // §3a "`CANDIDATE_PENDING -> DRIVING_CANDIDATE` — a new journey starts": a new
+            // travel session, not the old one extended. Extending it carried trip 1's walk,
+            // exit, distance and first-sighting time into trip 2's candidate (field draft
+            // s03 scored HIGH on evidence that belonged to the previous parking). The
+            // pending candidate itself stays on the state, answerable, until §10a
+            // supersedes it.
+            //
+            // Inside a stop-only candidate's resume window it is the opposite: the vehicle
+            // never ended, and its evidence returning is the long light ending — the same
+            // drive, resumed by the edge (§3a "A stop-only candidate can still be a long light").
+            is DetectionEvent.VehicleEnter -> {
+                val newJourney = state.state == DetectionState.CANDIDATE_PENDING && state.stopOnlyResumeWindow == null
+                val previous = state.session.takeUnless { newJourney }
+                state.copy(
+                    session = openOrExtendSession(previous, event.atMillis).let {
+                        it.copy(vehicleActiveSinceMillis = it.vehicleActiveSinceMillis ?: event.atMillis)
+                    },
+                )
+            }
             is DetectionEvent.VehicleExit -> state.copy(
                 session = endVehicleActivity(state.session, event.atMillis)?.copy(vehicleActiveSinceMillis = null),
             )
-            is DetectionEvent.WalkingEnter -> state.copy(
-                session = state.session?.takeIf { it.isShortlyAfterVehicleEnd(event.atMillis) }
-                    ?.plusReason(EvidenceReasonCode.WALKING_AFTER_VEHICLE)
-                    ?: state.session,
-            )
 
-            is DetectionEvent.StationaryEnter -> state.copy(
-                session = state.session?.takeIf { it.isShortlyAfterVehicleEnd(event.atMillis) }
-                    ?.plusReason(EvidenceReasonCode.STATIONARY_AFTER_VEHICLE)
-                    ?: state.session,
-            )
-
-            is DetectionEvent.StationaryExit -> state
+            // Motion confirming signals carry no evidence of their own outside
+            // `PARKING_TRANSITION`; there they are the edge, and the edge names them.
+            is DetectionEvent.WalkingEnter,
+            is DetectionEvent.StationaryEnter,
+            is DetectionEvent.StationaryExit,
+            -> state
 
             // Already folded by `ingestEvidence`, before the windows were judged. Folding
             // again here would count one fix twice.
@@ -519,14 +684,14 @@ class ParkingDetectionEngine(
             // session here — so getting back out produced a candidate for a drive that
             // never happened.
             is DetectionEvent.CarLinkConnected -> state.copy(
-                session = openOrExtendSession(state.session, event.atMillis)
-                    .copy(carLinkConnected = true),
+                carLinkConnected = true,
+                session = openOrExtendSession(state.session, event.atMillis),
             )
 
             is DetectionEvent.CarLinkDisconnected -> state.copy(
+                carLinkConnected = false,
                 session = endVehicleActivity(state.session, event.atMillis)
-                    ?.plusReason(EvidenceReasonCode.CAR_PROJECTION_DISCONNECTED)
-                    ?.copy(carLinkConnected = false, vehicleActiveSinceMillis = null),
+                    ?.copy(vehicleActiveSinceMillis = null),
             )
 
             is DetectionEvent.TimerTick,
@@ -536,21 +701,20 @@ class ParkingDetectionEngine(
 
             // Answered in [handle] before any fold, so it never reaches here.
             is DetectionEvent.UserSavedParking -> state
-        }.withGuardReasons(event.atMillis)
+        }
     }
 
     /**
-     * Vehicle evidence arrived.
+     * Vehicle evidence arrived: open a journey, or extend the one in progress.
      *
-     * A session already in vehicle activity keeps its [TravelSession.vehicleActivityStartedAtMillis]
-     * — a second `vehicle_enter` mid-drive is the OS repeating itself, not the driver
-     * getting in again, and restarting the 90 s clock on it would postpone every promotion
-     * indefinitely on a chatty device.
+     * Extending keeps the first-sighting time — a second `vehicle_enter` mid-drive is the OS
+     * repeating itself, and the journey (its duration, its 2 h ceiling) began at the first.
+     * The 90 s promotion clock is [TravelSession.vehicleActiveSinceMillis], which the caller
+     * only arms when it is not already running.
      */
     private fun openOrExtendSession(session: TravelSession?, atMillis: Long): TravelSession {
         if (session == null) {
             return TravelSession(
-                vehicleActivityStartedAtMillis = atMillis,
                 evidence = DrivingSessionEvidence(
                     vehicleFirstSeenAtMillis = atMillis,
                     lastVehicleEvidenceAtMillis = atMillis,
@@ -558,8 +722,6 @@ class ParkingDetectionEngine(
             )
         }
         return session.copy(
-            vehicleActivityStartedAtMillis =
-                if (session.vehicleEndedAtMillis == null) session.vehicleActivityStartedAtMillis else atMillis,
             vehicleEndedAtMillis = null,
             evidence = session.evidence.copy(
                 lastVehicleEvidenceAtMillis = maxOf(session.evidence.lastVehicleEvidenceAtMillis, atMillis),
@@ -581,74 +743,53 @@ class ParkingDetectionEngine(
             evidence = session.evidence.copy(
                 lastVehicleEvidenceAtMillis = maxOf(session.evidence.lastVehicleEvidenceAtMillis, atMillis),
             ),
-        ).plusReason(EvidenceReasonCode.VEHICLE_EXIT_DETECTED)
+        )
     }
 
     private fun foldLocation(state: DetectionEngineState, sample: LocationSample): DetectionEngineState {
-        // §6 / §5, reused verbatim: the fixture replay feeds each fix at its own timestamp,
-        // so `nowMillis` is the fix's own time and the freshness guards behave exactly as
-        // they do for a live single-fix delivery.
-        val decision = ReliableLocationSelector.select(
-            current = state.lastReliableLocation,
-            sample = sample,
-            nowMillis = sample.atMillis,
-        )
-        val reliable = (decision as? ReliableLocationDecision.Accepted)?.location
+        // Every fix outside a session is ignored, as on iOS, whose fixes reach the engine only
+        // through an open drive: a fix nobody is driving has nothing to say about a parking.
+        val session = state.session ?: return state
+        // Both asked before the fold, because both answers are about the fix this one follows.
+        val admitted = session.evidence.movement.admits(sample)
+        val fellIntoPoor = admitted && fallsIntoPoor(session.evidence.movement.lastFix, sample)
 
-        val session = state.session ?: return state.copy(
-            lastReliableLocation = reliable ?: state.lastReliableLocation,
-        )
-
-        val before = session.evidence.movement.movingSampleCount
         val evidence = session.evidence.recordingFix(sample)
-        val moved = evidence.movement.movingSampleCount > before
-
-        var updated = session.copy(
+        val moved = evidence.movement.movingSampleCount > session.evidence.movement.movingSampleCount
+        val updated = session.copy(
             evidence = evidence,
-            lastMovementEvidenceAtMillis =
-                if (moved) sample.atMillis else session.lastMovementEvidenceAtMillis,
+            lastMovementEvidenceAtMillis = if (moved) sample.atMillis else session.lastMovementEvidenceAtMillis,
+            lastStoppedFixAtMillis = if (admitted && !moved && sample.reportsStopped()) {
+                sample.atMillis
+            } else {
+                session.lastStoppedFixAtMillis
+            },
+        ).let { if (fellIntoPoor) it.notingFallIntoPoor(sample.atMillis) else it }
+        return state.copy(
+            session = updated,
+            lastReliableLocation =
+                if (admitted && state.selectsParkingSpot()) selectReliable(state.lastReliableLocation, sample) else state.lastReliableLocation,
         )
-        if (reliable != null) updated = updated.plusReason(EvidenceReasonCode.RELIABLE_LOCATION_CAPTURED)
-        updated = updated.recordingQuality(LocationQualityBucket.of(sample.horizontalAccuracyM))
-        // §8 "location movement stopped". Only a fix that actually reported a speed can say
-        // this: underground there is no Doppler speed at all (§7), and reading silence as
-        // stillness would hand every underground drive a weight it did not earn.
-        val speed = sample.speedMps
-        if (sample.quality.isValid && speed != null && speed < DrivingConfirmationGuard.MOVING_SPEED_THRESHOLD_MPS) {
-            updated = updated.plusReason(EvidenceReasonCode.LOCATION_STOPPED)
-        }
-        return state.copy(session = updated, lastReliableLocation = reliable ?: state.lastReliableLocation)
     }
 
     /**
-     * §8 "GPS quality degraded near end", from the §2 buckets.
+     * Whether a fix in this state may become the parking spot (§6).
      *
-     * A drop only — §2 names the event for the direction it reports, so a recovery says
-     * nothing. A fix with no bucket at all is an invalid accuracy, which §5 calls not a fix;
-     * it leaves the previous bucket standing rather than reading as a degradation.
+     * Not while a candidate is pending: the candidate already carries its location, and the
+     * fixes then are the walk away from the car. iOS has no drive open in that state and so
+     * never selects there either.
      */
-    private fun TravelSession.recordingQuality(bucket: LocationQualityBucket?): TravelSession {
-        if (bucket == null) return this
-        val previous = lastQualityBucket ?: return copy(lastQualityBucket = bucket)
-        val degraded = if (bucket.isWorseThan(previous)) {
-            plusReason(EvidenceReasonCode.LOCATION_QUALITY_DEGRADED)
-        } else {
-            this
-        }
-        return degraded.copy(lastQualityBucket = bucket)
-    }
+    private fun DetectionEngineState.selectsParkingSpot(): Boolean = state != DetectionState.CANDIDATE_PENDING
 
     /**
-     * Folds in whatever the §7 guard can say at this instant.
-     *
-     * The guard is reused rather than reimplemented, and only for its **reason codes** —
-     * `DrivingConfirmation.confirmed` deliberately never reaches a transition, because it
-     * requires movement evidence and §3a forbids movement from gating promotion.
+     * §6 selection, reused verbatim, and only for a fix §5's outlier check admitted — a
+     * teleporting fix is not a parking spot however accurate it claims to be. The fixture
+     * replay feeds each fix at its own timestamp, so `nowMillis` is the fix's own time and
+     * the freshness guards behave exactly as they do for a live single-fix delivery.
      */
-    private fun DetectionEngineState.withGuardReasons(atMillis: Long): DetectionEngineState {
-        val session = session ?: return this
-        val confirmation = DrivingConfirmationGuard.evaluate(session.evidence, atMillis)
-        return copy(session = session.plusReasons(confirmation.reasonCodes.map(EvidenceReasonCode::of)))
+    private fun selectReliable(current: ReliableLocation?, sample: LocationSample): ReliableLocation? {
+        val decision = ReliableLocationSelector.select(current = current, sample = sample, nowMillis = sample.atMillis)
+        return (decision as? ReliableLocationDecision.Accepted)?.location ?: current
     }
 
     // ── §3a transitions ─────────────────────────────────────────────────────────────
@@ -663,7 +804,7 @@ class ParkingDetectionEngine(
         DetectionState.DRIVING_CANDIDATE -> fromDrivingCandidate(before, state, event)
         DetectionState.DRIVING -> fromDriving(state, event)
         DetectionState.PARKING_TRANSITION -> fromParkingTransition(before, state, event)
-        DetectionState.CANDIDATE_PENDING -> fromCandidatePending(state, event)
+        DetectionState.CANDIDATE_PENDING -> fromCandidatePending(before, state, event)
         DetectionState.PARKED -> fromParked(state, event)
         DetectionState.DEPARTURE_CANDIDATE -> fromDepartureCandidate(state, event)
     }
@@ -722,9 +863,11 @@ class ParkingDetectionEngine(
             // The car-link table: a disconnect skips `PARKING_TRANSITION` outright. Waiting
             // for a walk would lose the underground car park §3a was corrected for, and the
             // link has already said the engine stopped and the phone left the car.
-            event is DetectionEvent.CarLinkDisconnected -> state.openCandidateOrEndSession(event.atMillis)
+            event is DetectionEvent.CarLinkDisconnected ->
+                state.withStop(event.atMillis, byMovementIdle = false)
+                    .openCandidateOrEndSession(event.atMillis, ConfirmingSignal.CAR_LINK_DISCONNECT)
 
-            event is DetectionEvent.VehicleExit -> state.moveTo(DetectionState.PARKING_TRANSITION, event.atMillis)
+            event is DetectionEvent.VehicleExit -> state.enterParkingTransition(event.atMillis, byMovementIdle = false)
 
             else -> EngineStep(state)
         }
@@ -736,40 +879,82 @@ class ParkingDetectionEngine(
         event: DetectionEvent,
     ): EngineStep {
         val session = state.session ?: return state.moveTo(DetectionState.IDLE, event.atMillis)
-        return when {
+        return when (event) {
             // §3a's confirming signals, plus the link disconnect, which is the strongest of
             // them: it is an event rather than an inference from absence.
-            event is DetectionEvent.WalkingEnter ||
-                event is DetectionEvent.StationaryEnter ||
-                event is DetectionEvent.CarLinkDisconnected ->
-                state.openCandidateOrEndSession(event.atMillis)
+            is DetectionEvent.WalkingEnter ->
+                state.openCandidateOrEndSession(event.atMillis, ConfirmingSignal.WALKING)
+            is DetectionEvent.StationaryEnter ->
+                state.openCandidateOrEndSession(event.atMillis, ConfirmingSignal.STATIONARY)
+            is DetectionEvent.CarLinkDisconnected ->
+                state.openCandidateOrEndSession(event.atMillis, ConfirmingSignal.CAR_LINK_DISCONNECT)
 
-            // "location stop" — a fix that reports the device is no longer moving is the
-            // third confirming signal §3a names.
-            event is DetectionEvent.Location && event.sample.reportsStopped() ->
-                state.openCandidateOrEndSession(event.atMillis)
+            is DetectionEvent.VehicleExit -> state.creditingExit()
 
-            // "movement evidence returns before transitionWindow elapses": the red light.
-            // Entering this state is silent, so leaving it again costs the user nothing.
-            // Asked as "did *this* fix clear §7's movement bar", not "is there any movement
-            // evidence", which would be true of every fix earlier in the drive.
-            event is DetectionEvent.Location &&
-                session.lastMovementEvidenceAtMillis != before.session?.lastMovementEvidenceAtMillis ->
-                state.moveTo(DetectionState.DRIVING, event.atMillis)
+            is DetectionEvent.Location -> fromTransitionOnFix(before, state, session, event.sample)
 
-            // Vehicle activity resumed outright — the same return, on a motion event.
-            event is DetectionEvent.VehicleEnter || event is DetectionEvent.CarLinkConnected ->
-                state.moveTo(DetectionState.DRIVING, event.atMillis)
+            // Vehicle activity resumed outright — the same return as a moving fix, on a
+            // motion or link event.
+            is DetectionEvent.VehicleEnter, is DetectionEvent.CarLinkConnected ->
+                state.resumeDriving(event.atMillis)
 
             else -> EngineStep(state)
         }
     }
 
-    private fun fromCandidatePending(state: DetectionEngineState, event: DetectionEvent): EngineStep {
-        val candidate = state.candidate ?: return state.moveTo(DetectionState.IDLE, event.atMillis)
+    /**
+     * The two location rows of §3a's `PARKING_TRANSITION` ("The `PARKING_TRANSITION` rows,
+     * exactly", 2026-09-27). Both need a fix that
+     *
+     * 1. the drive's §5 gate accepted — valid accuracy, not an outlier step: a GPS jump on the
+     *    way underground is neither a stop nor a drive, whatever speed it reports;
+     * 2. is timestamped at or after the transition's entry — the rule every confirming signal
+     *    shares; a fix from before the drive ended says nothing about this parking.
+     *
+     * Then **movement returns** when it cleared §7's movement bar (the red light is over), and
+     * a **location stop** confirms when it *reported* a speed below the threshold. A fix cannot
+     * be both, so the order is immaterial.
+     *
+     * The fix that revealed `movementIdleWindow` counts: the entry is stamped at the window's
+     * deadline, which that fix is past.
+     */
+    private fun fromTransitionOnFix(
+        before: DetectionEngineState,
+        state: DetectionEngineState,
+        session: TravelSession,
+        sample: LocationSample,
+    ): EngineStep {
+        val drive = before.session?.evidence?.movement ?: return EngineStep(state)
+        if (!drive.admits(sample) || sample.atMillis < state.stateEnteredAtMillis) return EngineStep(state)
+        val moved = session.evidence.movement.movingSampleCount > drive.movingSampleCount
         return when {
+            moved -> state.resumeDriving(sample.atMillis)
+            sample.reportsStopped() -> state.openCandidateOrEndSession(sample.atMillis, ConfirmingSignal.LOCATION_STOP)
+            else -> EngineStep(state)
+        }
+    }
+
+    private fun fromCandidatePending(
+        before: DetectionEngineState,
+        state: DetectionEngineState,
+        event: DetectionEvent,
+    ): EngineStep {
+        val candidate = state.candidate ?: return state.moveTo(DetectionState.IDLE, event.atMillis)
+        state.stopOnlyResumeWindow?.let { window ->
+            fromStopOnlyWindow(before, state, window, event)?.let { return it }
+        }
+        return when {
+            // The snapshot goes with the answer, as it does on rejection. Kept, it was
+            // indistinguishable from a live prompt outside `CANDIDATE_PENDING`, which is why a
+            // hand save or the expiry could not safely retire a candidate left behind there.
             event is DetectionEvent.UserConfirmedParking -> EngineStep(
-                state.copy(state = DetectionState.PARKED, stateEnteredAtMillis = event.atMillis, session = null),
+                state.copy(
+                    state = DetectionState.PARKED,
+                    stateEnteredAtMillis = event.atMillis,
+                    session = null,
+                    candidate = null,
+                    stopOnlyResumeWindow = null,
+                ),
                 listOf(DetectionEffect.MarkParkingActive(candidate.id)),
             ).withCheckpoint()
 
@@ -778,17 +963,18 @@ class ParkingDetectionEngine(
             // The car-link table's third row, and the reason `CANDIDATE_PENDING -> DRIVING`
             // exists at all: disconnect, pump fuel, get back in — the candidate is retired
             // and its notification withdrawn before it is worth anything (§17 fixture #3).
-            event is DetectionEvent.CarLinkConnected -> EngineStep(
-                state.copy(
-                    state = DetectionState.DRIVING,
-                    stateEnteredAtMillis = event.atMillis,
-                    candidate = null,
-                    // The session may produce a candidate again: the one it produced is
-                    // being taken back, not answered.
-                    session = state.session?.copy(candidateProduced = false),
-                ),
-                listOf(DetectionEffect.RetireCandidate(candidate.id)),
-            ).withCheckpoint()
+            event is DetectionEvent.CarLinkConnected -> {
+                val resumed = state.resumeDriving(event.atMillis)
+                EngineStep(
+                    resumed.state.copy(
+                        candidate = null,
+                        // The session may produce a candidate again: the one it produced is
+                        // being taken back, not answered.
+                        session = resumed.state.session?.copy(candidateProduced = false),
+                    ),
+                    listOf(DetectionEffect.RetireCandidate(candidate.id)),
+                ).withCheckpoint()
+            }
 
             // §3a "Leaving a pending candidate behind". Without this the engine sat here
             // for up to forty-five minutes with detection dead, which is the whole cost of
@@ -800,16 +986,94 @@ class ParkingDetectionEngine(
             // this new session produces a candidate of its own; the reconnect row above is
             // different because getting back in the *same* car means the parking did not
             // happen.
-            event is DetectionEvent.VehicleEnter -> EngineStep(
-                state.copy(
-                    state = DetectionState.DRIVING_CANDIDATE,
-                    stateEnteredAtMillis = event.atMillis,
-                    session = state.session?.copy(candidateProduced = false),
-                ),
-            ).withCheckpoint()
+            // The fold has already opened the new journey's own session.
+            event is DetectionEvent.VehicleEnter -> state.moveTo(DetectionState.DRIVING_CANDIDATE, event.atMillis)
 
             else -> EngineStep(state)
         }
+    }
+
+    /**
+     * docs/05 §3a "A stop-only candidate can still be a long light" (DECIDED 2026-09-27), the
+     * rows that exist only while [StopOnlyResumeWindow] is open. `null` hands the event to the
+     * ordinary `CANDIDATE_PENDING` rows.
+     *
+     * - the **second** accepted fix at or after the drive's end that *reports* ≥ 2.0 m/s, or a
+     *   `vehicle_enter`, resumes the drive (rule 2);
+     * - a `vehicle_exit` or a `walking_enter` closes the window and nothing else (rule 4): the
+     *   vehicle ended after all, or the person left it — movement after either is somebody
+     *   else's journey. iOS's engine closes it on the same two, so every fixture reads alike.
+     *
+     * A `stationary_enter` leaves it open: the Transition API can report STILL inside a car at
+     * a light.
+     */
+    private fun fromStopOnlyWindow(
+        before: DetectionEngineState,
+        state: DetectionEngineState,
+        window: StopOnlyResumeWindow,
+        event: DetectionEvent,
+    ): EngineStep? = when (event) {
+        is DetectionEvent.VehicleEnter -> state.resumeFromStopOnlyCandidate(event.atMillis, reanchorIdleClock = true)
+        is DetectionEvent.VehicleExit, is DetectionEvent.WalkingEnter -> EngineStep(state.copy(stopOnlyResumeWindow = null))
+        is DetectionEvent.Location -> onFixInsideStopOnlyWindow(before, state, window, event.sample)
+        else -> null
+    }
+
+    /**
+     * §3a rule 2's location half. Only a **reported** speed counts: the §7 distance fallback
+     * reads the jitter around a parked car as travel — after s03's real parking the walk-away
+     * fixes clear it at 2.01 m/s on the replay — and here a false resume would withdraw a real
+     * parking, where in the transition it only delays a decision.
+     */
+    private fun onFixInsideStopOnlyWindow(
+        before: DetectionEngineState,
+        state: DetectionEngineState,
+        window: StopOnlyResumeWindow,
+        sample: LocationSample,
+    ): EngineStep {
+        val drive = before.session?.evidence?.movement ?: return EngineStep(state)
+        val counts = drive.admits(sample) && sample.atMillis >= window.driveEndedAtMillis && sample.reportsMoving()
+        if (!counts) return EngineStep(state)
+        val seen = window.copy(reportedMovingFixes = window.reportedMovingFixes + 1)
+        if (seen.reportedMovingFixes < DrivingConfirmationGuard.MIN_MOVING_SAMPLES) {
+            return EngineStep(state.copy(stopOnlyResumeWindow = seen))
+        }
+        // The moving fix already anchored the idle clock when it was folded.
+        return state.resumeFromStopOnlyCandidate(sample.atMillis, reanchorIdleClock = false)
+    }
+
+    /**
+     * `CANDIDATE_PENDING → DRIVING` for a stop-only candidate — the twin of
+     * `PARKING_TRANSITION → DRIVING` — in one checkpoint.
+     *
+     * The candidate is withdrawn the way §10 withdraws an expired one (no record, no report),
+     * and the drive it came from continues as the **same** travel session: start, distance and
+     * anchors, exactly as "Resuming keeps the drive" keeps them. §12's allowance is restored so
+     * the trip can still produce the real parking. The vehicle level is on again, as iOS sets
+     * `isVehicleActive`. On vehicle evidence the idle clock is re-anchored at the resume; a
+     * resume on a moving fix is anchored by that fix.
+     */
+    private fun DetectionEngineState.resumeFromStopOnlyCandidate(atMillis: Long, reanchorIdleClock: Boolean): EngineStep {
+        val session = session ?: return moveTo(DetectionState.IDLE, atMillis)
+        val withdrawn = candidate
+        val resumed = copy(
+            candidate = null,
+            session = session.copy(
+                stop = null,
+                candidateProduced = false,
+                vehicleEndedAtMillis = null,
+                vehicleActiveSinceMillis = session.vehicleActiveSinceMillis ?: atMillis,
+                lastMovementEvidenceAtMillis = if (reanchorIdleClock) {
+                    session.lastMovementEvidenceAtMillis?.let { maxOf(it, atMillis) }
+                } else {
+                    session.lastMovementEvidenceAtMillis
+                },
+            ),
+        ).moveTo(DetectionState.DRIVING, atMillis)
+        return EngineStep(
+            resumed.state,
+            listOfNotNull(withdrawn?.let { DetectionEffect.RetireCandidate(it.id) }) + resumed.effects,
+        )
     }
 
     private fun fromParked(state: DetectionEngineState, event: DetectionEvent): EngineStep {
@@ -823,6 +1087,12 @@ class ParkingDetectionEngine(
         // radio on costs the record nothing.
         if (event is DetectionEvent.CarLinkConnected) {
             return state.moveTo(DetectionState.DEPARTURE_CANDIDATE, event.atMillis)
+        }
+        // Got in, got out again without clearing §11's bars. The episode's evidence goes with
+        // it, as on iOS: kept, the next get-in inherited its metres and its first-sighting
+        // time, and two short sits in a parked car could add up to a departure.
+        if (event is DetectionEvent.VehicleExit) {
+            return EngineStep(state.copy(session = null)).withCheckpoint()
         }
         // §11: vehicle >= 90s **and** movement >= 500m. Both, because a phone that woke up
         // in a parked car satisfies the first on its own.
@@ -869,33 +1139,99 @@ class ParkingDetectionEngine(
      * is also what makes the next `vehicle_enter` open a *departure's* evidence, which
      * §11's two bars and §7's guard then have to earn as before.
      *
-     * A pending prompt is retired, as §10's rejection would retire it, but through
+     * A live prompt is retired, as §10's rejection would retire it, but through
      * [DetectionEffect.RetireCandidate] so it is not reported as one: the user did not say
-     * "not parked", they said "parked, here". Only from `CANDIDATE_PENDING` — elsewhere
-     * [DetectionEngineState.candidate] can be the snapshot of one already answered, and
-     * retiring that would write a history line for a candidate that did not expire.
+     * "not parked", they said "parked, here". That includes a prompt left behind by a new
+     * journey, exactly as iOS withdraws it: an answered candidate no longer leaves a snapshot
+     * on the state, so any candidate still held is one nobody has answered.
+     *
+     * The car-link latch is left alone: saving a parking does not unplug the phone.
      *
      * Location capture is not stopped here: the engine does not own the request (see
      * [DetectionEffect]). [com.sjstudioz.parkingpin.detection.ParkingDetectionRuntime.handleUserSavedParking]
      * does it beside this call.
      */
     private fun userSavedParking(state: DetectionEngineState, atMillis: Long): EngineStep {
-        val pending = state.candidate?.takeIf { state.state == DetectionState.CANDIDATE_PENDING }
+        val live = state.candidate
         return EngineStep(
             state.copy(
                 state = DetectionState.PARKED,
                 stateEnteredAtMillis = atMillis,
                 session = null,
-                candidate = if (pending != null) null else state.candidate,
+                candidate = null,
+                stopOnlyResumeWindow = null,
             ),
-            listOfNotNull(pending?.let { DetectionEffect.RetireCandidate(it.id) }),
+            listOfNotNull(live?.let { DetectionEffect.RetireCandidate(it.id) }),
         ).withCheckpoint()
     }
 
     // ── Shared moves ────────────────────────────────────────────────────────────────
 
+    /** The stop-only window belongs to `CANDIDATE_PENDING` and never outlives it. */
     private fun DetectionEngineState.moveTo(next: DetectionState, atMillis: Long): EngineStep =
-        EngineStep(copy(state = next, stateEnteredAtMillis = atMillis)).withCheckpoint()
+        EngineStep(
+            copy(
+                state = next,
+                stateEnteredAtMillis = atMillis,
+                stopOnlyResumeWindow = stopOnlyResumeWindow.takeIf { next == DetectionState.CANDIDATE_PENDING },
+            ),
+        ).withCheckpoint()
+
+    /** `DRIVING -> PARKING_TRANSITION`, recording the stop §8 will score. */
+    private fun DetectionEngineState.enterParkingTransition(atMillis: Long, byMovementIdle: Boolean): EngineStep =
+        withStop(atMillis, byMovementIdle).moveTo(DetectionState.PARKING_TRANSITION, atMillis)
+
+    /**
+     * Captures [VehicleStop] at the moment the drive ended or stopped. Only the first stop of
+     * an open transition counts: an exit that arrives after `movementIdleWindow` already
+     * opened it is the same stop, reported late.
+     */
+    private fun DetectionEngineState.withStop(atMillis: Long, byMovementIdle: Boolean): DetectionEngineState {
+        val session = session ?: return this
+        if (session.stop != null) return this
+        return copy(
+            session = session.copy(
+                stop = VehicleStop(
+                    atMillis = atMillis,
+                    byMovementIdle = byMovementIdle,
+                    distanceMeters = session.evidence.travelDistanceMeters,
+                    // Every entry but `movementIdle` is an explicit exit or a link
+                    // disconnect (§8b).
+                    exitDetected = !byMovementIdle,
+                ),
+            ),
+        )
+    }
+
+    /**
+     * docs/05 §8b: a `vehicle_exit` that arrives while a transition is open is still this
+     * drive's exit and earns `vehicle_exit_detected`. It is not a confirming signal — §3a
+     * names walking, stationary and a location stop — so the state does not move.
+     */
+    private fun DetectionEngineState.creditingExit(): EngineStep {
+        val session = session ?: return EngineStep(this)
+        val stop = session.stop?.takeUnless { it.exitDetected } ?: return EngineStep(this)
+        return EngineStep(copy(session = session.copy(stop = stop.copy(exitDetected = true))))
+    }
+
+    /**
+     * Back to `DRIVING` from a stop that turned out not to be a parking.
+     *
+     * The drive's evidence is kept — duration and distance are the whole trip's — and the
+     * stop is forgotten. The idle clock restarts at the resume: `movementIdleWindow` means
+     * "stopped for 180 s", and a car that has just pulled away has not been. A drive that
+     * never had movement evidence keeps `null`, because §3a does not let silence underground
+     * read as a stop.
+     */
+    private fun DetectionEngineState.resumeDriving(atMillis: Long): EngineStep {
+        val session = session ?: return moveTo(DetectionState.DRIVING, atMillis)
+        return copy(
+            session = session.copy(
+                stop = null,
+                lastMovementEvidenceAtMillis = session.lastMovementEvidenceAtMillis?.let { maxOf(it, atMillis) },
+            ),
+        ).moveTo(DetectionState.DRIVING, atMillis)
+    }
 
     /** Back to `IDLE`, dropping the travel session — which is what re-arms §12's counter. */
     private fun DetectionEngineState.endSession(atMillis: Long, clearCandidate: Boolean = false): EngineStep =
@@ -905,6 +1241,7 @@ class ParkingDetectionEngine(
                 stateEnteredAtMillis = atMillis,
                 session = null,
                 candidate = if (clearCandidate) null else candidate,
+                stopOnlyResumeWindow = null,
             ),
         ).withCheckpoint()
 
@@ -915,6 +1252,7 @@ class ParkingDetectionEngine(
                 stateEnteredAtMillis = atMillis,
                 session = null,
                 candidate = null,
+                stopOnlyResumeWindow = null,
             ),
             // §10a: the notification comes down, no record is created, and nothing is
             // reported — an unanswered guess is not an event.
@@ -928,19 +1266,30 @@ class ParkingDetectionEngine(
      * second one — the trip must pass through `IDLE` first." Ending the session *is*
      * passing through `IDLE`, so the next vehicle evidence starts a clean trip. This is
      * what stops a bus with repeated stops becoming a notification storm.
+     *
+     * Contract §6 holds by construction rather than by a check here: the only callers are
+     * `PARKING_TRANSITION`, reachable only from a promoted `DRIVING` (a meaningful vehicle
+     * session), and the `DRIVING` disconnect row; both have recorded the stop (the session
+     * ended), and each passes the confirming signal that brought it here.
      */
-    private fun DetectionEngineState.openCandidateOrEndSession(atMillis: Long): EngineStep {
+    private fun DetectionEngineState.openCandidateOrEndSession(atMillis: Long, signal: ConfirmingSignal): EngineStep {
         val session = session ?: return endSession(atMillis)
         if (session.candidateProduced) return endSession(atMillis)
-
-        val durationMillis = (session.vehicleEndedAtMillis ?: atMillis) - session.evidence.vehicleFirstSeenAtMillis
-        val score = ParkingConfidencePolicy.score(
-            reasons = session.reasons,
-            durationMillis = durationMillis,
+        val stop = session.stop ?: VehicleStop(
+            atMillis = atMillis,
+            byMovementIdle = false,
             distanceMeters = session.evidence.travelDistanceMeters,
         )
-        val confidence = ParkingConfidencePolicy.bucketOf(score)
+
+        val durationMillis = stop.atMillis - session.evidence.vehicleFirstSeenAtMillis
         val inheritedLocation = lastReliableLocation?.takeIf { it.belongsToDrive(session, atMillis) }
+        val reasons = candidateReasons(session, stop, signal, inheritedLocation)
+        val score = ParkingConfidencePolicy.score(
+            reasons = reasons,
+            durationMillis = durationMillis,
+            distanceMeters = stop.distanceMeters,
+        )
+        val confidence = ParkingConfidencePolicy.bucketOf(score)
         val id = newCandidateId()
         val snapshot = CandidateSnapshot(
             id = id,
@@ -948,7 +1297,7 @@ class ParkingDetectionEngine(
             expiresAtMillis = atMillis + ParkingCandidate.LIFETIME_MILLIS,
             confidence = confidence,
             score = score,
-            reasons = session.reasons,
+            reasons = reasons,
         )
         val next = copy(
             state = DetectionState.CANDIDATE_PENDING,
@@ -956,6 +1305,17 @@ class ParkingDetectionEngine(
             session = session.copy(candidateProduced = true),
             candidate = snapshot,
             candidatesCreated = candidatesCreated + 1,
+            // §3a "A stop-only candidate can still be a long light": when nothing but absence
+            // ended the drive, the car moving on can still take the candidate back until the
+            // transition's own deadline.
+            stopOnlyResumeWindow = if (stop.isStopOnly(signal)) {
+                StopOnlyResumeWindow(
+                    driveEndedAtMillis = stop.atMillis,
+                    deadlineMillis = stop.atMillis + TRANSITION_WINDOW_MILLIS,
+                )
+            } else {
+                null
+            },
         )
         return EngineStep(
             next,
@@ -964,16 +1324,85 @@ class ParkingDetectionEngine(
                     candidateId = id,
                     confidence = confidence,
                     score = score,
-                    reasons = session.reasons,
+                    reasons = reasons,
                     lastReliableLocation = inheritedLocation,
                     vehicleSessionDurationMillis = durationMillis,
-                    travelDistanceMeters = session.evidence.travelDistanceMeters,
-                    walkingEvidence = EvidenceReasonCode.WALKING_AFTER_VEHICLE in session.reasons,
-                    gpsDegradation = EvidenceReasonCode.LOCATION_QUALITY_DEGRADED in session.reasons,
-                    optionalVehicleSignal = EvidenceReasonCode.CAR_PROJECTION_DISCONNECTED in session.reasons,
+                    travelDistanceMeters = stop.distanceMeters,
+                    walkingEvidence = EvidenceReasonCode.WALKING_AFTER_VEHICLE in reasons,
+                    gpsDegradation = EvidenceReasonCode.LOCATION_QUALITY_DEGRADED in reasons,
+                    optionalVehicleSignal = EvidenceReasonCode.CAR_PROJECTION_DISCONNECTED in reasons,
                 ),
             ),
         ).withCheckpoint()
+    }
+
+    /**
+     * The §4 codes a candidate carries, from the facts the session recorded as they arrived.
+     *
+     * In §4's own order, which is iOS's `reasonCodes(for:)` order; the parity fields compare
+     * them as a set. Each line is the single cross-platform meaning of its code:
+     *
+     * - `recent_vehicle_activity` — a meaningful vehicle session (§6); every caller follows a
+     *   promoted `DRIVING`.
+     * - `vehicle_duration_met` / `vehicle_distance_met` — §7's bars, measured from the first
+     *   vehicle evidence **to the stop**, never to whatever event arrived after it.
+     * - `vehicle_exit_detected` — an explicit exit ended this drive: the transition was
+     *   entered by `vehicle_exit` or a link disconnect, or one arrived while it was open.
+     *   `movementIdleWindow` alone is not one — it earns `location_stopped` instead.
+     * - `walking_after_vehicle` / `stationary_after_vehicle` — the signal that confirmed the
+     *   transition.
+     * - `location_stopped` — the stop came from `movementIdleWindow`, or the newest fix that
+     *   *reported* a stopped speed is later than the drive's last movement and no earlier
+     *   than [NEAR_END_HORIZON_MILLIS] before the stop. A speedless fix never counts.
+     * - `location_quality_degraded` — the quality fell into `poor` no earlier than
+     *   [NEAR_END_HORIZON_MILLIS] before the stop, or since.
+     * - `reliable_location_captured` — the candidate actually carries a location (§5).
+     * - `car_projection_disconnected` — a link disconnect ended the drive or confirmed the
+     *   transition. Either way it is the signal that created the candidate: a disconnect in
+     *   `DRIVING` skips the transition, and one inside it confirms at once.
+     *
+     * These are docs/05 §8b's definitions, which iOS's `scoredEvidence(for:)` implements.
+     */
+    private fun candidateReasons(
+        session: TravelSession,
+        stop: VehicleStop,
+        signal: ConfirmingSignal,
+        inheritedLocation: ReliableLocation?,
+    ): List<EvidenceReasonCode> = buildList {
+        add(EvidenceReasonCode.RECENT_VEHICLE_ACTIVITY)
+        if (stop.atMillis - session.evidence.vehicleFirstSeenAtMillis >= DrivingConfirmationGuard.MIN_DURATION_MILLIS) {
+            add(EvidenceReasonCode.VEHICLE_DURATION_MET)
+        }
+        if (stop.distanceMeters >= DrivingConfirmationGuard.MIN_DISTANCE_METERS) {
+            add(EvidenceReasonCode.VEHICLE_DISTANCE_MET)
+        }
+        if (stop.exitDetected || signal == ConfirmingSignal.CAR_LINK_DISCONNECT) {
+            add(EvidenceReasonCode.VEHICLE_EXIT_DETECTED)
+        }
+        if (signal == ConfirmingSignal.WALKING) add(EvidenceReasonCode.WALKING_AFTER_VEHICLE)
+        if (signal == ConfirmingSignal.STATIONARY) add(EvidenceReasonCode.STATIONARY_AFTER_VEHICLE)
+        if (stop.byMovementIdle || session.stoppedNearEnd(stop.atMillis)) add(EvidenceReasonCode.LOCATION_STOPPED)
+        if (session.degradedNearEnd(stop.atMillis)) add(EvidenceReasonCode.LOCATION_QUALITY_DEGRADED)
+        if (inheritedLocation != null) add(EvidenceReasonCode.RELIABLE_LOCATION_CAPTURED)
+        if (signal == ConfirmingSignal.CAR_LINK_DISCONNECT) add(EvidenceReasonCode.CAR_PROJECTION_DISCONNECTED)
+    }
+
+    /**
+     * §8b `location_stopped`'s location half: a reported stop after the drive's last movement
+     * and no earlier than [NEAR_END_HORIZON_MILLIS] before the end. A drive with no movement
+     * at all qualifies on the stop alone, exactly as iOS's `stoppedNearEnd(endedAt:)` reads it.
+     */
+    private fun TravelSession.stoppedNearEnd(endMillis: Long): Boolean {
+        val stopped = lastStoppedFixAtMillis ?: return false
+        val lastMovement = lastMovementEvidenceAtMillis
+        if (lastMovement != null && stopped <= lastMovement) return false
+        return stopped >= endMillis - NEAR_END_HORIZON_MILLIS
+    }
+
+    /** §8b `location_quality_degraded`: a fall into `poor` no earlier than the horizon, or since. */
+    private fun TravelSession.degradedNearEnd(endMillis: Long): Boolean {
+        val degraded = lastDegradedToPoorAtMillis ?: return false
+        return degraded >= endMillis - NEAR_END_HORIZON_MILLIS
     }
 
     /** §14: a checkpoint accompanies every transition, so a process death mid-trip resumes. */
@@ -993,7 +1422,9 @@ class ParkingDetectionEngine(
      *
      * Both conditions, because they catch different things. The session bound refuses a fix
      * from a previous trip or from the origin of this one — the origin is not the
-     * destination. The age bound refuses a long drive's only good fix when it came near the
+     * destination. It is the journey's first vehicle evidence, which a red-light resume does
+     * not move: a fix taken before the stop is still this drive's (iOS bounds by the same
+     * drive start). The age bound refuses a long drive's only good fix when it came near the
      * start, because being on the motorway at minute two says nothing about minute ninety.
      *
      * Measured on 2026-09-20: without this, a candidate created at 17:32 carried a fix from
@@ -1002,7 +1433,7 @@ class ParkingDetectionEngine(
      * screen already renders properly.
      */
     private fun ReliableLocation.belongsToDrive(session: TravelSession, atMillis: Long): Boolean =
-        capturedAtMillis >= session.vehicleActivityStartedAtMillis &&
+        capturedAtMillis >= session.evidence.vehicleFirstSeenAtMillis &&
             atMillis - capturedAtMillis <= STALE_LOCATION_WINDOW_MILLIS
 
     private fun TravelSession.hasSustainedVehicleActivity(atMillis: Long): Boolean {
@@ -1010,16 +1441,45 @@ class ParkingDetectionEngine(
         return vehicleEndedAtMillis == null && atMillis - since >= MINIMUM_VEHICLE_DURATION_MILLIS
     }
 
-    private fun TravelSession.isShortlyAfterVehicleEnd(atMillis: Long): Boolean {
-        val endedAt = vehicleEndedAtMillis ?: return false
-        return atMillis >= endedAt && atMillis - endedAt <= TRANSITION_WINDOW_MILLIS
-    }
-
-    /** A fix that says the device stopped: §3a's "location stop" confirming signal. */
+    /**
+     * The fix *reported* a speed below §7's movement threshold. A fix with no speed says
+     * nothing: underground there is no Doppler, and silence is not stillness (§7).
+     */
     private fun LocationSample.reportsStopped(): Boolean {
         val speed = speedMps ?: return false
         return quality.isValid && speed < DrivingConfirmationGuard.MOVING_SPEED_THRESHOLD_MPS
     }
+
+    /** The fix *reported* a speed at or above §7's movement threshold. A missing speed is not movement. */
+    private fun LocationSample.reportsMoving(): Boolean {
+        val speed = speedMps ?: return false
+        return quality.isValid && speed >= DrivingConfirmationGuard.MOVING_SPEED_THRESHOLD_MPS
+    }
+
+    /**
+     * docs/05 §3a: a candidate nothing but absence produced — the transition was entered by
+     * `movementIdle`, no exit (explicit or a link disconnect) arrived, and the confirming signal
+     * was a location stop or `stationary_enter`, not a walk. The vehicle level never ended, so
+     * the car moving on is this drive continuing. A walk is excluded because it is the strongest
+     * evidence the person left the car. iOS's `isStopOnly`.
+     */
+    private fun VehicleStop.isStopOnly(signal: ConfirmingSignal): Boolean =
+        byMovementIdle && !exitDetected &&
+            (signal == ConfirmingSignal.LOCATION_STOP || signal == ConfirmingSignal.STATIONARY)
+
+    /**
+     * §8b's fix-derived degradation: an accepted fix in `poor` whose accepted predecessor was
+     * `good` or `fair`. The same test iOS's `DrivingEvidence.noteQualityDrop` makes.
+     */
+    private fun fallsIntoPoor(previous: MovementAnchor?, fix: LocationSample): Boolean {
+        val before = previous?.let { LocationQualityBucket.of(it.horizontalAccuracyM) } ?: return false
+        return before != LocationQualityBucket.POOR &&
+            LocationQualityBucket.of(fix.horizontalAccuracyM) == LocationQualityBucket.POOR
+    }
+
+    /** Records a fall into `poor`, keeping the newest one when drops arrive out of order. */
+    private fun TravelSession.notingFallIntoPoor(atMillis: Long): TravelSession =
+        copy(lastDegradedToPoorAtMillis = maxOf(lastDegradedToPoorAtMillis ?: atMillis, atMillis))
 
     companion object {
 
@@ -1081,7 +1541,19 @@ class ParkingDetectionEngine(
          */
         const val TRANSITION_WINDOW_MILLIS: Long = DrivingConfirmationGuard.RECENT_VEHICLE_WINDOW_MILLIS
 
+        /**
+         * §3a constant `nearEndHorizon`, 300 s. **unvalidated.**
+         *
+         * §8b: how far before the drive's end "near end" evidence — `location_stopped`'s
+         * reported stop and `location_quality_degraded`'s fall into `poor` — may lie.
+         * `transitionWindow` reused, the same budget §5 gives the descent into a garage.
+         */
+        const val NEAR_END_HORIZON_MILLIS: Long = TRANSITION_WINDOW_MILLIS
+
         /** §11 departure: movement >= 500 m alongside the 90 s vehicle bar. */
         const val DEPARTURE_MOVEMENT_METERS: Double = 500.0
     }
 }
+
+/** What confirmed a stop as a parking — §3a's confirming signals and the link disconnect. */
+private enum class ConfirmingSignal { WALKING, STATIONARY, LOCATION_STOP, CAR_LINK_DISCONNECT }

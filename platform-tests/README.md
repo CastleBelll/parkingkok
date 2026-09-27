@@ -286,3 +286,26 @@ M3에서 필드 데이터로 튜닝된다. 지금 박으면 튜닝을 막는다.
 **이 fixture의 쓸모는 M3의 기준선이다.** confidence 튜닝이 지하철 오검출을 실제로
 낮추는지, 이 값이 내려가는 것으로 측정한다. 제품 쪽 방어선은 완곡한 문구
 ("주차한 것 같아요")와 `주차 아님` 액션이며, 그건 엔진이 아니라 UX의 몫이다.
+
+## 실주행 field fixture — 승격된 것과 drafts에 남은 것 (2026-09-27)
+
+`field_s*_parked.json`은 사용자가 **주차로 끝났다고 확인한** 실제 iPhone 주행에서 변환했다
+(좌표 없음). `expected`는 전부 `{candidate: true, finalState: CANDIDATE_PENDING}`이다.
+세션 s02–s17은 옛 iOS capture(드문드문한 km급 fix), s22+는 현재 dense capture로 기록됐다.
+
+**승격 (양 플랫폼 통과, 결과 동일):** `field_s03_parked`, `field_s04_parked`,
+`field_s16_parked`, `field_s17_parked`, `field_s26_parked`, `field_s32_parked`,
+`field_s33_parked`.
+
+**drafts에 남긴 parked 3개** — 양 엔진이 모든 이벤트에서 똑같이 후보를 만들지 못하고,
+원인은 엔진이 아니라 기록이다. `expected`를 고쳐서 통과시키지 않는다. 근거는
+`docs/05_PARKING_DETECTION_ENGINE.md` "Field drafts that no conformant engine can pass".
+
+| draft | 양쪽 결과 | 이유 | 증거 |
+|---|---|---|---|
+| `field_s02_parked` | `IDLE` | 옛 sparse capture + §3a 세션 2시간 상한 | 유일한 `vehicle_enter`가 t=1908 → 상한 t=9108. 마지막 주행(t≈8696–9068, 2–12 m/s)은 t=9084에 잠깐 멈췄다가 t=9144–9246에 저속으로 다시 움직이고 멈춘다. 상한이 그 사이에 세션을 닫아 최종 정차는 세션 밖이고, 그 구간에는 자체 `vehicle_enter`가 없다. §3a는 `vehicle_enter`/링크로만 세션을 연다 |
+| `field_s06_parked` | `IDLE` | §6 확인 신호 없음 (GPS 열화만) | 지하 진입: 마지막 speed 보유 fix t=2737, accuracy 429→1414 m. 마지막 motion 이벤트는 t=2329 `stationary_exit`. transition이 열린 뒤 walk/stationary/exit/이동 fix 어느 것도 오지 않아 만료된다. GPS 열화만으로는 후보가 될 수 없다(§6) |
+| `field_s31_parked` | `PARKING_TRANSITION` | 기록이 300 s transition window 안에서 끝남 — §6 확인 신호 미도착 | 마지막 ≥2 m/s fix t=826, 기록 종료 t=1039. 그 사이 motion 이벤트는 `location_quality_degraded`뿐. 원본 trace가 분할됐는지(계약 §9 `splitFrom`) 확인 후 재변환 필요 — 미검증 가설 |
+
+`field_s*_unknown.json` 8개는 결과 라벨이 없어(`expected: null`) 승격하지 않는다. 양
+엔진이 전부 같은 결과를 내는 parity 입력으로만 쓴다.

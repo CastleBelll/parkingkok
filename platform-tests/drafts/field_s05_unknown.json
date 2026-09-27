@@ -1,0 +1,61 @@
+{
+  "name": "field_s05_unknown",
+  "initialState": "IDLE",
+  "events": [
+    {"type":"stationary_enter","t":0,"confidence":"high"},
+    {"type":"location","t":1614,"accuracy":20.86900209286783},
+    {"type":"walking_enter","t":1675,"confidence":"high"},
+    {"type":"stationary_exit","t":1675,"confidence":"high"},
+    {"type":"vehicle_enter","t":1785,"confidence":"high"},
+    {"type":"location","t":1800,"accuracy":1478,"distanceFromPreviousM":459.0855274381643},
+    {"type":"location_quality_degraded","t":1800,"fromBucket":"fair","toBucket":"poor"},
+    {"type":"location","t":1822,"accuracy":1478},
+    {"type":"location","t":1912,"accuracy":32.993155287693746,"distanceFromPreviousM":417.8559546218445},
+    {"type":"location","t":1930,"accuracy":28.905902088542238,"distanceFromPreviousM":79.2272624997161},
+    {"type":"location","t":1938,"accuracy":38.68958393575472,"distanceFromPreviousM":51.85734416551539},
+    {"type":"location_quality_degraded","t":1938,"fromBucket":"fair","toBucket":"poor"},
+    {"type":"location","t":1954,"accuracy":6.8029167893261375,"speed":0.04847192019224167,"distanceFromPreviousM":59.48370182654375},
+    {"type":"location","t":1970,"accuracy":5.937537651578793,"speed":0.04894499108195305,"distanceFromPreviousM":12.25552875949132},
+    {"type":"location","t":1985,"accuracy":4.817237637053627,"speed":4.168516873256158,"distanceFromPreviousM":68.29036330451967},
+    {"type":"location","t":2000,"accuracy":3.9043414629522584,"speed":3.941866649067017,"distanceFromPreviousM":65.6457890976389},
+    {"type":"location","t":2015,"accuracy":3.1998860404261524,"speed":5.367837216415969,"distanceFromPreviousM":106.69480926813027},
+    {"type":"location","t":2030,"accuracy":3.0432995057167513,"speed":5.30393878072991,"distanceFromPreviousM":111.16900033533523},
+    {"type":"location","t":2045,"accuracy":3.3160157038769698,"speed":0.13843313209747182,"distanceFromPreviousM":69.3801871502223},
+    {"type":"location","t":2060,"accuracy":3.5941359141634783,"speed":0.7708317834006719,"distanceFromPreviousM":1.610888227340056},
+    {"type":"location","t":2075,"accuracy":3.8569310355528343,"speed":0,"distanceFromPreviousM":4.232474895420339},
+    {"type":"location","t":2091,"accuracy":4.035177881551676,"speed":0.8912693342739116,"distanceFromPreviousM":19.106231391993216},
+    {"type":"location","t":2495,"accuracy":2.0000058503189826},
+    {"type":"location","t":2796,"accuracy":2.0917231212030662},
+    {"type":"location","t":3097,"accuracy":2.0009961403263485},
+    {"type":"location","t":3398,"accuracy":2.0077182904082274},
+    {"type":"location","t":3699,"accuracy":7.999998916947896},
+    {"type":"location","t":4000,"accuracy":7.9999999979374525},
+    {"type":"location","t":4301,"accuracy":8.000021572328567},
+    {"type":"stationary_enter","t":4301,"confidence":"high"},
+    {"type":"location","t":4601,"accuracy":8.016343931835785},
+    {"type":"stationary_exit","t":4601,"confidence":"high"},
+    {"type":"location","t":4902,"accuracy":8.000007983034044},
+    {"type":"location","t":5203,"accuracy":8.009715931706907},
+    {"type":"location","t":5504,"accuracy":8.158779423047354}
+  ],
+  "expected": null,
+  "_todo": {
+    "status": "needs_human_review",
+    "proposedExpected": null,
+    "rationale": "The label leaves parked unset for mode \"car\", which is the half that decides the expectation. Re-label the session or decide from the events. A trace carries no engine state, so initialState was assumed to be IDLE; correct it if the recording started mid-trip. This draft was converted with --repair: the recording contradicted itself and was rescued rather than re-made. See `repair` for which source events were dropped or reordered, and check them against the trace before trusting anything nearby.",
+    "repair": {
+      "droppedReplayIndices": [],
+      "reorderedIndices": [
+        4
+      ]
+    },
+    "source": {
+      "sessionId": "1051C3F9-B1D3-4163-A2E0-5D847442C2E4",
+      "platform": "ios",
+      "labelMode": "car",
+      "labelParked": null,
+      "durationSeconds": 5504,
+      "eventCount": 35
+    }
+  }
+}

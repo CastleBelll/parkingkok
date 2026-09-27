@@ -75,12 +75,13 @@ field data exists. Neither platform may pick its own value for one.
 | `DRIVING_CANDIDATE` | `DRIVING` | vehicle activity sustained ≥ `minimumVehicleDuration` |
 | `DRIVING_CANDIDATE` | `IDLE` | `vehicle_exit`, or no promotion within `drivingCandidateWindow` |
 | `DRIVING` | `PARKING_TRANSITION` | `vehicle_exit`, **or** no movement evidence for `movementIdleWindow` |
-| `PARKING_TRANSITION` | `CANDIDATE_PENDING` | any of `walking_enter`, `stationary_enter`, location stop — within `transitionWindow` |
-| `PARKING_TRANSITION` | `DRIVING` | movement evidence returns before `transitionWindow` elapses |
+| `PARKING_TRANSITION` | `CANDIDATE_PENDING` | any of `walking_enter`, `stationary_enter`, location stop — within `transitionWindow` (location stop: see "The `PARKING_TRANSITION` rows, exactly") |
+| `PARKING_TRANSITION` | `DRIVING` | movement evidence returns before `transitionWindow` elapses — a fix that clears §7's movement bar, or `vehicle_enter` |
 | `PARKING_TRANSITION` | `IDLE` | `transitionWindow` elapses with no confirming signal |
 | `CANDIDATE_PENDING` | `PARKED` | user confirms (§10a) |
 | `CANDIDATE_PENDING` | `IDLE` | user rejects, or 45-minute expiry (§10) |
 | `CANDIDATE_PENDING` | `DRIVING_CANDIDATE` | `vehicle_enter` — a new journey starts |
+| `CANDIDATE_PENDING` | `DRIVING` | a **stop-only** candidate, before `transitionWindow` has run from the drive's end: a second fix that *reports* ≥ 2.0 m/s, or `vehicle_enter` — the long light ending (see "A stop-only candidate can still be a long light") |
 | `PARKED` | `DEPARTURE_CANDIDATE` | vehicle ≥ 90s **and** movement ≥ 500m (§11) |
 | `DEPARTURE_CANDIDATE` | `DRIVING` | departure confirmed (§11) |
 | `DEPARTURE_CANDIDATE` | `PARKED` | evidence lapses |
@@ -94,6 +95,7 @@ field data exists. Neither platform may pick its own value for one.
 | `drivingCandidateWindow` | 300s | §7 `vehicleEvidenceMaxAge` — evidence older than this is already not counted |
 | `movementIdleWindow` | 180s | §7 `maximumBaseline`. **unvalidated** |
 | `transitionWindow` | 300s | §7 vehicle window, reused so a walk that starts late still counts. **unvalidated** |
+| `nearEndHorizon` | 300s | §8b: how far before the drive's end "near end" evidence may lie. `transitionWindow` reused. **unvalidated** |
 | `sessionMaximumDuration` | 2h | hard ceiling on one `DRIVING` session. Longer than any ordinary commute, far shorter than a day; without it a drive that never sees another fix keeps the location capture up for ever (§19). Ends in `IDLE` with no candidate — two hours in, nothing knows where the car was left. Android gained it 2026-09-21; iOS always had it |
 
 ### The car link
@@ -108,6 +110,16 @@ absence. A disconnect is an event.
 | `IDLE` | `DRIVING_CANDIDATE` | `projection_connected` or `bluetooth_car_connected` |
 | `DRIVING` | `CANDIDATE_PENDING` | `projection_disconnected` or `bluetooth_car_disconnected` |
 | `CANDIDATE_PENDING` | `DRIVING` | a car link reconnects |
+| `DRIVING_CANDIDATE` | `IDLE` | a car link disconnects — the driver got in and changed their mind; same outcome as `vehicle_exit` (2026-09-27) |
+| `PARKING_TRANSITION` | `CANDIDATE_PENDING` | a car link disconnects — §6's fourth confirming signal, and the vehicle's end (2026-09-27) |
+| `PARKING_TRANSITION` | `DRIVING` | a car link reconnects — the red light ending, told by the strongest signal there is (2026-09-27) |
+
+The last three rows were implemented on Android and absent on iOS until 2026-09-27; they are
+now the rule on both. A disconnect or connect in any state not listed is a no-op for the
+state machine, and only updates the latch below. The latch is a property of the **link**, not
+of the travel session: it survives a session ending in `IDLE`, a confirmation or a manual save
+while the link is still up (iOS keeps it on the engine; Android keeps it on the session and
+must hoist it).
 
 Connecting does **not** promote straight to `DRIVING`: people sit in parked cars. The
 90-second sustain in §3a still applies, so getting in and changing your mind produces
@@ -174,20 +186,56 @@ made invisible.
 
 ### When a timeout fires
 
-Every elapsed-time row — `drivingCandidateWindow`, `movementIdleWindow`, `transitionWindow`
-and the 45-minute expiry — fires **only on a `timer_tick` event**. Rows whose condition is
-a duration that has been *sustained* (`DRIVING_CANDIDATE → DRIVING`, `PARKED →
-DEPARTURE_CANDIDATE`) are evaluated on every event.
+**Current contract (rewritten 2026-09-27; the history below explains how it got here).**
 
-The alternative — evaluating elapsed time whenever any event happens to arrive — makes the
-same trace replay differently depending on whether something unrelated woke the engine.
-`subway_commute_underground` is the proof: it has a 303-second gap after `vehicle_enter`
-and a 1012-second gap during the ride, both longer than the windows they would trip, and
-under arrival-time evaluation it ends in `IDLE` instead of `CANDIDATE_PENDING`.
+Every event — a motion edge, a fix, a tick — is processed as:
 
-`timer_tick` is already in the fixture vocabulary and none of the committed fixtures use
-one, which is the same statement from the other direction: a fixture that wants a timeout
-to fire says so.
+```text
+ingest the evidence it carries -> judge the windows -> apply its edge -> judge the windows
+```
+
+against **the event's own timestamp**. Elapsed-time rows (`drivingCandidateWindow`,
+`movementIdleWindow`, `transitionWindow`, `sessionMaximumDuration`, the 45-minute expiry, the
+§11 departure lapse) are therefore judged on *every* event, not only on `timer_tick`.
+`timer_tick` carries no evidence; it exists so the windows are judged when nothing else is
+arriving — both platforms tick once a minute while, and only while, the bounded capture runs.
+
+**A window row is stamped at its deadline, not at the event that noticed it** (2026-09-27).
+`movementIdle` enters `PARKING_TRANSITION` at `lastMovingSample + movementIdleWindow`; the
+transition lapses at `entry + transitionWindow`; `DRIVING_CANDIDATE` lapses at `entry +
+drivingCandidateWindow`; the 2-hour ceiling at `sessionStart + 2h`; the candidate expires at
+its `expiresAt`; the departure lapses at `lastVehicleEvidence + drivingCandidateWindow`. The
+stamp is clamped to be no earlier than the current state's own entry and no later than the
+event being processed. Stamped at observation, the next window started late by however long
+the device happened to be quiet, so a replay with and without an unrelated tick produced
+different outcomes — the non-determinism the history below was fighting. Sustained-condition
+rows (`DRIVING_CANDIDATE → DRIVING`, `PARKED → DEPARTURE_CANDIDATE`) and event rows keep the
+event's time.
+
+Folding the event's evidence **before** the windows is the half that is easy to get wrong: a
+fix that lands more than `movementIdleWindow` after the last one is a drive continuing, and
+judging the window first would read it as a parking (`red_light_no_candidate`).
+
+**Known iOS deviation, accepted (2026-09-27).** iOS reads Core Motion *history* in arrears:
+on a wake it learns about a walk that happened minutes ago. Its coordinator therefore judges
+the windows at the wake time and applies history-derived motion edges at the wake time, while
+Android judges each Transition API event at its own `atMillis`. A walk timestamped inside
+`transitionWindow` but first delivered after it confirms on Android and not on iOS. Fixtures
+cannot see this — the iOS runner uses event time. Fixing it means replaying history samples
+in time order interleaved with ticks, which is an adapter rewrite; while the capture runs, the
+60-second tick keeps the two clocks within a minute of each other, which bounds the effect.
+
+#### History: the 2026-09-20 reading, and why it was replaced
+
+The paragraphs below are the record of how the contract above was reached. The first of
+them — "fires **only on a `timer_tick` event**" — was the rule until 2026-09-21 and is no
+longer; read it as history.
+
+> Every elapsed-time row fires only on a `timer_tick` event. The alternative — evaluating
+> elapsed time whenever any event happens to arrive — makes the same trace replay differently
+> depending on whether something unrelated woke the engine. `subway_commute_underground` is
+> the proof: it has a 303-second gap after `vehicle_enter` and a 1012-second gap during the
+> ride, and under arrival-time evaluation it ends in `IDLE` instead of `CANDIDATE_PENDING`.
 
 #### RESOLVED 2026-09-21: nothing on Android produced one, and firing them broke the subway trace
 
@@ -361,12 +409,222 @@ superseded only when the new session actually produces a candidate (§10a). `veh
 is a noisy signal — a bus passing, a passenger seat, the OS guessing — and retiring a
 prompt on it would delete the answer to a question the user was still holding.
 
+**The new journey is a new travel session** (2026-09-27). Nothing of the previous trip carries
+into it — not its reason codes, its start (which feeds §8's duration and the 2-hour ceiling),
+its distance, nor its movement anchors. Android reused the previous trip's session here, so
+field draft s03's second parking inherited `walking_after_vehicle` and `vehicle_exit_detected`
+from the first and scored `high` on evidence it never had. The one thing kept is the pending
+candidate itself, for §10a's supersession and §10's expiry.
+
+**A recording can hold two travel sessions, and s03 is one (DECIDED 2026-09-27).** Field draft
+s03 has a 128 s ride, `vehicle_exit` and `walking_enter` in the same second (t=1431, the exit
+iOS derives from that walk), a candidate (`medium`/70), and a `vehicle_enter` five seconds
+later that opens the fifty-minute drive ending in the user-confirmed parking. Both engines
+make two candidates, and both are right under this table:
+
+- At t=1431 the evidence is an exit and a walk after a confirmed drive — the §8a textbook
+  parking. Nothing observable separates "the walk was Core Motion flicker" from "parked, then
+  got straight into someone else's car", and the second must not be lost (a carpool pick-up,
+  park and ride). A delay long enough to wait for the car to move would delay every real
+  parking by as much.
+- The first candidate is not the stop-only kind (it has an exit and a walk), so the car moving
+  on does not retire it; the `vehicle_enter` opens a new journey and leaves it answerable. It
+  expires at t=4131 (§10, whatever the state), before the second candidate at t=4482.
+
+§12's rule is one candidate **per travel session**, and s03 has two. The iOS storm check was
+stricter than §12 — "no fixture produces more than one candidate" — and is now what §12 says:
+count candidates per travel session (a session opens on entering `DRIVING_CANDIDATE` and on a
+confirmed departure), and do not count a candidate the session itself took back (a link
+reconnect, a stop-only retirement, an expiry) — only one superseded by the next. The Android
+twin used to count per fixture and failed s03 while iOS passed it — the gate itself out of
+parity; contract §8 now spells the counter out step by step and both runners implement that. s03's cost is a
+stale `medium` prompt while the user drives; "주차 아님" answers it, and §18 should measure how
+often a walk is followed by `vehicle_enter` within a minute before any rule is built on it.
+
+The car-link reconnect (`CANDIDATE_PENDING → DRIVING`, the fuel stop) is the opposite case:
+getting back into the same car continues **the same trip**, so it resumes the drive the
+candidate came from — its start and distance — with a fresh idle anchor.
+
 ### The red light
 
 `DRIVING → PARKING_TRANSITION → DRIVING` is the path a long stop takes, and it is why
 `PARKING_TRANSITION` exists as its own state rather than being folded into the candidate
 (§3 of the domain contract). Entering it is silent: nothing is persisted, nothing is
 notified. Fixture #2 in §17 exists to hold this.
+
+### The `PARKING_TRANSITION` rows, exactly (DECIDED 2026-09-27)
+
+Replaying 18 field drafts (iPhone, 2026-09) through both engines found that every iOS-only
+failure — s03, s16, s33 stuck in `PARKING_TRANSITION` or lost to `IDLE` — began at the same
+place: a location fix arriving while both engines were in `PARKING_TRANSITION`. Android had
+the two location rows below; iOS had neither, and dropped every fix after the drive ended.
+These are now the rows, identically on both platforms.
+
+**Location stop** (→ `CANDIDATE_PENDING`). A fix that
+1. the drive's §5 gate accepted — valid accuracy, not an outlier step,
+2. **reported** a speed below `movingSpeedThreshold` (2.0 m/s) — a fix with no speed is not a
+   stop: underground there is no Doppler, and silence is not stillness (§7),
+3. is timestamped **at or after** the transition's entry — the same rule every confirming
+   signal shares; a walk from before the drive ended says nothing about this parking.
+
+It confirms whatever the entry was, `movementIdle` included. s33 is why: the user walked
+away at 1.0–1.3 m/s with fixes every 15 s and Core Motion never reported a walk. A stop found
+this way alone scores `low` (§8b: no exit, no walk) and posts nothing (§9) — which is also
+what keeps a long red light from notifying.
+
+**Movement returns** (→ `DRIVING`). A fix the drive accepted that cleared §7's movement bar
+— speed ≥ 2.0 m/s, or the distance fallback's verdict for a speedless fix — at or after the
+entry. `vehicle_enter` and a car-link reconnect are the same row on a motion or link event.
+A fix cannot be both a stop and movement, so the order of the two rows is immaterial.
+
+**The capture keeps running while the transition decides.** Two of this state's three exits
+are location rows, so stopping the bounded capture at the entry — which iOS did — made both
+unreachable on a device while every fixture still passed. The capture is released when the
+transition leaves by `CANDIDATE_PENDING` or `IDLE`, and kept when it resumes `DRIVING`. The
+cost is at most `transitionWindow` (300 s) of capture per stop; see §19. An adapter-decided
+end inside the transition (lost authorization, capture failure) stops the capture and leaves
+motion free to confirm; the Smart Detection opt-out drops the transition to `IDLE`.
+
+**Resuming keeps the drive.** `PARKING_TRANSITION → DRIVING` continues the *same* travel
+session: its start (so the 2-hour ceiling, §8's duration and §5's inheritance bound measure
+the trip), its distance, its confirmation and its anchors. iOS used to open a fresh drive
+here, resetting all of them at every long light. A resume on vehicle or link evidence
+re-anchors the idle clock at the resume (`lastMovingSample := max(lastMovingSample, resume)`),
+so the drive gets a full `movementIdleWindow` — Android used to fall straight back into
+`PARKING_TRANSITION` on the stale anchor. A drive that has never moved stays un-anchored
+("an absent fix is not absent movement"). The transition's own evidence (§8b's exit, walk,
+stop flags) is discarded on resume: that stop was a red light.
+
+**`movementIdle` is not an exit.** The vehicle *level* stays on through a `movementIdle`
+transition, so a `vehicle_exit` — or, on iOS, the exit the adapter derives from a walk — that
+arrives while it is open is this drive's exit and earns `vehicle_exit_detected` (§8b). It is
+not a confirming signal; the level ends when the transition leaves.
+
+**Signals seen in `DRIVING` are not carried forward** (the F19 question, answered no). A
+`walking_enter` or `stationary_enter` that arrives while still `DRIVING` — before
+`movementIdle` has elapsed and with no `vehicle_exit` — is dropped, as before. Holding it and
+confirming the moment `movementIdle` fires was considered and rejected: at a long light the
+Transition API can report STILL inside a car, so the held signal would confirm the light, and
+no field draft is fixed by it (s02 never reaches a transition; s06 has no motion event after
+the drive). With dense capture the location-stop row already answers the case it was for.
+
+### A stop-only candidate can still be a long light (DECIDED 2026-09-27)
+
+Three minutes stopped with fixes reporting < 2 m/s is `movementIdle` plus a location stop, and
+the location-stop row confirms it the instant the transition opens — a long light and a jam
+look exactly like s16 and s33, which are real parkings. Nothing at that instant can tell them
+apart; only what happens next can. Before this rule the candidate (silent, `low`) stood for 45
+minutes, the capture was released, and on Android — whose Transition API does not repeat
+IN_VEHICLE ENTER — the rest of the trip, including the real parking, could go undetected.
+
+**Which candidates.** A candidate is *stop-only* when nothing but absence ended the drive: its
+transition was entered by `movementIdle`, and no exit (`vehicle_exit`, the iOS-derived exits,
+a car-link disconnect) and no `walking_enter` arrived before it was created. Its confirming
+signal was a location stop or `stationary_enter` (the Transition API can report STILL inside
+a car at a light). The vehicle level never ended, so the car moving again is this drive
+continuing. A walk is excluded: it is the strongest evidence the person left the car, and
+movement after it is more likely someone else's vehicle (park and ride, a lift) — retiring a
+real parking on that would lose the one thing this product exists to keep.
+
+**The rule.** From the drive's end (the transition's entry) until `end + transitionWindow` —
+the deadline the transition itself had:
+
+1. the bounded capture keeps running (it is released when the transition leaves otherwise),
+   and the candidate's drive keeps recording fixes (§5 gate, anchors, distance) — but §6's
+   reliable-location selection does **not** run on them: the candidate's spot is the car, and
+   the person walking away from it must not drag the point a later candidate of this trip
+   would inherit;
+2. the **second** accepted fix timestamped at or after the end that **reports** a speed ≥
+   `movingSpeedThreshold` (2.0 m/s) — §7's "one event alone never confirms"
+   (`minimumMovingSamples`, 2), because a single Doppler spike under a slab is ordinary — or a
+   `vehicle_enter`, retires the candidate and resumes
+   the same drive: `CANDIDATE_PENDING → DRIVING` in one step, the candidate withdrawn as §10
+   withdraws an expired one (no record, no report), the travel session kept (start, distance,
+   confirmation, anchors) exactly as "Resuming keeps the drive" keeps it, §12's allowance
+   restored so the trip can still produce the real parking. On `vehicle_enter` the idle clock
+   is re-anchored at the resume; a moving fix anchors it itself;
+3. at the deadline the capture is released and nothing else changes — the candidate stands;
+4. the window closes early, releasing the capture, on a `vehicle_exit`, a `walking_enter`
+   (round 3, 2026-09-27), or any adapter-decided end (derived exit, lost authorization or
+   capture, the opt-out); a confirm, reject or `user_saved` closes it with the state. The
+   candidate stands in every case. A walk closes it for the same reason a walk *before* the
+   candidate makes it not stop-only: the person has left the car, so a `vehicle_enter` after
+   it is a bus or a lift — `CANDIDATE_PENDING → DRIVING_CANDIDATE`, a new journey that leaves
+   the candidate answerable — and not the jam moving on. On an iPhone the adapter already
+   closed the window through the exit it derives from the walk; the engine now states it
+   itself, so Android (no derived exit) and every fixture read the same rule.
+   `stationary_enter` does **not** close it: the Transition API reports STILL inside a car
+   at a light.
+
+**Exactly what the resume emits** (both engines, one `handle` call, in this order):
+
+1. `withdrawCandidate(id)` / `RetireCandidate` for the pending candidate — never followed
+   immediately by a `createCandidate`, which is how contract §8's storm counter tells this
+   from a supersession;
+2. one `persistCheckpoint` with `state = DRIVING` and no `candidateId`;
+3. `startBoundedLocationCapture` **only** if the window no longer held the capture (it
+   always does in production; a restored or capture-lost engine may not).
+
+No `drivingConfirmed` and no `sessionEnded`: the drive never ended as far as the product is
+concerned, and it is already confirmed. The session kept is the candidate's own (start,
+distance, confirmation, anchors, vehicle level on); §12's "already produced" flag is cleared.
+On `vehicle_enter` the idle clock is re-anchored at `max(lastMovingSample, now)`; on the
+second moving fix nothing is re-anchored — that fix, already folded into the session, is the
+newest moving sample. The reported-moving count is the window's own (it starts at 0 when the
+candidate is created and counts only fixes timestamped at or after the drive's end), not
+§7's `movingSampleCount`.
+
+**Only a reported speed.** The §7 distance fallback does not count here, although it does in
+the transition's "movement returns" row. Around a parked car the sky is worst: after s03's
+real parking the speedless fixes of the walk away (accuracy 8–100 m) put the fix at t=4673
+332 m from the fallback's anchor in 165 s on the replay's straight line — 2.01 m/s, "travel" —
+inside the window, and with the fallback counted s03 would end in `DRIVING` instead of with
+its parking. In the transition a false resume only delays a decision; here it would withdraw a
+real parking.
+
+**The window lives exactly as long as its capture (round 4, 2026-09-27).** It is not part of
+the §14 `DetectionCheckpoint`, and both engines apply one rule to a process death inside it:
+rule 4's "lost capture" — the window closes, the candidate stays, as it did before this rule.
+What differs is only whether the capture itself survives the process, which is an OS fact,
+not an engine choice:
+
+- **iOS** — the capture is a Core Location session owned by the process. It dies with the
+  process, so a relaunch inside the window finds none, and the engine rebuilds no window
+  (`restore` of `CANDIDATE_PENDING` opens nothing, wants no capture, emits no
+  `startBoundedLocationCapture`). A moving fix or `vehicle_enter` after the relaunch is §3a
+  "Leaving a pending candidate behind": `CANDIDATE_PENDING → DRIVING_CANDIDATE`, candidate
+  kept.
+- **Android** — the capture is a Fused Location request registered with a `PendingIntent`.
+  Play services keeps delivering it to a new process after the old one died; that is how the
+  platform works for every capture this app runs, and the runtime reloads the whole engine
+  state (window included) for each broadcast for the same reason. The window therefore
+  survives exactly when its capture does. Where the registration does **not** survive —
+  reboot, force-stop, app update, a revoked permission — the window must not survive either:
+  the adapter closes it (rule 4's lost capture: the window goes, the candidate stays) before
+  any other event of the new process is handled. A stored window whose capture is gone is
+  the state §19 forbids ("still holds the capture"), not a smaller window.
+
+Neither difference is visible to a fixture (fixtures have no process death). Both are bounded
+by the same deadline: nothing resumes after `end + transitionWindow`, and the capture is
+released there. Making Android drop the window on every process start was rejected: its
+process routinely dies between two location broadcasts, so the rule would almost never fire on
+Android, and the long-light case it exists for would come back on the platform whose
+Transition API does not repeat IN_VEHICLE ENTER. Battery: at most `transitionWindow` of
+capture per stop, the same bound the transition already had (§19).
+
+**Measured on the field drafts (iOS, 2026-09-27):** no parked draft changes. The three
+stop-only candidates (s03's second, s16, s33) see no fix reporting ≥ 2 m/s and no
+`vehicle_enter` inside their windows. The committed negative fixture for the shape is §17
+`long_stop_in_traffic`.
+
+**Residual.** Someone hurrying away from a stop-only parking at ≥ 2 m/s with Doppler speed
+(a jog, 7.2 km/h) inside the window retires it; the resumed drive re-enters the transition
+180 s after they slow down and a stop confirms it again — at wherever they then are. That is
+the price of the rule, and the reason walk-confirmed candidates are excluded from it. A stop
+longer than `movementIdleWindow + transitionWindow` (8 minutes) with no
+movement still leaves a silent candidate behind, and a tunnel longer than that with no fix and
+no car link ends in `IDLE` — §13's "tunnel must remain DRIVING" holds only while a link is
+connected. Both are for §18 field tuning, not for a rule change on one trace.
 
 ### One candidate per travel session
 
@@ -378,7 +636,9 @@ repeated stops from becoming a notification storm (fixture #5).
 ### Reason codes
 
 Codes accumulate as evidence arrives and travel with the candidate; they are never
-recomputed at the end from the final state. The §4 list in the domain contract is closed —
+recomputed at the end from the final state. "Near end" evidence (§8b) is not an exception: it is judged
+from the *timestamps* of evidence already recorded, against the moment the drive ended — not
+from the state the device happens to be in when the candidate is created. The §4 list in the domain contract is closed —
 an engine that needs a code that is not on it has found a contract gap, and the answer is
 to raise it, not to add a string.
 
@@ -470,6 +730,15 @@ Initial default:
 Selection favors newer + accurate sample.
 Threshold may differ per platform only through safe-clamped config.
 
+**Selection, exactly (2026-09-27).** Both platforms run it only on fixes the open drive's §5
+gate **accepted** — never on an outlier, and never on a fix that arrives with no drive
+recording. A drive records while `DRIVING_CANDIDATE`/`DRIVING` and while `PARKING_TRANSITION`
+decides (§3a), so a fix from a car standing in its bay may update the spot. Among admissible
+fixes (≤ 35 m, ≤ 20 s old, not > 5 s in the future) a newer one wins unless the incumbent is
+still fresh (≤ 20 s) **and** more accurate — then the incumbent stays. Android used to select
+before the outlier check, in every state, and to take any newer fix. The location is not a
+parity field, but a candidate's `reliable_location_captured` code (§8b) depends on it.
+
 ## 7. Driving Confirmation
 Initial conceptual guard:
 - recent vehicle evidence
@@ -560,6 +829,33 @@ Android의 ≤35m는 §6의 기준을 또 잘못된 자리에 쓴 것이다 — 
 
 노이즈 바닥 하나를 두 곳에서 같은 의미로 쓴다. 거친 fix를 버리지 않으면서 지터를
 합산하지 않는 유일한 방법이고, 지하가 이 제품의 주 무대이므로 거친 fix를 버릴 수 없다.
+
+#### A coarse anchor is replaced by a materially better fix (DECIDED 2026-09-27)
+
+"못 넘으면 앵커를 유지한다"에는 구멍이 있었다. **앵커 자체가 거칠면** 그 정확도가 이후 모든
+구간의 바닥을 정한다. field draft s02: 세션 첫 fix가 정확도 1000 m였고, 이후 8–9 m 정확도로
+6–12 m/s 주행한 22–175 m 구간들이 전부 약 2 km 바닥에 막혀 **두 엔진 모두 거리가 끝까지 0**
+이었다.
+
+규칙: 구간이 바닥을 못 넘었을 때, 새 fix의 정확도가 앵커 정확도의
+`distanceReanchorAccuracyRatio`(**0.5**, **unvalidated**)배 미만이면 **앵커를 새 fix로 교체한다.
+그 구간은 더하지 않는다.** 더하지 않으므로 "지터를 합산하지 않는다"는 성질은 유지된다.
+
+비용도 적는다. 거친 앵커와 새 fix 사이의 실제 이동은 버려진다 — 그 구간은 원래 수백 m
+바닥 안이라 지터와 구분할 수 없는 구간이다. 기록된 지하철 trace의 누적 거리는 3966.49 m
+(거부 50)에서 **3050.54 m(거부 48)**로 줄었다(`FieldTraceReplayTests`, Android 쌍둥이 테스트도
+같은 값이어야 한다). 800 m 판정은 그대로다.
+
+**23 % 손실을 받아들이는 이유 (round-2 review, 2026-09-27).** Android 측 반론은 "지하 실거리
+916 m를 버린다"였다. 그 916 m는 정의상 **거친 앵커의 2σ 바닥 안**에서 잰 구간이다 — 규칙
+없이도 그 구간은 단독으로는 더해지지 않았고, 나중에 더 긴 chord가 바닥을 넘을 때 *거친
+앵커 기준으로* 한꺼번에 회수됐을 뿐이다. 그 회수분에는 앵커 자체의 수백 m 오차가 그대로
+실린다. 규칙이 없으면 s02처럼 첫 fix 하나가 세션 전체의 거리를 0으로 만든다(두 엔진 모두
+끝까지 0 m). 과소 계상은 §8의 +5(1600 m)와 `vehicle_distance_met`(800 m)만 늦출 뿐이고, 둘 다
+duration 조항이 따로 채운다(§8b "duration ≥ 120 s **or** distance ≥ 800 m"). 지터를 거리로
+세는 쪽의 비용 — 지하철·버스 음성 케이스의 거리 과대 — 이 더 크다. 따라서 **채택을 유지하고
+양 플랫폼이 3050.54 m / 48을 pin한다.** 지상 주행 데이터로 ratio 0.5를 재검증하는 것은 §18
+항목이다.
 
 ### 양 플랫폼 통일 (2026-09-18 결정)
 
@@ -675,6 +971,44 @@ permission actually granted is the measurement that decides whether anything her
 tuning, and the number to watch is how often a real parking still lands under 60 with a car
 link present.
 
+### 8b. Evidence definitions — one reading for both engines (DECIDED 2026-09-27)
+
+§8 names the evidence; it never said when each item is true, and the two engines guessed
+differently. The field-draft replay showed the cost: on s04 Android scored `high`/90 and iOS
+`medium`/75, on s17 Android `medium`/70 (notifies) and iOS `low`/55 (silent) — same fixture,
+both "passing", because no fixture pinned the bucket. These are the definitions. Every one is
+judged **when the candidate is created**, from timestamped evidence, against the drive's
+**end** — the moment `PARKING_TRANSITION` was entered (for a car-link disconnect in
+`DRIVING`, the disconnect). The transition that produced the candidate is the scope: if an
+earlier transition resumed `DRIVING`, its flags went with it.
+
+| code / §8 item | weight | true when |
+|---|---:|---|
+| `recent_vehicle_activity` — meaningful recent vehicle session | +25 | the drive reached `DRIVING`. Every transition that can create a candidate satisfies it; it is §6's first clause |
+| `vehicle_exit_detected` — vehicle exit/end | +15 | an **explicit** exit ended this drive: the transition was entered by `vehicle_exit` (on iOS also the exits its adapter derives — from a walk, or from Core Motion going silent), or by a car-link disconnect; **or** such an exit / disconnect arrived while the transition was open. A `movementIdle` entry alone does **not** earn it — it is an inference from absence, and that inference is what `location_stopped` weighs; crediting both would count one inference twice |
+| `walking_after_vehicle` | +30 | `walking_enter` at or after the transition's entry, within `transitionWindow` — whatever the entry was (Android used to require an explicit exit first, so a walk that confirmed a `movementIdle` transition earned nothing) |
+| `stationary_after_vehicle` | +10 | the same, for `stationary_enter` |
+| `location_stopped` — location movement stopped | +10 | the transition was entered by `movementIdle`, **or** the newest fix that *reported* a speed < 2.0 m/s is later than the drive's last moving sample and no earlier than `nearEndHorizon` (300 s) before the end. A speedless fix never counts (§7), and neither does a rejected one (§5). "The last moving sample" is the **re-anchored** value: a resume on `vehicle_enter` or a link reconnect sets it to `max(lastMovingSample, resume)` (§3a "Resuming keeps the drive"), so a stop at the light the drive then resumed from is never this drive's `location_stopped` — the resume is the drive moving on. Both engines compare against that one value. Android used to add it for any stopped fix anywhere in the session — the first red light of the trip |
+| `location_quality_degraded` — GPS quality degraded near end | +5 | the fix quality fell **into `poor`** no earlier than `nearEndHorizon` before the end (or during the transition): a `location_quality_degraded` event whose `toBucket` is `poor` or absent, or an accepted fix in `poor` whose predecessor was `good`/`fair`. good→fair is not a degradation. iOS used to drop the event while `DRIVING`; Android counted any drop anywhere, good→fair included |
+| `car_projection_disconnected` | +20 | a car-link disconnect ended the drive or arrived in the transition |
+| `vehicle_duration_met` / `vehicle_distance_met` | — | duration = end − session start ≥ 120 s; distance = §7's accumulated distance at the end ≥ 800 m. Both frozen at the end: a walk to the lift adds neither, and a code is never earned by the clock running on after the drive (Android used to evaluate the duration code at every fold, so a 100 s drive "met" 120 s thirty seconds after it ended). "Session start" is the first vehicle evidence of the travel session and is **not** reset by a red-light resume |
+| comfortably over minimum | +5 | duration ≥ 240 s or distance ≥ 1600 m, same basis |
+| trip below minimum | −15 | neither `vehicle_duration_met` nor `vehicle_distance_met`, when the duration is known (a transition rebuilt from a checkpoint has none — unknown is not short). iOS used to omit it |
+| `reliable_location_captured` | — | the candidate **carries** a location, i.e. §5's inheritance rule found a fix from this drive. iOS used to emit it whenever any reliable fix existed on the device, which after the first drive is always |
+
+§6's third clause — "at least one confirmation signal" — counts **observed** signals only:
+`walking_enter`, `stationary_enter`, a location stop observed in the transition, a car-link
+disconnect. The `location_stopped` *weight* is not one, or a `movementIdle` entry would
+satisfy the rule the instant it happened. Both engines evaluate §6 before creating a candidate.
+
+**Measured on the field drafts (iOS, 2026-09-27).** s04 `high`/90 (the stop at t=4849 and the
+good→poor event at 4884 are both inside 300 s of the exit at 4907); s17 `low`/55 (its stop and
+its degradations are 360–460 s before the exit — Android's 70 came from those); s16 and s33
+`low`/45 (movementIdle + a location stop, no exit, no walk). s16/s33/s17 are confirmed real
+parkings that now create a candidate silently. That is the honest reading of their evidence
+under §8's weights, and it is recorded here as the next thing §18 has to measure — not tuned
+away on three traces.
+
 ## 9. Confidence Buckets
 - high: >=80
 - medium: 60...79
@@ -687,7 +1021,11 @@ MVP:
 Do not auto-confirm from high score until field precision meets acceptance threshold.
 
 ## 10. Candidate Lifetime
-Default expiry: 45 minutes.
+Default expiry: 45 minutes — **whatever the state** (2026-09-27). A candidate left behind by
+`CANDIDATE_PENDING → DRIVING_CANDIDATE` (§3a keeps it answerable) used to live for ever if
+the new drive produced no candidate of its own, because only `CANDIDATE_PENDING` looked at
+the clock. Both engines now withdraw it at its `expiresAt` from any state, without moving the
+state.
 After expiry:
 - do not silently create parking
 - clear/supersede on new trip according to product flow
@@ -770,6 +1108,14 @@ While PARKED:
 Initial:
 - vehicle >=90s
 - movement >=500m
+
+**The lapse boundary (2026-09-27).** `DEPARTURE_CANDIDATE → PARKED` fires strictly **after**
+`lastVehicleEvidence + drivingCandidateWindow`; §7's guard counts evidence exactly
+`vehicleEvidenceMaxAge` old as recent. At the shared instant the departure can still confirm
+— Android's settle used to lapse first, iOS checked confirmation first. §7's guard also
+refuses vehicle evidence stamped after `now` on both platforms. On Android, a `vehicle_exit`
+while `PARKED` drops the departure's session, as iOS always did, so §11's 500 m and §7's
+duration are measured per get-in, not accumulated across them.
 
 If uncertain -> suggestion, not destructive silent end.
 
@@ -870,9 +1216,13 @@ What the row does, identically on both platforms:
 - **Vehicle activity is over.** The next `vehicle_enter` opens a departure's evidence, which
   §11's two bars and §7's guard then have to earn as before.
 
+**Order (2026-09-27): `user_saved` is answered before any evidence is folded or any window
+judged, on both platforms** — iOS used to judge the windows first, so a transition lapsing
+at that instant reported `candidateRuleUnmet` on the way to `PARKED`.
+
 **One known difference, outside the parity fields.** A candidate left behind by
 `CANDIDATE_PENDING → DRIVING_CANDIDATE` (§3a keeps it so the user can still answer it) is
-withdrawn by iOS on `user_saved`, and left to its 45-minute expiry by Android. Android's
+withdrawn by iOS on `user_saved`, and left to its 45-minute expiry (§10) by Android. Android's
 engine keeps the last candidate's snapshot after it is answered, so outside
 `CANDIDATE_PENDING` it cannot tell a live prompt from a settled one. Final state and
 candidate creation are identical; only how long a stale notification stays up differs.
@@ -914,6 +1264,13 @@ Write checkpoint on:
 - parked/departure transitions
 
 Checkpoint contains no backend upload behavior.
+
+**A transition rebuilt from a checkpoint keeps the drive's distance** (2026-09-27). The
+checkpoint's `travelDistanceEstimate` is written at the transition's entry, and a restored
+`PARKING_TRANSITION` scores §8b's distance items from it; iOS used to rebuild the transition
+around an empty drive, so every parking confirmed after a process death lost
+`vehicle_distance_met` and the +5. The duration is still unknown after a restore (the
+checkpoint has the transition's entry, not the session's start) and is not penalised (§8b).
 
 ## 15. Engine Effects
 Platform-independent conceptual effects:
@@ -961,6 +1318,35 @@ Mandatory:
 
 Both platforms run common JSON fixtures.
 
+**`long_stop_in_traffic` — fixture #2's long form (specified 2026-09-27, committed to
+`platform-tests/` once both engines implemented §3a "A stop-only candidate can still be a long
+light").** `red_light_no_candidate` stops for 135 s and never reaches `movementIdleWindow`, so
+nothing committed held the jam shape. Events (relative `t`, accuracy 8 m throughout):
+
+```text
+0    vehicle_enter
+30   location speed 9   distanceFromPreviousM —
+60   location speed 9   270
+100  location speed 9   360
+160  location speed 0   20
+220  location speed 0   0
+280  location speed 0   0        <- movementIdle deadline (100 + 180): PT and a stop-only low candidate
+310  location speed 0   0
+340  location speed 8   150      <- the queue moves (first reported-moving fix)
+370  location speed 9   270      <- second: candidate withdrawn, the same drive resumes
+```
+
+Expected: `{"candidate": true, "finalState": "DRIVING"}` — `candidate` is the runner's "a
+candidate was created" (contract §8), and this one was, silently, for 90 s. The per-session
+storm count (contract §8) is `[0]`: the session took its own candidate back.
+
+**Status (round 3, 2026-09-27).** Committed as `platform-tests/long_stop_in_traffic.json`
+and replayed by both runners' "every fixture" loops, in the same change that brought Android
+§3a's stop-only row; before that Android ended it in `CANDIDATE_PENDING`, a parity break. iOS
+keeps one named test on the file ("long_stop_in_traffic: a jam that moves on retires its
+silent candidate") for what the loop does not check: the candidate was `low` and silent, it
+was withdrawn, and the storm count is `[0]`.
+
 ## 18. Field Tuning
 Before public launch target at least:
 - 100+ combined real parking sessions
@@ -984,6 +1370,21 @@ iPhone15,3 trace 2개에 대해서만 확인됐고, **둘 다 지하철이다. �
 
 이 네 가지가 채워지기 전까지 위 임계값은 **가설 위에 선 출발점**으로 취급한다.
 
+**Field drafts that no conformant engine can pass (2026-09-27).** Of the ten drafts labelled
+"parked", three end without a candidate on both engines, identically at every event, and the
+reason is the recording, not the engine. They are parity inputs, not accuracy targets:
+
+| draft | outcome on both | why |
+|---|---|---|
+| s02 | `IDLE` | old sparse capture. The session opened at `vehicle_enter` t=1908 and hit the 2-hour ceiling at 9108; the real final drive (8696–9068) and its stop have no vehicle evidence of their own, and §3a opens a session only on `vehicle_enter` or a link |
+| s06 | `IDLE` | the drive goes underground (no speed after 2737, accuracy 429→1414 m); `movementIdle` opens the transition and nothing — no walk, no stillness, no exit, no speed-bearing fix — arrives before it lapses. GPS degradation alone cannot confirm (§6) |
+| s31 | `PARKING_TRANSITION` | the recording ends 23 s into the 300 s window, with no confirming signal yet. Check whether the source trace was split (contract §9 `splitFrom`) before re-converting |
+
+The old-capture drafts (s02–s17) have sparse, km-grade fixes: the §7 fallback rejects pairs
+more than 180 s apart and displacements inside 2σ, so movement is rarely registered without
+speed and those outcomes test the capture more than the engine. Do not tune `maximumBaseline`
+or the 2σ floor to them; the s22+ dense-capture drafts are the evidence.
+
 Production analytics uploads only coarse outcomes.
 
 ## 19. Battery Gate
@@ -998,3 +1399,75 @@ Tools:
 - Android: Battery Historian/Perfetto/system battery stats where appropriate
 
 Do not invent fixed percentage gate before P0 baseline. Define threshold from reference devices and repeatable test protocol.
+
+**The bounded capture runs through `PARKING_TRANSITION` (2026-09-27).** It used to stop at
+the transition's entry; it now stops when the transition decides (§3a "The
+`PARKING_TRANSITION` rows, exactly"). That adds at most `transitionWindow` — 300 s — of
+capture per stop, and a red light that resumes costs nothing extra because the capture would
+have been restarted anyway. Measure it in the "underground arrival" protocol above.
+
+A stop-only candidate keeps the same capture until that same deadline (§3a "A stop-only
+candidate can still be a long light"), so the bound per stop is unchanged: capture ends
+`transitionWindow` after the drive's end at the latest, whichever of the two states holds it.
+
+**The capture runs exactly while the engine wants it (round 3, 2026-09-27).** Each engine
+exposes one answer — iOS `snapshot().isLocationCaptureWanted`, Android
+`LocationCaptureModePolicy.modeWantedBy(state)` — and it is true in `DRIVING_CANDIDATE`,
+`DRIVING`, `DEPARTURE_CANDIDATE`, `PARKING_TRANSITION` while its capture is held, `PARKED`
+while a `vehicle_enter` has opened a departure's evidence, and `CANDIDATE_PENDING` **only**
+while a stop-only window is open and still holds the capture. Nowhere else. Two consequences
+bind the adapters:
+
+- **A motion event the engine did not act on opens nothing.** An IN_VEHICLE EXIT that arrives
+  in `IDLE`, `CANDIDATE_PENDING` (a candidate the car link or a walk already produced), after a
+  `DRIVING_CANDIDATE` lapsed (every bus or subway ride the Transition API calls IN_VEHICLE),
+  or in `PARKED`, must not start a kerb capture: the engine folds no fix outside a session
+  and would drop every one of them. iOS never opened one — its capture starts only on the
+  engine's `startBoundedLocationCapture` effect — and Android must not either.
+- **After every event batch the adapter releases any capture the engine no longer wants**
+  (iOS `releaseCaptureIfIdle`), not only when the want changed. That is what closes a capture
+  whose owner went away with no state change: the stop-only window's deadline, a `walking_enter`
+  or `vehicle_exit` that closed it.
+
+**How exactly (round 4, 2026-09-27).** The two bullets above stay normative for both
+adapters; an adapter that follows only want *edges*, or that opens a capture and releases it
+one batch later, does not meet them — the hard limits of a capture profile bound a defect's
+cost, they do not make it part of the design. Four precise rules:
+
+1. **The want is read from a settled state.** Any question "does the engine want a capture
+   now?" is asked of the state the engine would hold at that instant — after the windows due
+   by `now` have fired (a `timer_tick(now)` folded first) — never of the state as it was last
+   stored. iOS gets this for free: `handle` ticks before and after the edge, and the
+   coordinator reads `isLocationCaptureWanted` only after a `handle`. Android's pre-batch
+   question (`TransitionEventIngestor.engineWantsCapture`) must settle the stored state the
+   same way: a stored `DRIVING_CANDIDATE` whose `drivingCandidateWindow` ran out, or a stop-only
+   window whose deadline passed with no tick, wants nothing.
+2. **"Still holds the capture" is engine state.** iOS keeps it as `CandidateResume.isCapturing`
+   (a capture loss closes the iOS window outright, and a relaunched iOS engine rebuilds none);
+   Android keeps the same bit on
+   `StopOnlyResumeWindow`. A lost capture clears it (§3a "The window lives exactly as long as
+   its capture"). `CANDIDATE_PENDING` with a window that no longer holds its capture wants
+   nothing.
+3. **Release after every batch, whatever the edge.** After each batch, if the settled want is
+   none and a capture the *engine* opened is running, the adapter releases it. A capture the
+   diagnostics screen forced on is not the engine's and is not released by this rule.
+4. **Open only on a settled want.** A capture is started only when the batch's settled want is
+   non-null (iOS: only on the engine's `startBoundedLocationCapture`). A motion event the
+   engine did not act on leaves the want null and therefore opens nothing — not even for one
+   batch.
+
+Pinned by tests on each side: iOS `DrivingSessionLifecycleTests` "A fix after a movementIdle
+entry…" (the deadline releases with no state change) and `ParkingTransitionEvidenceTests`
+"A relaunch inside a stop-only window forfeits the resume…" (a restored window wants
+nothing); Android must pin IN_VEHICLE EXIT over a stored lapsed `DRIVING_CANDIDATE`, and over
+a stop-only window whose capture already ended, registering no capture at all.
+
+**What one stop costs, per platform.** iOS keeps its single Core Location session
+(`kCLLocationAccuracyBestForNavigation`, no distance filter, ~1 Hz) running through the
+transition and any stop-only window: at most 300 s past the drive's end. Android's
+`PARKING_TRANSITION` profile is HIGH accuracy every 5 s (fastest 3 s) under the location
+foreground service, bounded by `durationMillis = transitionWindow` (300 s) **and**
+`maxUpdates = 60` — up to 60 high-accuracy fixes per stop, five times the old 60 s / 5-fix
+profile. That price is accepted only for a stop the engine is actually deciding; a kerb
+capture the engine does not want (above) is a defect, not part of this budget. Both numbers
+go into the "underground arrival" and "mixed 16h day" protocols.

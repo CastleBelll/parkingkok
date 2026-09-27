@@ -331,7 +331,10 @@ actor BackgroundCoordinator {
     /// only has to cover the case where fixes stop arriving.
     func handleDrivingFix(_ fix: LocationFix) async {
         let now = dateProvider.now
-        guard await engine.snapshot().driving != nil else { return }
+        // Not `driving != nil`: docs/05 §3a / §19 keep the capture running while
+        // `PARKING_TRANSITION` decides, and the fix that answers it — a stop, or the car
+        // moving off again — is exactly the one that arrives with no drive open.
+        guard await engine.snapshot().isLocationCaptureWanted else { return }
         recordTrace { $0.record(fix: fix) }
         await apply(engine.handle(.location(fix), now: now), now: now)
     }
@@ -707,7 +710,7 @@ actor BackgroundCoordinator {
 
     /// Core Location must never be left running for a session the engine no longer has.
     private func releaseCaptureIfIdle() async {
-        guard await engine.snapshot().driving == nil else { return }
+        guard await !engine.snapshot().isLocationCaptureWanted else { return }
         await locationCapture?.stop()
         snapshot.isCapturingDrivingLocation = await locationCapture?.isActive() ?? false
         snapshot.captureHealth = await locationCapture?.health() ?? .none
@@ -727,7 +730,8 @@ actor BackgroundCoordinator {
         snapshot.reliableLocationUpdateCount = state.reliableLocationUpdateCount
         snapshot.reliableLocationRejectCount = state.reliableLocationRejectCount
         snapshot.lastReliableLocationRejection = state.lastReliableLocationRejection
-        guard let evidence = state.driving else { return }
+        // The transition's drive keeps recording (§3a), so its counters keep moving too.
+        guard let evidence = state.driving ?? state.transitionDrive else { return }
         snapshot.drivingFixCount = evidence.fixCount
         snapshot.drivingMovingSampleCount = evidence.movingSampleCount
         snapshot.drivingSpeedAvailableCount = evidence.speedAvailableCount

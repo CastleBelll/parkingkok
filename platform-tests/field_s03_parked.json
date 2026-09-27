@@ -1,0 +1,942 @@
+{
+ "name": "field_s03_parked",
+ "initialState": "IDLE",
+ "events": [
+  {
+   "type": "stationary_enter",
+   "t": 0,
+   "confidence": "high"
+  },
+  {
+   "type": "walking_enter",
+   "t": 495,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_exit",
+   "t": 495,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_enter",
+   "t": 606,
+   "confidence": "high"
+  },
+  {
+   "type": "walking_enter",
+   "t": 952,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_exit",
+   "t": 952,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_enter",
+   "t": 997,
+   "confidence": "high"
+  },
+  {
+   "type": "walking_enter",
+   "t": 998,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_exit",
+   "t": 998,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_enter",
+   "t": 1060,
+   "confidence": "high"
+  },
+  {
+   "type": "walking_enter",
+   "t": 1234,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_exit",
+   "t": 1234,
+   "confidence": "high"
+  },
+  {
+   "type": "vehicle_enter",
+   "t": 1303,
+   "confidence": "high"
+  },
+  {
+   "type": "vehicle_exit",
+   "t": 1431,
+   "confidence": "high"
+  },
+  {
+   "type": "walking_enter",
+   "t": 1431,
+   "confidence": "high"
+  },
+  {
+   "type": "vehicle_enter",
+   "t": 1436,
+   "confidence": "medium"
+  },
+  {
+   "type": "stationary_enter",
+   "t": 1537,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_exit",
+   "t": 1539,
+   "confidence": "high"
+  },
+  {
+   "type": "location",
+   "t": 2022,
+   "accuracy": 118.19665796662647
+  },
+  {
+   "type": "location",
+   "t": 2342,
+   "accuracy": 1560
+  },
+  {
+   "type": "location",
+   "t": 2675,
+   "accuracy": 52.00252575537968
+  },
+  {
+   "type": "location",
+   "t": 2991,
+   "accuracy": 1000
+  },
+  {
+   "type": "stationary_enter",
+   "t": 2991,
+   "confidence": "high"
+  },
+  {
+   "type": "location",
+   "t": 3161,
+   "accuracy": 56.137649684166625
+  },
+  {
+   "type": "location",
+   "t": 3179,
+   "accuracy": 40.57123027410995,
+   "speed": 0,
+   "distanceFromPreviousM": 20.62448490353923
+  },
+  {
+   "type": "location",
+   "t": 3189,
+   "accuracy": 54.893601557844335,
+   "distanceFromPreviousM": 35.642301736070564
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 3189,
+   "fromBucket": "good",
+   "toBucket": "poor"
+  },
+  {
+   "type": "location",
+   "t": 3204,
+   "accuracy": 14.245954590590772,
+   "speed": 11.101282119734096,
+   "distanceFromPreviousM": 170.30512194182987
+  },
+  {
+   "type": "location",
+   "t": 3220,
+   "accuracy": 14.245954590642096,
+   "speed": 6.320142745968566,
+   "distanceFromPreviousM": 153.27451300149386
+  },
+  {
+   "type": "location",
+   "t": 3236,
+   "accuracy": 7.999998736564703,
+   "speed": 9.780043110066693,
+   "distanceFromPreviousM": 124.75094688926404
+  },
+  {
+   "type": "location",
+   "t": 3252,
+   "accuracy": 7.999999988598495,
+   "speed": 0.28296597078123337,
+   "distanceFromPreviousM": 51.214133805933606
+  },
+  {
+   "type": "location",
+   "t": 3268,
+   "accuracy": 8,
+   "speed": 0,
+   "distanceFromPreviousM": 1.4060153073525854
+  },
+  {
+   "type": "location",
+   "t": 3284,
+   "accuracy": 7.999999999999999,
+   "speed": 0,
+   "distanceFromPreviousM": 0.17376070769421456
+  },
+  {
+   "type": "location",
+   "t": 3291,
+   "accuracy": 8
+  },
+  {
+   "type": "stationary_exit",
+   "t": 3291,
+   "confidence": "high"
+  },
+  {
+   "type": "location",
+   "t": 3307,
+   "accuracy": 8,
+   "speed": 0,
+   "distanceFromPreviousM": 0.5487875003900072
+  },
+  {
+   "type": "location",
+   "t": 3323,
+   "accuracy": 7.9999999190939235,
+   "speed": 3.5860489153422717,
+   "distanceFromPreviousM": 12.326486015614758
+  },
+  {
+   "type": "location",
+   "t": 3338,
+   "accuracy": 7.999999779568994,
+   "speed": 11.44157693716105,
+   "distanceFromPreviousM": 120.89476669315054
+  },
+  {
+   "type": "location",
+   "t": 3353,
+   "accuracy": 7.999999774614698,
+   "speed": 9.050466187433676,
+   "distanceFromPreviousM": 203.44069040796924
+  },
+  {
+   "type": "location",
+   "t": 3368,
+   "accuracy": 8,
+   "speed": 0,
+   "distanceFromPreviousM": 35.19481146092588
+  },
+  {
+   "type": "location",
+   "t": 3383,
+   "accuracy": 7.999999371348539,
+   "speed": 7.450625621453977,
+   "distanceFromPreviousM": 70.64333305223899
+  },
+  {
+   "type": "location",
+   "t": 3399,
+   "accuracy": 7.999999817129456,
+   "speed": 0.8414524794102675,
+   "distanceFromPreviousM": 82.04619415448745
+  },
+  {
+   "type": "location",
+   "t": 3415,
+   "accuracy": 8,
+   "speed": 0,
+   "distanceFromPreviousM": 0.1924640892407085
+  },
+  {
+   "type": "location",
+   "t": 3431,
+   "accuracy": 8,
+   "speed": 0,
+   "distanceFromPreviousM": 0
+  },
+  {
+   "type": "location",
+   "t": 3447,
+   "accuracy": 7.999999999999999,
+   "speed": 0,
+   "distanceFromPreviousM": 0
+  },
+  {
+   "type": "location",
+   "t": 3462,
+   "accuracy": 7.999999999999999,
+   "speed": 0,
+   "distanceFromPreviousM": 0
+  },
+  {
+   "type": "location",
+   "t": 3477,
+   "accuracy": 8,
+   "speed": 0,
+   "distanceFromPreviousM": 0
+  },
+  {
+   "type": "location",
+   "t": 3492,
+   "accuracy": 7.999999999667164,
+   "speed": 0.21129017304932332,
+   "distanceFromPreviousM": 1.6615459625697964
+  },
+  {
+   "type": "location",
+   "t": 3507,
+   "accuracy": 8,
+   "speed": 0,
+   "distanceFromPreviousM": 0.22844774065529677
+  },
+  {
+   "type": "location",
+   "t": 3523,
+   "accuracy": 7.999999449615608,
+   "speed": 5.560899520630337,
+   "distanceFromPreviousM": 23.204452734278863
+  },
+  {
+   "type": "location",
+   "t": 3539,
+   "accuracy": 7.99999862649562,
+   "speed": 12.901327535007109,
+   "distanceFromPreviousM": 154.9416410133419
+  },
+  {
+   "type": "location",
+   "t": 3555,
+   "accuracy": 7.999998494852801,
+   "speed": 14.243394511612712,
+   "distanceFromPreviousM": 231.15010018817253
+  },
+  {
+   "type": "location",
+   "t": 3571,
+   "accuracy": 7.999999999932161,
+   "speed": 0.011800771223034561,
+   "distanceFromPreviousM": 93.601695052884
+  },
+  {
+   "type": "location",
+   "t": 3587,
+   "accuracy": 8,
+   "speed": 0,
+   "distanceFromPreviousM": 0.07724441113637542
+  },
+  {
+   "type": "location",
+   "t": 3592,
+   "accuracy": 8
+  },
+  {
+   "type": "stationary_enter",
+   "t": 3592,
+   "confidence": "high"
+  },
+  {
+   "type": "location",
+   "t": 3608,
+   "accuracy": 7.999999278456605,
+   "speed": 8.67827862073026,
+   "distanceFromPreviousM": 40.296955786313745
+  },
+  {
+   "type": "location",
+   "t": 3623,
+   "accuracy": 7.999999626648152,
+   "speed": 12.149356121502674,
+   "distanceFromPreviousM": 174.34165995428845
+  },
+  {
+   "type": "location",
+   "t": 3638,
+   "accuracy": 7.999999892660163,
+   "speed": 12.317931113130621,
+   "distanceFromPreviousM": 173.22087204493562
+  },
+  {
+   "type": "location",
+   "t": 3653,
+   "accuracy": 7.999999711699932,
+   "speed": 14.12493062961983,
+   "distanceFromPreviousM": 171.16382275133702
+  },
+  {
+   "type": "location",
+   "t": 3669,
+   "accuracy": 7.999999769719719,
+   "speed": 13.554363464762849,
+   "distanceFromPreviousM": 235.0594869274825
+  },
+  {
+   "type": "location",
+   "t": 3685,
+   "accuracy": 7.999999999763089,
+   "speed": 0.03943509113671449,
+   "distanceFromPreviousM": 79.37295264124272
+  },
+  {
+   "type": "location",
+   "t": 3701,
+   "accuracy": 8.315277316399177,
+   "speed": 0,
+   "distanceFromPreviousM": 0.04313269515347953
+  },
+  {
+   "type": "location",
+   "t": 3716,
+   "accuracy": 8.206306308527733,
+   "speed": 0,
+   "distanceFromPreviousM": 0
+  },
+  {
+   "type": "location",
+   "t": 3731,
+   "accuracy": 8.095579903467533,
+   "speed": 0,
+   "distanceFromPreviousM": 0
+  },
+  {
+   "type": "location",
+   "t": 3746,
+   "accuracy": 8.044281331056025,
+   "speed": 0,
+   "distanceFromPreviousM": 0
+  },
+  {
+   "type": "location",
+   "t": 3761,
+   "accuracy": 8.041621615118409,
+   "speed": 0,
+   "distanceFromPreviousM": 0
+  },
+  {
+   "type": "location",
+   "t": 3776,
+   "accuracy": 8.042801333816591,
+   "speed": 0,
+   "distanceFromPreviousM": 0
+  },
+  {
+   "type": "location",
+   "t": 3791,
+   "accuracy": 8.019829480682343,
+   "speed": 0.4073986371482125,
+   "distanceFromPreviousM": 0.678783097716297
+  },
+  {
+   "type": "location",
+   "t": 3806,
+   "accuracy": 8.000188643299406,
+   "speed": 11.172555587934003,
+   "distanceFromPreviousM": 120.4055249799195
+  },
+  {
+   "type": "location",
+   "t": 3821,
+   "accuracy": 8.000000335804094,
+   "speed": 6.068255517740715,
+   "distanceFromPreviousM": 123.46505191472602
+  },
+  {
+   "type": "location",
+   "t": 3836,
+   "accuracy": 7.999999965498482,
+   "speed": 11.679728705830817,
+   "distanceFromPreviousM": 141.16699428330446
+  },
+  {
+   "type": "location",
+   "t": 3851,
+   "accuracy": 9.311547172623596,
+   "speed": 7.0351277345017245,
+   "distanceFromPreviousM": 182.3036447326963
+  },
+  {
+   "type": "location",
+   "t": 3866,
+   "accuracy": 9.339932221989061,
+   "speed": 0.007295406855310532,
+   "distanceFromPreviousM": 31.38721741105223
+  },
+  {
+   "type": "location",
+   "t": 3881,
+   "accuracy": 8.640063332130135,
+   "speed": 0,
+   "distanceFromPreviousM": 0.05097959969317761
+  },
+  {
+   "type": "location",
+   "t": 3893,
+   "accuracy": 8.88646227805074
+  },
+  {
+   "type": "location",
+   "t": 3909,
+   "accuracy": 9.171179265010874,
+   "speed": 0,
+   "distanceFromPreviousM": 0
+  },
+  {
+   "type": "location",
+   "t": 3924,
+   "accuracy": 9.745636282872347,
+   "speed": 0,
+   "distanceFromPreviousM": 0
+  },
+  {
+   "type": "location",
+   "t": 3939,
+   "accuracy": 9.62584718862824,
+   "speed": 0,
+   "distanceFromPreviousM": 0
+  },
+  {
+   "type": "location",
+   "t": 3955,
+   "accuracy": 9.905473210294396,
+   "speed": 0.6491228245247741,
+   "distanceFromPreviousM": 0.792635482042675
+  },
+  {
+   "type": "location",
+   "t": 3970,
+   "accuracy": 8.030402930409261,
+   "speed": 11.896109457705855,
+   "distanceFromPreviousM": 114.40887040644252
+  },
+  {
+   "type": "location",
+   "t": 3985,
+   "accuracy": 8.000106616809035,
+   "speed": 16.650484798225577,
+   "distanceFromPreviousM": 232.47461325720278
+  },
+  {
+   "type": "location",
+   "t": 4000,
+   "accuracy": 8.000000068834472,
+   "speed": 14.760483233857343,
+   "distanceFromPreviousM": 226.2293567519004
+  },
+  {
+   "type": "location",
+   "t": 4015,
+   "accuracy": 7.9999997943051735,
+   "speed": 10.19522463062139,
+   "distanceFromPreviousM": 185.783637623283
+  },
+  {
+   "type": "location",
+   "t": 4030,
+   "accuracy": 7.999999690400912,
+   "speed": 12.453813524100317,
+   "distanceFromPreviousM": 181.95105853716754
+  },
+  {
+   "type": "location",
+   "t": 4045,
+   "accuracy": 7.999999642156479,
+   "speed": 12.932516402556432,
+   "distanceFromPreviousM": 189.66222688427908
+  },
+  {
+   "type": "location",
+   "t": 4060,
+   "accuracy": 7.999999929339254,
+   "speed": 3.2538453263823786,
+   "distanceFromPreviousM": 103.68918226346497
+  },
+  {
+   "type": "location",
+   "t": 4075,
+   "accuracy": 7.999999952857142,
+   "speed": 3.863594257496338,
+   "distanceFromPreviousM": 75.8558640926546
+  },
+  {
+   "type": "location",
+   "t": 4091,
+   "accuracy": 8.000000000000002,
+   "speed": 0,
+   "distanceFromPreviousM": 7.381613006164063
+  },
+  {
+   "type": "location",
+   "t": 4107,
+   "accuracy": 8.000000000000002,
+   "speed": 0,
+   "distanceFromPreviousM": 6.098891166485644
+  },
+  {
+   "type": "location",
+   "t": 4123,
+   "accuracy": 8.000000000000002,
+   "speed": 0,
+   "distanceFromPreviousM": 0.8540715940509129
+  },
+  {
+   "type": "location",
+   "t": 4138,
+   "accuracy": 7.999999999523464,
+   "speed": 0.08554769563834179,
+   "distanceFromPreviousM": 0.5731680978964756
+  },
+  {
+   "type": "location",
+   "t": 4153,
+   "accuracy": 8.000000000000002,
+   "speed": 0,
+   "distanceFromPreviousM": 2.131750094740412
+  },
+  {
+   "type": "location",
+   "t": 4168,
+   "accuracy": 8.000000000000002,
+   "speed": 0,
+   "distanceFromPreviousM": 1.2891734966655501
+  },
+  {
+   "type": "location",
+   "t": 4183,
+   "accuracy": 8.000000000000002,
+   "speed": 0,
+   "distanceFromPreviousM": 0
+  },
+  {
+   "type": "location",
+   "t": 4194,
+   "accuracy": 8.000000000000002
+  },
+  {
+   "type": "location",
+   "t": 4210,
+   "accuracy": 8.000000000000002,
+   "speed": 0,
+   "distanceFromPreviousM": 0
+  },
+  {
+   "type": "location",
+   "t": 4225,
+   "accuracy": 7.999999299590117,
+   "speed": 5.989715151922423,
+   "distanceFromPreviousM": 30.870549118909697
+  },
+  {
+   "type": "location",
+   "t": 4240,
+   "accuracy": 7.999999636951135,
+   "speed": 5.413411062283148,
+   "distanceFromPreviousM": 124.03186742466585
+  },
+  {
+   "type": "location",
+   "t": 4255,
+   "accuracy": 7.99999989946139,
+   "speed": 3.968805744658199,
+   "distanceFromPreviousM": 54.05850879293685
+  },
+  {
+   "type": "location",
+   "t": 4270,
+   "accuracy": 7.99999986913014,
+   "speed": 4.678162498810027,
+   "distanceFromPreviousM": 54.733765038524496
+  },
+  {
+   "type": "location",
+   "t": 4285,
+   "accuracy": 8.000000009412666,
+   "speed": 3.7329225257245833,
+   "distanceFromPreviousM": 43.68388567425644
+  },
+  {
+   "type": "location",
+   "t": 4300,
+   "accuracy": 8.000000024235998,
+   "speed": 2.72395790494107,
+   "distanceFromPreviousM": 50.34461356965104
+  },
+  {
+   "type": "location",
+   "t": 4315,
+   "accuracy": 13.775941011322786,
+   "speed": 1.7982221822721756,
+   "distanceFromPreviousM": 10.361630521142525
+  },
+  {
+   "type": "location",
+   "t": 4331,
+   "accuracy": 8.882103520337715,
+   "speed": 0.2636992337987934,
+   "distanceFromPreviousM": 33.254497558772314
+  },
+  {
+   "type": "location",
+   "t": 4346,
+   "accuracy": 8.652026163767845,
+   "speed": 0,
+   "distanceFromPreviousM": 0.32740588428503614
+  },
+  {
+   "type": "location",
+   "t": 4361,
+   "accuracy": 8.923932663285404,
+   "speed": 0,
+   "distanceFromPreviousM": 0
+  },
+  {
+   "type": "location",
+   "t": 4376,
+   "accuracy": 8.77805373871086,
+   "speed": 0,
+   "distanceFromPreviousM": 0
+  },
+  {
+   "type": "location",
+   "t": 4391,
+   "accuracy": 8.611986274580829,
+   "speed": 0,
+   "distanceFromPreviousM": 0
+  },
+  {
+   "type": "location",
+   "t": 4406,
+   "accuracy": 8.283527873991437,
+   "speed": 0,
+   "distanceFromPreviousM": 0
+  },
+  {
+   "type": "location",
+   "t": 4421,
+   "accuracy": 8.243267960773416,
+   "speed": 0.8487014495627073,
+   "distanceFromPreviousM": 20.511393038221495
+  },
+  {
+   "type": "location",
+   "t": 4436,
+   "accuracy": 8.38707509081894,
+   "speed": 0.4177470905697695,
+   "distanceFromPreviousM": 17.571870109725552
+  },
+  {
+   "type": "location",
+   "t": 4451,
+   "accuracy": 8.514094424356175,
+   "speed": 0.5261956851412142,
+   "distanceFromPreviousM": 18.43072631305551
+  },
+  {
+   "type": "location",
+   "t": 4467,
+   "accuracy": 8.760244155881194,
+   "speed": 0,
+   "distanceFromPreviousM": 9.990290201699464
+  },
+  {
+   "type": "location",
+   "t": 4482,
+   "accuracy": 8.402866421551847,
+   "speed": 0.13926080604019908,
+   "distanceFromPreviousM": 9.472558948525169
+  },
+  {
+   "type": "location",
+   "t": 4497,
+   "accuracy": 8.969890872875363,
+   "speed": 1.422559546738713,
+   "distanceFromPreviousM": 13.238769710508345
+  },
+  {
+   "type": "location",
+   "t": 4507,
+   "accuracy": 34.58718351973278,
+   "speed": 0,
+   "distanceFromPreviousM": 51.1634121654128
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 4507,
+   "fromBucket": "good",
+   "toBucket": "fair"
+  },
+  {
+   "type": "location",
+   "t": 4508,
+   "accuracy": 39.28917304674884,
+   "speed": 0,
+   "distanceFromPreviousM": 0.14066300616348537
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 4508,
+   "fromBucket": "fair",
+   "toBucket": "poor"
+  },
+  {
+   "type": "location",
+   "t": 4524,
+   "accuracy": 7.916440191995526,
+   "distanceFromPreviousM": 14.057962928953675
+  },
+  {
+   "type": "location",
+   "t": 4540,
+   "accuracy": 8.505954640643695,
+   "distanceFromPreviousM": 11.188061016388595
+  },
+  {
+   "type": "location",
+   "t": 4558,
+   "accuracy": 14.295014,
+   "distanceFromPreviousM": 13.640608836939018
+  },
+  {
+   "type": "location",
+   "t": 4573,
+   "accuracy": 12.840251515079109,
+   "distanceFromPreviousM": 18.990652395515387
+  },
+  {
+   "type": "location",
+   "t": 4585,
+   "accuracy": 20.5745186965541,
+   "distanceFromPreviousM": 7.335697689495277
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 4585,
+   "fromBucket": "good",
+   "toBucket": "fair"
+  },
+  {
+   "type": "location",
+   "t": 4601,
+   "accuracy": 15.04131897345018,
+   "distanceFromPreviousM": 8.973957324746753
+  },
+  {
+   "type": "location",
+   "t": 4610,
+   "accuracy": 22.775691560682183,
+   "distanceFromPreviousM": 6.491215448387372
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 4610,
+   "fromBucket": "good",
+   "toBucket": "fair"
+  },
+  {
+   "type": "location",
+   "t": 4611,
+   "accuracy": 21.270033729323483,
+   "distanceFromPreviousM": 7.583687258323208
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 4611,
+   "fromBucket": "good",
+   "toBucket": "fair"
+  },
+  {
+   "type": "location",
+   "t": 4616,
+   "accuracy": 82.5157141482836,
+   "distanceFromPreviousM": 1.5762375266884001
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 4616,
+   "fromBucket": "fair",
+   "toBucket": "poor"
+  },
+  {
+   "type": "location",
+   "t": 4619,
+   "accuracy": 40.98107006514309,
+   "distanceFromPreviousM": 21.024594584002777
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 4619,
+   "fromBucket": "fair",
+   "toBucket": "poor"
+  },
+  {
+   "type": "location",
+   "t": 4635,
+   "accuracy": 21.305022554717556,
+   "distanceFromPreviousM": 46.37052995151277
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 4635,
+   "fromBucket": "good",
+   "toBucket": "fair"
+  },
+  {
+   "type": "location",
+   "t": 4644,
+   "accuracy": 38.140522774037485,
+   "distanceFromPreviousM": 29.04037948435956
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 4644,
+   "fromBucket": "fair",
+   "toBucket": "poor"
+  },
+  {
+   "type": "location",
+   "t": 4648,
+   "accuracy": 99.895014,
+   "distanceFromPreviousM": 12.981482288030168
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 4648,
+   "fromBucket": "fair",
+   "toBucket": "poor"
+  },
+  {
+   "type": "location",
+   "t": 4664,
+   "accuracy": 21.83066369263667,
+   "distanceFromPreviousM": 101.77859195390802
+  },
+  {
+   "type": "location",
+   "t": 4673,
+   "accuracy": 40.095014,
+   "distanceFromPreviousM": 30.664399280787627
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 4673,
+   "fromBucket": "fair",
+   "toBucket": "poor"
+  },
+  {
+   "type": "location",
+   "t": 4676,
+   "accuracy": 44.51282851039832,
+   "distanceFromPreviousM": 3.6896185598978724
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 4676,
+   "fromBucket": "fair",
+   "toBucket": "poor"
+  }
+ ],
+ "expected": {
+  "candidate": true,
+  "finalState": "CANDIDATE_PENDING"
+ }
+}

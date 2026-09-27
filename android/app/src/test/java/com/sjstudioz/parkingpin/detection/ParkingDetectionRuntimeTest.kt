@@ -8,13 +8,18 @@ import com.sjstudioz.parkingpin.data.parking.RoomParkingRepository
 import com.sjstudioz.parkingpin.data.parking.createTestParkingDatabase
 import com.sjstudioz.parkingpin.domain.detection.DetectionEvent
 import com.sjstudioz.parkingpin.domain.detection.DetectionState
+import com.sjstudioz.parkingpin.domain.detection.MotionActivity
 import com.sjstudioz.parkingpin.domain.detection.MotionDomainEvent
 import com.sjstudioz.parkingpin.domain.detection.MotionEventKind
 import com.sjstudioz.parkingpin.domain.detection.ParkingDetectionEngine
+import com.sjstudioz.parkingpin.domain.detection.TransitionKind
+import com.sjstudioz.parkingpin.domain.location.LocationSample
+import com.sjstudioz.parkingpin.domain.location.LocationSessionMode
 import com.sjstudioz.parkingpin.domain.parking.ConfidenceBucket
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -168,6 +173,257 @@ class ParkingDetectionRuntimeTest {
     }
 
     @Test
+    fun `the capture follows the engine out of the transition`() = runTest {
+        // Arrange — docs/05 §3a / §19: the runtime reports what the engine wants of the
+        // capture whenever that changes, because no motion event marks these edges.
+        val follows = mutableListOf<Pair<LocationSessionMode?, LocationSessionMode?>>()
+        val withCapture = ParkingDetectionRuntime(
+            store = store,
+            candidates = { coordinator },
+            followLocationCapture = { before, after -> follows += before to after },
+        )
+
+        // Act
+        withCapture.handleMotion(motion(MotionEventKind.ENTERED_VEHICLE, START))
+        withCapture.handleMotion(motion(MotionEventKind.EXITED_VEHICLE, START + DRIVE_MILLIS))
+        withCapture.handleMotion(motion(MotionEventKind.STARTED_WALKING, START + DRIVE_MILLIS + 20_000))
+
+        // Assert — the exit batch promotes and ends the drive at once; the walk confirms.
+        assertEquals(
+            listOf(
+                null to LocationSessionMode.DRIVING_CANDIDATE,
+                LocationSessionMode.DRIVING_CANDIDATE to LocationSessionMode.PARKING_TRANSITION,
+                LocationSessionMode.PARKING_TRANSITION to null,
+            ),
+            follows,
+        )
+    }
+
+    @Test
+    fun `a stop-only candidate keeps the capture until transitionWindow after the drive ended`() = runTest {
+        // Arrange — docs/05 §3a "A stop-only candidate can still be a long light" rule 1 and
+        // §19: the resume rows are location rows, so the capture outlives the candidate until
+        // the transition's own deadline, and is released at the tick that reaches it.
+        val follows = mutableListOf<Pair<LocationSessionMode?, LocationSessionMode?>>()
+        val withCapture = ParkingDetectionRuntime(
+            store = store,
+            candidates = { coordinator },
+            followLocationCapture = { before, after -> follows += before to after },
+        )
+        driveToStopOnlyCandidate(withCapture)
+        val deadline = STOP_ONLY_DRIVE_END + ParkingDetectionEngine.TRANSITION_WINDOW_MILLIS
+
+        // Act
+        withCapture.handleTick(deadline - 1)
+        val beforeDeadline = follows.edges()
+        withCapture.handleTick(deadline)
+
+        // Assert
+        assertEquals(DetectionState.CANDIDATE_PENDING, withCapture.restore().state)
+        assertEquals(
+            "no release while the window is open",
+            listOf(
+                null to LocationSessionMode.DRIVING_CANDIDATE,
+                LocationSessionMode.DRIVING_CANDIDATE to LocationSessionMode.DRIVING,
+                LocationSessionMode.DRIVING to LocationSessionMode.PARKING_TRANSITION,
+            ),
+            beforeDeadline,
+        )
+        assertEquals(LocationSessionMode.PARKING_TRANSITION to null, follows.last())
+        assertEquals(4, follows.edges().size)
+    }
+
+    @Test
+    fun `the capture is reconciled after every batch, not only when the want changed`() = runTest {
+        // Arrange — docs/05 §19: a capture whose owner went away with no state change (a
+        // stop-only window closed at a deadline no event reached, an exit the engine refused)
+        // has no want edge, so an edge-only follow would never release it.
+        val follows = mutableListOf<Pair<LocationSessionMode?, LocationSessionMode?>>()
+        val withCapture = ParkingDetectionRuntime(
+            store = store,
+            candidates = { coordinator },
+            followLocationCapture = { before, after -> follows += before to after },
+        )
+
+        // Act — two batches that leave the engine where it was.
+        withCapture.handleMotion(motion(MotionEventKind.STARTED_WALKING, START))
+        withCapture.handleMotion(motion(MotionEventKind.BECAME_STATIONARY, START + 1_000))
+
+        // Assert
+        assertEquals(listOf<Pair<LocationSessionMode?, LocationSessionMode?>>(null to null, null to null), follows)
+    }
+
+    @Test
+    fun `a stop-only resume window survives a process death while its capture does`() = runTest {
+        // Arrange — docs/05 §3a "The window lives exactly as long as its capture": on Android
+        // the Fused Location request is a PendingIntent Play services keeps delivering to a new
+        // process, so the window a broadcast-started process reloads is still backed by one.
+        driveToStopOnlyCandidate(runtime)
+        val candidate = assertNotNull(store.readCandidateOnce())
+        val restarted = ParkingDetectionRuntime(store, { coordinator }, captureRunning = { true })
+
+        // Act — the two reported-moving fixes that resume the drive.
+        restarted.handleLocations(listOf(fix(STOP_ONLY_DRIVE_END + 20_000, speedMps = 9f)))
+        restarted.handleLocations(listOf(fix(STOP_ONLY_DRIVE_END + 30_000, speedMps = 9f)))
+
+        // Assert
+        assertEquals(DetectionState.DRIVING, restarted.restore().state)
+        assertEquals(listOf(candidate.id), notifier.withdrawn)
+    }
+
+    @Test
+    fun `a stop-only resume window whose capture is gone closes and the candidate stays`() = runTest {
+        // Arrange — reboot, force-stop, app update or a revoked permission took the capture:
+        // §3a rule 4's lost capture — the window goes, the candidate stays — before any event
+        // of the new process is handled. §19: that window wants no capture either.
+        driveToStopOnlyCandidate(runtime)
+        val candidate = assertNotNull(store.readCandidateOnce())
+        val follows = mutableListOf<Pair<LocationSessionMode?, LocationSessionMode?>>()
+        val restarted = ParkingDetectionRuntime(
+            store = store,
+            candidates = { coordinator },
+            followLocationCapture = { before, after -> follows += before to after },
+            captureRunning = { false },
+        )
+
+        // Act
+        val seen = restarted.restore()
+        restarted.handleLocations(listOf(fix(STOP_ONLY_DRIVE_END + 20_000, speedMps = 9f)))
+        restarted.handleLocations(listOf(fix(STOP_ONLY_DRIVE_END + 30_000, speedMps = 9f)))
+
+        // Assert
+        assertNull("closed before the first event", seen.stopOnlyResumeWindow)
+        val state = restarted.restore()
+        assertNull(state.stopOnlyResumeWindow)
+        assertEquals(DetectionState.CANDIDATE_PENDING, state.state)
+        assertEquals(candidate, store.readCandidateOnce())
+        assertEquals(emptyList<String>(), notifier.withdrawn)
+        assertEquals(listOf<Pair<LocationSessionMode?, LocationSessionMode?>>(null to null, null to null), follows)
+    }
+
+    @Test
+    fun `a reboot inside a stop-only window closes it`() = runTest {
+        // Arrange — the whole Android path: the recovery receiver tells the controller the
+        // system dropped its request, and the runtime reads the capture from the controller.
+        val registrar = FakeLocationSessionRegistrar()
+        val controller = FusedLocationSessionController(store, registrar, clock)
+        val withCapture = ParkingDetectionRuntime(
+            store = store,
+            candidates = { coordinator },
+            followLocationCapture = { before, after -> controller.followEngine(before, after) },
+            captureRunning = { controller.isCaptureRunning() },
+        )
+        controller.onMotionEvent(motion(MotionEventKind.ENTERED_VEHICLE, START))
+        clock.epochMillis = STOP_ONLY_DRIVE_END
+        driveToStopOnlyCandidate(withCapture)
+
+        // Act
+        controller.reconcileAfterSystemReset()
+        val afterBoot = ParkingDetectionRuntime(
+            store = store,
+            candidates = { coordinator },
+            captureRunning = { controller.isCaptureRunning() },
+        )
+
+        // Assert
+        val state = afterBoot.restore()
+        assertNull(state.stopOnlyResumeWindow)
+        assertEquals(DetectionState.CANDIDATE_PENDING, state.state)
+    }
+
+    @Test
+    fun `a stop-only resume window still resumes within the process that opened it`() = runTest {
+        // Arrange
+        driveToStopOnlyCandidate(runtime)
+        val candidate = assertNotNull(store.readCandidateOnce())
+
+        // Act
+        runtime.handleLocations(listOf(fix(STOP_ONLY_DRIVE_END + 20_000, speedMps = 9f)))
+        runtime.handleLocations(listOf(fix(STOP_ONLY_DRIVE_END + 30_000, speedMps = 9f)))
+
+        // Assert
+        assertEquals(DetectionState.DRIVING, runtime.restore().state)
+        assertEquals(listOf(candidate.id), notifier.withdrawn)
+    }
+
+    @Test
+    fun `an exit inside a stop-only window whose capture ended opens no kerb capture`() = runTest {
+        // Arrange — docs/05 §19 rule 2 and 4: the capture ended while the window was still
+        // open, so the window no longer holds it and wants nothing; the exit that follows must
+        // not open a 300 s high-accuracy capture, not even for one batch.
+        val registrar = FakeLocationSessionRegistrar()
+        val controller = FusedLocationSessionController(store, registrar, clock)
+        val withCapture = ParkingDetectionRuntime(
+            store = store,
+            candidates = { coordinator },
+            followLocationCapture = { before, after -> controller.followEngine(before, after) },
+            captureRunning = { controller.isCaptureRunning() },
+        )
+        controller.onMotionEvent(motion(MotionEventKind.ENTERED_VEHICLE, START))
+        clock.epochMillis = STOP_ONLY_DRIVE_END
+        driveToStopOnlyCandidate(withCapture)
+        controller.stop()
+        val requestsBefore = registrar.requestedConfigs.size
+        val ingestor = TransitionEventIngestor(store, clock, controller, withCapture)
+
+        // Act
+        ingestor.ingest(
+            listOf(
+                TransitionEventIngestor.RawTransition(
+                    MotionActivity.IN_VEHICLE,
+                    TransitionKind.EXIT,
+                    STOP_ONLY_DRIVE_END + 60_000,
+                ),
+            ),
+        )
+
+        // Assert
+        assertEquals("no kerb request was made", requestsBefore, registrar.requestedConfigs.size)
+        assertFalse(registrar.isRegistered)
+        assertNull(withCapture.restore().stopOnlyResumeWindow)
+        assertEquals(DetectionState.CANDIDATE_PENDING, withCapture.restore().state)
+    }
+
+    /**
+     * Sustained vehicle evidence, one moving fix, then stopped fixes: `movementIdle` ends the
+     * drive at [STOP_ONLY_DRIVE_END] and the same stopped fix confirms it — a silent low
+     * candidate with no exit, no link and no walk, which is what opens a stop-only window.
+     */
+    private suspend fun driveToStopOnlyCandidate(target: ParkingDetectionRuntime) {
+        target.handleMotion(motion(MotionEventKind.ENTERED_VEHICLE, START))
+        target.handleTick(START + SUSTAIN)
+        target.handleLocations(listOf(fix(START + 100_000, speedMps = 9f)))
+        target.handleLocations(listOf(fix(START + 200_000, speedMps = 0f)))
+        target.handleLocations(listOf(fix(STOP_ONLY_DRIVE_END, speedMps = 0f)))
+        assertNotNull("a stop-only window is open", target.restore().stopOnlyResumeWindow)
+    }
+
+    /** The want changes only; the per-batch calls in between repeat the same want. */
+    private fun List<Pair<LocationSessionMode?, LocationSessionMode?>>.edges() = filter { it.first != it.second }
+
+    @Test
+    fun `a walk-confirmed candidate releases the capture at once`() = runTest {
+        // Arrange
+        val follows = mutableListOf<Pair<LocationSessionMode?, LocationSessionMode?>>()
+        val withCapture = ParkingDetectionRuntime(
+            store = store,
+            candidates = { coordinator },
+            followLocationCapture = { before, after -> follows += before to after },
+        )
+        withCapture.handleMotion(motion(MotionEventKind.ENTERED_VEHICLE, START))
+        withCapture.handleTick(START + SUSTAIN)
+        withCapture.handleLocations(listOf(fix(START + 100_000, speedMps = 9f)))
+        withCapture.handleTick(START + 280_000)
+
+        // Act
+        withCapture.handleMotion(motion(MotionEventKind.STARTED_WALKING, START + 300_000))
+
+        // Assert
+        assertEquals(DetectionState.CANDIDATE_PENDING, withCapture.restore().state)
+        assertEquals(LocationSessionMode.PARKING_TRANSITION to null, follows.last())
+    }
+
+    @Test
     fun `a low confidence candidate is stored and not announced`() = runTest {
         // A drive with nothing but a 90-second vehicle stretch behind it: §7's duration and
         // distance clauses are both unmet, so §8's `trip below minimum` applies and §9 puts
@@ -222,6 +478,10 @@ class ParkingDetectionRuntimeTest {
     private fun motion(kind: MotionEventKind, atMillis: Long) =
         MotionDomainEvent(kind = kind, atMillis = atMillis, receivedAtMillis = atMillis)
 
+    /** A fix at the origin: these tests are about time and reported speed, not distance. */
+    private fun fix(atMillis: Long, speedMps: Float?) =
+        LocationSample(atMillis = atMillis, latitude = 37.5, longitude = 127.0, horizontalAccuracyM = 8f, speedMps = speedMps)
+
     private fun <T> assertNotNull(value: T?): T {
         assertNotNull("expected a value", value)
         return checkNotNull(value)
@@ -231,5 +491,6 @@ class ParkingDetectionRuntimeTest {
         const val START = 1_700_000_000_000L
         const val DRIVE_MILLIS = 420_000L
         const val SUSTAIN = ParkingDetectionEngine.MINIMUM_VEHICLE_DURATION_MILLIS
+        const val STOP_ONLY_DRIVE_END = START + 280_000L
     }
 }

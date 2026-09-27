@@ -19,6 +19,7 @@ import com.sjstudioz.parkingpin.domain.location.LocationSessionAction
 import com.sjstudioz.parkingpin.domain.location.LocationSessionMode
 import com.sjstudioz.parkingpin.domain.location.LocationSessionPlanner
 import com.sjstudioz.parkingpin.domain.location.LocationSessionState
+import com.sjstudioz.parkingpin.domain.location.LocationSessionStopReason
 import com.sjstudioz.parkingpin.domain.location.ReliableLocationDecision
 import com.sjstudioz.parkingpin.domain.location.ReliableLocationSelector
 import com.sjstudioz.parkingpin.trace.NoOpTraceRecording
@@ -73,17 +74,83 @@ class FusedLocationSessionController(
         applyPlan(stored = state, state = state, desiredMode = state.mode, nowMillis = clock.nowEpochMillis())
     }
 
-    /** A normalized transition arrived. Decides what the capture should look like now. */
-    suspend fun onMotionEvent(event: MotionDomainEvent): LocationSessionState = mutex.withLock {
+    /**
+     * Forgets a registration the system dropped, then leaves the capture off.
+     *
+     * Use after reboot or app update ([RegistrationRecoveryReceiver]): Play services no longer
+     * holds the request, but the record survives in DataStore, and [reconcile] would trust it —
+     * a dead capture reported live, and with it a stop-only resume window kept open with
+     * nothing feeding it (docs/05 §3a "The window lives exactly as long as its capture"). The
+     * removal is issued anyway, so a request that did survive an update is not orphaned.
+     * Nothing is restarted here: whether a capture is wanted is the engine's answer, given on
+     * its next batch.
+     */
+    suspend fun reconcileAfterSystemReset(): LocationSessionState = mutex.withLock {
+        val stored = store.readLocationSessionStateOnce()
+        if (stored.record == null) return@withLock stored
+        val failure = registrar.remove()
+        store.updateLocationSessionState {
+            stored.stopped(LocationSessionStopReason.SYSTEM_RESET, failure).copy(ownedByDiagnostics = false)
+        }
+    }
+
+    /**
+     * Whether a bounded capture is delivering right now: a registration recorded, still live
+     * by its own expiry and deadline, and the location permission still granted. The runtime
+     * reads it to close a stop-only window whose capture is gone (docs/05 §3a / §19).
+     */
+    suspend fun isCaptureRunning(): Boolean = mutex.withLock {
+        val record = store.readLocationSessionStateOnce().record ?: return@withLock false
+        record.isLiveAt(clock.nowEpochMillis()) && registrar.hasForegroundLocationPermission()
+    }
+
+    /**
+     * A normalized transition arrived. Decides what the capture should look like now.
+     *
+     * [engineWantsCapture] is whether the detection engine wanted a capture before this event
+     * (see [LocationCaptureModePolicy.modeFor]). It defaults to true for the compositions with
+     * no engine, which is what this method did before the engine existed.
+     */
+    suspend fun onMotionEvent(
+        event: MotionDomainEvent,
+        engineWantsCapture: Boolean = true,
+    ): LocationSessionState = mutex.withLock {
         val now = clock.nowEpochMillis()
         val state = store.readLocationSessionStateOnce()
-        val desiredMode = LocationCaptureModePolicy.modeFor(event.kind, state.mode)
+        val desiredMode = LocationCaptureModePolicy.modeFor(event.kind, state.mode, engineWantsCapture)
         applyPlan(
             stored = state,
             state = state.copy(evidence = evidenceAfter(state.evidence, event)),
             desiredMode = desiredMode,
             nowMillis = now,
         )
+    }
+
+    /**
+     * The detection engine took a batch (docs/05 §3a / §19, 2026-09-27). Brings the capture in
+     * line with what the engine wants now — released when it wants none, whether or not that
+     * changed, and opened or widened on the edges no motion event marks. See
+     * [LocationCaptureModePolicy.modeFollowingEngine] for exactly which, and why only those.
+     *
+     * A capture opened here gets fresh §7 evidence to fold fixes into, as the diagnostics
+     * override does: without it the guard that promotes a confirmation window could never run.
+     */
+    suspend fun followEngine(
+        wantedBefore: LocationSessionMode?,
+        wantedAfter: LocationSessionMode?,
+    ): LocationSessionState = mutex.withLock {
+        val now = clock.nowEpochMillis()
+        val stored = store.readLocationSessionStateOnce()
+        val desiredMode = LocationCaptureModePolicy.modeFollowingEngine(
+            wantedBefore = wantedBefore,
+            wantedAfter = wantedAfter,
+            current = stored.mode,
+            ownedByDiagnostics = stored.ownedByDiagnostics,
+        )
+        // An engine that wants a capture adopts whatever is running: it is following a drive
+        // now, and the override flag would otherwise keep that drive's capture from ending.
+        val adopted = if (wantedAfter != null) stored.copy(ownedByDiagnostics = false) else stored
+        applyPlan(stored = stored, state = adopted.seededFor(desiredMode, now), desiredMode = desiredMode, nowMillis = now)
     }
 
     /**
@@ -107,19 +174,24 @@ class FusedLocationSessionController(
      */
     suspend fun setDesiredMode(mode: LocationSessionMode): LocationSessionState = mutex.withLock {
         val now = clock.nowEpochMillis()
-        val state = store.readLocationSessionStateOnce()
-        val seeded = if (mode == LocationSessionMode.IDLE || state.evidence != null) {
-            state
+        val stored = store.readLocationSessionStateOnce()
+        // Marked so the engine's per-batch release leaves it running (docs/05 §19).
+        val overridden = stored.copy(ownedByDiagnostics = mode != LocationSessionMode.IDLE)
+        applyPlan(stored = stored, state = overridden.seededFor(mode, now), desiredMode = mode, nowMillis = now)
+    }
+
+    /** §7 evidence for a capture about to open with none, so its guard has something to read. */
+    private fun LocationSessionState.seededFor(mode: LocationSessionMode, nowMillis: Long): LocationSessionState =
+        if (mode == LocationSessionMode.IDLE || evidence != null) {
+            this
         } else {
-            state.copy(
+            copy(
                 evidence = DrivingSessionEvidence(
-                    vehicleFirstSeenAtMillis = now,
-                    lastVehicleEvidenceAtMillis = now,
+                    vehicleFirstSeenAtMillis = nowMillis,
+                    lastVehicleEvidenceAtMillis = nowMillis,
                 ),
             )
         }
-        applyPlan(stored = state, state = seeded, desiredMode = mode, nowMillis = now)
-    }
 
     /**
      * One Play services delivery. Folds every fix into the checkpoint, then re-plans.
@@ -363,23 +435,27 @@ class FusedLocationSessionController(
                 else -> state.copy(record = null, lastFailure = discardRegistration(failure))
             }
 
-            is LocationSessionAction.Stop -> {
-                val failure = registrar.remove()
-                state.copy(
-                    record = null,
-                    evidence = null,
-                    drivingConfirmed = false,
-                    drivingReasonCodes = emptyList(),
-                    lastStopReason = action.reason,
-                    lastFailure = failure,
-                    counters = state.counters.copy(sessionsStopped = state.counters.sessionsStopped + 1),
-                )
-            }
+            is LocationSessionAction.Stop -> state.stopped(action.reason, registrar.remove())
         }
 
-        if (next == stored) return stored
-        return store.updateLocationSessionState { next }
+        // Ownership belongs to a running capture; one that has ended owns nothing, and the next
+        // capture a drive opens must not inherit the override.
+        val owned = if (next.record == null) next.copy(ownedByDiagnostics = false) else next
+        if (owned == stored) return stored
+        return store.updateLocationSessionState { owned }
     }
+
+    /** The state once a capture has ended for [reason]; [failure] is the removal's own. */
+    private fun LocationSessionState.stopped(reason: LocationSessionStopReason, failure: String?): LocationSessionState =
+        copy(
+            record = null,
+            evidence = null,
+            drivingConfirmed = false,
+            drivingReasonCodes = emptyList(),
+            lastStopReason = reason,
+            lastFailure = failure,
+            counters = counters.copy(sessionsStopped = counters.sessionsStopped + 1),
+        )
 
     /**
      * Clearing the record after a failed request is not enough on its own.

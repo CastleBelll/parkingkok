@@ -107,6 +107,19 @@ struct DrivingConfirmationPolicyTests {
         #expect(DrivingConfirmationPolicy.isConfirmed(evidence, now: fresh))
     }
 
+    /// §11's departure reads this guard at the boundary Android does: vehicle evidence
+    /// stamped after `now` is not "recent", it is a clock problem, and it confirms nothing.
+    @Test("Vehicle evidence from the future does not satisfy §7's guard")
+    func futureVehicleEvidenceDoesNotConfirm() {
+        // Arrange — 900 m and two moving samples, but the vehicle observation is later
+        // than the moment being judged.
+        let evidence = evidence(vehicleEvidenceAt: start.addingTimeInterval(500), fixes: movingFixes(metres: 900))
+
+        // Act / Assert
+        #expect(!evidence.meetsDrivingConfirmation(now: start.addingTimeInterval(200)))
+        #expect(evidence.meetsDrivingConfirmation(now: start.addingTimeInterval(500)))
+    }
+
     @Test("With no vehicle evidence at all, distance and duration are not enough")
     func noVehicleEvidenceNeverConfirms() {
         // Arrange

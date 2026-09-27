@@ -56,8 +56,10 @@ class TransitionEventIngestor(
             .forEach { event ->
                 persist(event)
                 // After persisting, never before: if the process dies here the evidence
-                // survives and the next reconcile re-derives the session from it.
-                locationSessionController.onMotionEvent(event)
+                // survives and the next reconcile re-derives the session from it. Told whether
+                // the engine, having taken this event, still follows a drive, so an exit it has
+                // no use for opens no kerb capture (docs/05 §19).
+                locationSessionController.onMotionEvent(event, engineWantsCapture(event))
                 // docs/05 §3a. The capture decision above shapes the request; this decides
                 // what the trip *is*, and is the only step that can reach the user.
                 detectionRuntime?.handleMotion(event)
@@ -66,6 +68,16 @@ class TransitionEventIngestor(
                 // (docs/05_CROSS_PLATFORM_DOMAIN_CONTRACT.md §9).
                 traceRecorder.recordMotion(event)
             }
+    }
+
+    /**
+     * Whether the engine, once it has taken [event], wants a capture at all — the settled
+     * answer, not the stored state's (see [ParkingDetectionRuntime.captureWantedAfter]). With
+     * no engine wired every motion edge shapes the capture, as it did before §3a landed.
+     */
+    private suspend fun engineWantsCapture(event: MotionDomainEvent): Boolean {
+        val runtime = detectionRuntime ?: return true
+        return runtime.captureWantedAfter(event) != null
     }
 
     private suspend fun persist(event: MotionDomainEvent) {

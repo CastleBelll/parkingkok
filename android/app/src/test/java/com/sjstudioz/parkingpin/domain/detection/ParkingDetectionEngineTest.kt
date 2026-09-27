@@ -3,6 +3,7 @@ package com.sjstudioz.parkingpin.domain.detection
 import com.sjstudioz.parkingpin.domain.location.DrivingConfirmationGuard
 import com.sjstudioz.parkingpin.domain.location.LocationSample
 import com.sjstudioz.parkingpin.domain.parking.ConfidenceBucket
+import com.sjstudioz.parkingpin.domain.trace.LocationQualityBucket
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -555,26 +556,30 @@ class ParkingDetectionEngineTest {
     }
 
     @Test
-    fun `reason codes accumulate as evidence arrives`() {
-        val state = idle()
+    fun `reason codes come from what the drive recorded, in contract order`() {
+        // Arrange — one moving fix at 90 s, a drop with no buckets (read as `poor`) at 200 s,
+        // and the exit at 300 s, by which time movement had been quiet for 210 s.
+        val transition = idle()
             .handle(DetectionEvent.VehicleEnter(T0))
             .handle(DetectionEvent.Location(fix(T0 + SUSTAIN, accuracyM = 8f, speedMps = 14f)))
             .handle(DetectionEvent.LocationQualityDegraded(T0 + 200_000))
             .handle(DetectionEvent.VehicleExit(T0 + 300_000))
-            .handle(DetectionEvent.WalkingEnter(T0 + 320_000))
 
-        val reasons = checkNotNull(state.candidate).reasons
+        // Act
+        val state = transition.handle(DetectionEvent.WalkingEnter(T0 + 320_000))
+
+        // Assert — §4's order, which is the order iOS emits; no code from after the stop.
         assertEquals(
-            "arrival order, not a set rebuilt at the end",
             listOf(
                 EvidenceReasonCode.RECENT_VEHICLE_ACTIVITY,
-                EvidenceReasonCode.RELIABLE_LOCATION_CAPTURED,
-                EvidenceReasonCode.LOCATION_QUALITY_DEGRADED,
                 EvidenceReasonCode.VEHICLE_DURATION_MET,
                 EvidenceReasonCode.VEHICLE_EXIT_DETECTED,
                 EvidenceReasonCode.WALKING_AFTER_VEHICLE,
+                EvidenceReasonCode.LOCATION_STOPPED,
+                EvidenceReasonCode.LOCATION_QUALITY_DEGRADED,
+                EvidenceReasonCode.RELIABLE_LOCATION_CAPTURED,
             ),
-            reasons,
+            checkNotNull(state.candidate).reasons,
         )
     }
 
@@ -602,7 +607,708 @@ class ParkingDetectionEngineTest {
         assertEquals(DetectionState.CANDIDATE_PENDING, checkpoint.state)
     }
 
+    // ── Field parity, 2026-09-27 ────────────────────────────────────────────────────
+    // Each test below pins one place where replaying the same field draft through both
+    // engines produced a different candidate, bucket or reason list.
+
+    @Test
+    fun `a new journey after an unanswered candidate carries nothing from the first trip`() {
+        // Arrange — trip 1 ends with an exit and a walk; trip 2 has neither.
+        val firstTrip = pendingCandidate()
+        val secondStart = T0 + 900_000
+        val moving = firstTrip
+            .handle(DetectionEvent.VehicleEnter(secondStart))
+            .handle(DetectionEvent.Location(fix(secondStart + SUSTAIN, accuracyM = 8f, speedMps = 14f)))
+            .handle(DetectionEvent.Location(fix(secondStart + SUSTAIN + 60_000, accuracyM = 8f, speedMps = 14f, north = 900.0)))
+        assertEquals(DetectionState.DRIVING, moving.state)
+
+        // Act — trip 2 ends on a location stop after the movement window.
+        val stopAt = secondStart + SUSTAIN + 60_000 + ParkingDetectionEngine.MOVEMENT_IDLE_WINDOW_MILLIS
+        val state = moving.handle(DetectionEvent.Location(fix(stopAt, accuracyM = 8f, speedMps = 0.2f, north = 900.0)))
+
+        // Assert
+        assertEquals(DetectionState.CANDIDATE_PENDING, state.state)
+        assertEquals(2, state.candidatesCreated)
+        val reasons = checkNotNull(state.candidate).reasons
+        assertFalse("trip 1's walk is not trip 2's evidence", EvidenceReasonCode.WALKING_AFTER_VEHICLE in reasons)
+        assertEquals(
+            "the new journey is measured from its own vehicle_enter",
+            secondStart,
+            checkNotNull(state.session).evidence.vehicleFirstSeenAtMillis,
+        )
+    }
+
+    @Test
+    fun `getting back out of a parked car drops the departure's evidence`() {
+        // Arrange
+        val parked = idle().handle(DetectionEvent.UserSavedParking(T0))
+
+        // Act — in, 300 m, out.
+        val state = parked
+            .handle(DetectionEvent.VehicleEnter(T1))
+            .handle(DetectionEvent.Location(fix(T1 + 10_000, accuracyM = 5f, speedMps = 15f)))
+            .handle(DetectionEvent.Location(fix(T1 + 40_000, accuracyM = 5f, speedMps = 15f, north = 300.0)))
+            .handle(DetectionEvent.VehicleExit(T1 + 50_000))
+
+        // Assert — the next episode has to earn §11's 500 m on its own.
+        assertEquals(DetectionState.PARKED, state.state)
+        assertNull(state.session)
+    }
+
+    @Test
+    fun `a red light early in the drive does not earn location stopped`() {
+        // Arrange — stopped at 10 s, moving until the exit.
+        val transition = driving()
+            .handle(DetectionEvent.Location(fix(T0 + 10_000, accuracyM = 8f, speedMps = 0.5f)))
+            .handle(DetectionEvent.Location(fix(T0 + 60_000, accuracyM = 8f, speedMps = 14f, north = 400.0)))
+            .handle(DetectionEvent.Location(fix(T0 + 120_000, accuracyM = 8f, speedMps = 14f, north = 1_200.0)))
+            .handle(DetectionEvent.VehicleExit(T0 + 125_000))
+
+        // Act
+        val state = transition.handle(DetectionEvent.WalkingEnter(T0 + 150_000))
+
+        // Assert
+        assertFalse(EvidenceReasonCode.LOCATION_STOPPED in checkNotNull(state.candidate).reasons)
+    }
+
+    @Test
+    fun `a stopped fix after the last moving one earns location stopped`() {
+        // Arrange
+        val transition = driving()
+            .handle(DetectionEvent.Location(fix(T0 + 60_000, accuracyM = 8f, speedMps = 14f, north = 400.0)))
+            .handle(DetectionEvent.Location(fix(T0 + 120_000, accuracyM = 8f, speedMps = 14f, north = 1_200.0)))
+            .handle(DetectionEvent.Location(fix(T0 + 123_000, accuracyM = 8f, speedMps = 0.3f, north = 1_200.0)))
+            .handle(DetectionEvent.VehicleExit(T0 + 125_000))
+
+        // Act
+        val state = transition.handle(DetectionEvent.WalkingEnter(T0 + 150_000))
+
+        // Assert
+        assertTrue(EvidenceReasonCode.LOCATION_STOPPED in checkNotNull(state.candidate).reasons)
+    }
+
+    @Test
+    fun `quality that degraded long before the end is not degradation near the end`() {
+        // Arrange — degraded 10 s in, then ten minutes of clean moving fixes.
+        var state = driving()
+            .handle(DetectionEvent.Location(fix(T0, accuracyM = 8f, speedMps = 14f)))
+            .handle(degraded(T0 + 10_000, LocationQualityBucket.GOOD, LocationQualityBucket.POOR))
+        for (leg in 1..4) {
+            state = state.handle(
+                DetectionEvent.Location(fix(T0 + leg * 150_000L, accuracyM = 8f, speedMps = 14f, north = leg * 1_000.0)),
+            )
+        }
+
+        // Act
+        val candidate = state
+            .handle(DetectionEvent.VehicleExit(T0 + 620_000))
+            .handle(DetectionEvent.WalkingEnter(T0 + 650_000))
+            .candidate
+
+        // Assert
+        assertFalse(EvidenceReasonCode.LOCATION_QUALITY_DEGRADED in checkNotNull(candidate).reasons)
+    }
+
+    @Test
+    fun `quality that degraded to poor just before the end counts`() {
+        // Arrange
+        val transition = driving()
+            .handle(DetectionEvent.Location(fix(T0, accuracyM = 8f, speedMps = 14f)))
+            .handle(degraded(T0 + 100_000, LocationQualityBucket.GOOD, LocationQualityBucket.POOR))
+            .handle(DetectionEvent.Location(fix(T0 + 110_000, accuracyM = 8f, speedMps = 14f, north = 1_000.0)))
+            .handle(DetectionEvent.VehicleExit(T0 + 200_000))
+
+        // Act
+        val state = transition.handle(DetectionEvent.WalkingEnter(T0 + 230_000))
+
+        // Assert
+        assertTrue(EvidenceReasonCode.LOCATION_QUALITY_DEGRADED in checkNotNull(state.candidate).reasons)
+    }
+
+    @Test
+    fun `a drop that stays fair is not degradation`() {
+        // Arrange — §8 weighs losing the sky, and a fair fix still has it.
+        val transition = driving()
+            .handle(DetectionEvent.Location(fix(T0, accuracyM = 8f, speedMps = 14f)))
+            .handle(DetectionEvent.Location(fix(T0 + 100_000, accuracyM = 30f, speedMps = 14f, north = 1_000.0)))
+            .handle(degraded(T0 + 100_000, LocationQualityBucket.GOOD, LocationQualityBucket.FAIR))
+            .handle(DetectionEvent.VehicleExit(T0 + 110_000))
+
+        // Act
+        val state = transition.handle(DetectionEvent.WalkingEnter(T0 + 130_000))
+
+        // Assert
+        assertFalse(EvidenceReasonCode.LOCATION_QUALITY_DEGRADED in checkNotNull(state.candidate).reasons)
+    }
+
+    @Test
+    fun `duration is measured to the end of the drive, not to the walk after it`() {
+        // Arrange — a 100 s drive: promoted at 90 s, out at 100 s.
+        val transition = idle()
+            .handle(DetectionEvent.VehicleEnter(T0))
+            .handle(DetectionEvent.StationaryExit(T0 + SUSTAIN))
+            .handle(DetectionEvent.VehicleExit(T0 + 100_000))
+
+        // Act — the walk arrives at 130 s, past §7's 120 s.
+        val state = transition.handle(DetectionEvent.WalkingEnter(T0 + 130_000))
+
+        // Assert
+        val candidate = checkNotNull(state.candidate)
+        assertFalse(EvidenceReasonCode.VEHICLE_DURATION_MET in candidate.reasons)
+        assertEquals(
+            "§8 trip below minimum applies",
+            ParkingConfidencePolicy.WEIGHT_RECENT_VEHICLE_SESSION +
+                ParkingConfidencePolicy.WEIGHT_VEHICLE_EXIT +
+                ParkingConfidencePolicy.WEIGHT_WALKING_AFTER_VEHICLE +
+                ParkingConfidencePolicy.WEIGHT_TRIP_BELOW_MINIMUM,
+            candidate.score,
+        )
+    }
+
+    @Test
+    fun `a vehicle enter that resumes a movement-idle transition stays driving`() {
+        // Arrange
+        val idleAt = T0 + ParkingDetectionEngine.MOVEMENT_IDLE_WINDOW_MILLIS
+        val transition = driving()
+            .handle(DetectionEvent.Location(fix(T0, accuracyM = 8f, speedMps = 14f)))
+            .handle(DetectionEvent.TimerTick(idleAt))
+        assertEquals(DetectionState.PARKING_TRANSITION, transition.state)
+
+        // Act
+        val resumed = transition.handle(DetectionEvent.VehicleEnter(idleAt + 20_000))
+
+        // Assert — the idle clock restarts at the resume instead of re-firing at once.
+        assertEquals(DetectionState.DRIVING, resumed.state)
+        assertEquals(idleAt + 20_000, resumed.stateEnteredAtMillis)
+        assertEquals(
+            DetectionState.PARKING_TRANSITION,
+            resumed.handle(DetectionEvent.TimerTick(idleAt + 20_000 + ParkingDetectionEngine.MOVEMENT_IDLE_WINDOW_MILLIS)).state,
+        )
+    }
+
+    @Test
+    fun `a fix the candidate cannot inherit does not earn reliable location captured`() {
+        // Arrange — a 90-minute drive whose only good fix came at minute one. The rest of
+        // the drive keeps moving on fixes too coarse to be a parking spot, so neither
+        // `movementIdleWindow` nor the transition lapse ends it before the exit.
+        val endedAt = T0 + 90 * 60_000L
+        var moving = idle()
+            .handle(DetectionEvent.VehicleEnter(T0))
+            .handle(DetectionEvent.Location(fix(T0 + 60_000, accuracyM = 9f, speedMps = 14f)))
+            .handle(DetectionEvent.StationaryExit(T0 + SUSTAIN))
+        for (leg in 1..35) {
+            moving = moving.handle(
+                DetectionEvent.Location(
+                    fix(T0 + 60_000 + leg * 150_000L, accuracyM = 100f, speedMps = 14f, north = leg * 2_000.0),
+                ),
+            )
+        }
+        val transition = moving.handle(DetectionEvent.VehicleExit(endedAt))
+
+        // Act
+        val step = engine.handle(transition, DetectionEvent.WalkingEnter(endedAt + 30_000))
+
+        // Assert
+        assertNull(createCandidate(step.effects).lastReliableLocation)
+        assertFalse(EvidenceReasonCode.RELIABLE_LOCATION_CAPTURED in checkNotNull(step.state.candidate).reasons)
+    }
+
+    @Test
+    fun `an implausible jump never becomes the parking spot`() {
+        // Arrange
+        val good = driving().handle(DetectionEvent.Location(fix(T0, accuracyM = 5f, speedMps = 14f)))
+        val spot = checkNotNull(good.lastReliableLocation)
+
+        // Act — 1 km in one second.
+        val state = good.handle(DetectionEvent.Location(fix(T0 + 1_000, accuracyM = 5f, speedMps = 14f, north = 1_000.0)))
+
+        // Assert
+        assertEquals(spot, state.lastReliableLocation)
+    }
+
+    @Test
+    fun `a fix while a candidate is pending does not move the parking spot`() {
+        // Arrange
+        val pending = pendingCandidate()
+        val spot = pending.lastReliableLocation
+
+        // Act — the walk away from the car.
+        val state = pending.handle(DetectionEvent.Location(fix(T0 + 40_000, accuracyM = 5f, speedMps = 1.2f, north = 80.0)))
+
+        // Assert
+        assertEquals(spot, state.lastReliableLocation)
+    }
+
+    @Test
+    fun `the car link latch outlives the session it was connected in`() {
+        // Arrange — sitting in the car with the radio on retires the session, the link stays.
+        val idleAgain = idle()
+            .handle(DetectionEvent.CarLinkConnected(T0))
+            .handle(DetectionEvent.TimerTick(T0 + ParkingDetectionEngine.DRIVING_CANDIDATE_WINDOW_MILLIS))
+        assertEquals(DetectionState.IDLE, idleAgain.state)
+
+        // Act — then the drive, and a gap with no movement evidence.
+        val state = idleAgain
+            .handle(DetectionEvent.VehicleEnter(T1))
+            .handle(DetectionEvent.Location(fix(T1 + SUSTAIN, accuracyM = 8f, speedMps = 14f)))
+            .handle(DetectionEvent.TimerTick(T1 + SUSTAIN + ParkingDetectionEngine.MOVEMENT_IDLE_WINDOW_MILLIS))
+
+        // Assert
+        assertEquals(DetectionState.DRIVING, state.state)
+    }
+
+    @Test
+    fun `a departure whose guard is met on the lapse boundary is confirmed`() {
+        // Arrange — the departure's only vehicle evidence is the vehicle_enter at T1.
+        val departing = departureCandidate()
+
+        // Act — exactly RECENT_VEHICLE_WINDOW later, with §7's guard satisfied.
+        val step = engine.handle(
+            departing,
+            DetectionEvent.Location(
+                fix(T1 + DrivingConfirmationGuard.RECENT_VEHICLE_WINDOW_MILLIS, accuracyM = 5f, speedMps = 15f, north = 1_500.0),
+            ),
+        )
+
+        // Assert — recent evidence is inclusive (<=), so the lapse must be exclusive (>).
+        assertEquals(DetectionState.DRIVING, step.state.state)
+    }
+
+    @Test
+    fun `a confirmed candidate leaves no snapshot behind`() {
+        val state = pendingCandidate().handle(DetectionEvent.UserConfirmedParking(T0 + 40_000))
+
+        assertEquals(DetectionState.PARKED, state.state)
+        assertNull(state.candidate)
+    }
+
+    @Test
+    fun `a candidate left behind by a new journey still expires at 45 minutes`() {
+        // Arrange
+        val pending = pendingCandidate()
+        val candidate = checkNotNull(pending.candidate)
+        val newJourney = pending.handle(DetectionEvent.VehicleEnter(T0 + 900_000))
+
+        // Act
+        val step = engine.handle(newJourney, DetectionEvent.TimerTick(candidate.expiresAtMillis))
+
+        // Assert — the notification comes down; the new journey is not disturbed by it.
+        assertTrue(DetectionEffect.RetireCandidate(candidate.id) in step.effects)
+        assertNull(step.state.candidate)
+        assertTrue(step.state.state != DetectionState.CANDIDATE_PENDING)
+    }
+
+    @Test
+    fun `a hand save withdraws a candidate left behind by a new journey`() {
+        // Arrange
+        val pending = pendingCandidate()
+        val candidate = checkNotNull(pending.candidate)
+        val newJourney = pending.handle(DetectionEvent.VehicleEnter(T0 + 900_000))
+
+        // Act
+        val step = engine.handle(newJourney, DetectionEvent.UserSavedParking(T0 + 1_000_000))
+
+        // Assert
+        assertEquals(DetectionState.PARKED, step.state.state)
+        assertTrue(DetectionEffect.RetireCandidate(candidate.id) in step.effects)
+        assertNull(step.state.candidate)
+    }
+
+    // ── §3a PARKING_TRANSITION rows and §8b evidence, twinned with iOS ─────────────
+    // Each test below has a twin of the same name and the same numbers in
+    // `ParkingPinTests/ParkingTransitionEvidenceTests`. A divergence between the two is a
+    // divergence in the product (CLAUDE.md "Cross-platform Behavioral Parity").
+
+    @Test
+    fun `a movementIdle ending earns location stopped but no vehicle exit`() {
+        // Arrange
+        val transition = idleTransition()
+
+        // Act
+        val state = transition.handle(DetectionEvent.WalkingEnter(at(300)))
+
+        // Assert — 25 + 30 (walk) + 10 (stopped) + 5 (280 s is twice §7's 120 s) = 70.
+        val candidate = checkNotNull(state.candidate)
+        assertTrue(EvidenceReasonCode.WALKING_AFTER_VEHICLE in candidate.reasons)
+        assertTrue(EvidenceReasonCode.LOCATION_STOPPED in candidate.reasons)
+        assertFalse(EvidenceReasonCode.VEHICLE_EXIT_DETECTED in candidate.reasons)
+        assertEquals(70, candidate.score)
+        assertEquals(ConfidenceBucket.MEDIUM, candidate.confidence)
+    }
+
+    @Test
+    fun `a vehicle exit that arrives inside a movementIdle transition is credited`() {
+        // Arrange
+        val transition = idleTransition().handle(DetectionEvent.VehicleExit(at(290)))
+        assertEquals("an exit is not a confirming signal", DetectionState.PARKING_TRANSITION, transition.state)
+
+        // Act
+        val state = transition.handle(DetectionEvent.WalkingEnter(at(300)))
+
+        // Assert
+        assertTrue(EvidenceReasonCode.VEHICLE_EXIT_DETECTED in checkNotNull(state.candidate).reasons)
+    }
+
+    @Test
+    fun `a disconnect inside the transition confirms it as a link disconnect and an exit`() {
+        // Arrange
+        val transition = drivenFromEnter()
+            .handle(DetectionEvent.CarLinkConnected(at(95)))
+            .handle(DetectionEvent.VehicleExit(at(300)))
+
+        // Act
+        val state = transition.handle(DetectionEvent.CarLinkDisconnected(at(320)))
+
+        // Assert
+        val reasons = checkNotNull(state.candidate).reasons
+        assertTrue(EvidenceReasonCode.CAR_PROJECTION_DISCONNECTED in reasons)
+        assertTrue(EvidenceReasonCode.VEHICLE_EXIT_DETECTED in reasons)
+    }
+
+    @Test
+    fun `a stop long before the end of a drive is not location stopped`() {
+        // Arrange — a drive with no moving sample whose one stopped fix came 600 s early.
+        val transition = drivenFromEnter()
+            .handle(DetectionEvent.Location(fix(at(100), accuracyM = 8f, speedMps = 0.5f)))
+            .handle(DetectionEvent.VehicleExit(at(700)))
+
+        // Act
+        val state = transition.handle(DetectionEvent.WalkingEnter(at(710)))
+
+        // Assert
+        assertFalse(EvidenceReasonCode.LOCATION_STOPPED in checkNotNull(state.candidate).reasons)
+    }
+
+    @Test
+    fun `a stop near the end of a drive with no moving sample is location stopped`() {
+        // Arrange
+        val transition = drivenFromEnter()
+            .handle(DetectionEvent.Location(fix(at(650), accuracyM = 8f, speedMps = 0.5f)))
+            .handle(DetectionEvent.VehicleExit(at(700)))
+
+        // Act
+        val state = transition.handle(DetectionEvent.WalkingEnter(at(710)))
+
+        // Assert
+        assertTrue(EvidenceReasonCode.LOCATION_STOPPED in checkNotNull(state.candidate).reasons)
+    }
+
+    @Test
+    fun `a stop the drive then moved on from is not location stopped`() {
+        // Arrange
+        val transition = drivenFromEnter()
+            .handle(DetectionEvent.Location(fix(at(600), accuracyM = 8f, speedMps = 0.5f)))
+            .handle(DetectionEvent.Location(fix(at(650), accuracyM = 8f, speedMps = 9f, north = 400.0)))
+            .handle(DetectionEvent.VehicleExit(at(700)))
+
+        // Act
+        val state = transition.handle(DetectionEvent.WalkingEnter(at(710)))
+
+        // Assert
+        assertFalse(EvidenceReasonCode.LOCATION_STOPPED in checkNotNull(state.candidate).reasons)
+    }
+
+    @Test
+    fun `a speedless fix after the last moving one is not location stopped`() {
+        // Arrange — the underground ramp: a moving fix, then a fix with no Doppler speed.
+        // §8b: a speedless fix never counts, because silence is not stillness (§7).
+        val transition = drivenFromEnter()
+            .handle(DetectionEvent.Location(fix(at(600), accuracyM = 8f, speedMps = 9f)))
+            .handle(DetectionEvent.Location(fix(at(650), accuracyM = 8f, speedMps = null)))
+            .handle(DetectionEvent.VehicleExit(at(700)))
+
+        // Act
+        val state = transition.handle(DetectionEvent.WalkingEnter(at(710)))
+
+        // Assert
+        assertFalse(EvidenceReasonCode.LOCATION_STOPPED in checkNotNull(state.candidate).reasons)
+    }
+
+    @Test
+    fun `a stop from before a vehicle enter resume is not how the drive ended`() {
+        // Arrange — stopped at 120 s, idled into a transition at 280 s, resumed by a
+        // vehicle_enter at 300 s: the resume re-anchors the last movement (§3a "Resuming
+        // keeps the drive"), so the 120 s stop belongs to a red light the drive left.
+        val transition = drivenFromEnter()
+            .handle(DetectionEvent.Location(fix(at(100), accuracyM = 8f, speedMps = 9f)))
+            .handle(DetectionEvent.Location(fix(at(120), accuracyM = 8f, speedMps = 0.5f)))
+            .handle(DetectionEvent.TimerTick(at(290)))
+            .also { assertEquals(DetectionState.PARKING_TRANSITION, it.state) }
+            .handle(DetectionEvent.VehicleEnter(at(300)))
+            .also { assertEquals(DetectionState.DRIVING, it.state) }
+            .handle(DetectionEvent.VehicleExit(at(400)))
+
+        // Act
+        val state = transition.handle(DetectionEvent.WalkingEnter(at(410)))
+
+        // Assert
+        assertFalse(EvidenceReasonCode.LOCATION_STOPPED in checkNotNull(state.candidate).reasons)
+    }
+
+    @Test
+    fun `a degradation to poor in the drive's last minutes is credited`() {
+        // Arrange — the event lands while still DRIVING.
+        val transition = drivenFromEnter()
+            .handle(degraded(at(680), LocationQualityBucket.GOOD, LocationQualityBucket.POOR))
+            .handle(DetectionEvent.VehicleExit(at(700)))
+
+        // Act
+        val state = transition.handle(DetectionEvent.WalkingEnter(at(710)))
+
+        // Assert
+        assertTrue(EvidenceReasonCode.LOCATION_QUALITY_DEGRADED in checkNotNull(state.candidate).reasons)
+    }
+
+    @Test
+    fun `good to fair is not a degradation`() {
+        // Arrange
+        val transition = drivenFromEnter()
+            .handle(degraded(at(680), LocationQualityBucket.GOOD, LocationQualityBucket.FAIR))
+            .handle(DetectionEvent.VehicleExit(at(700)))
+
+        // Act
+        val state = transition.handle(DetectionEvent.WalkingEnter(at(710)))
+
+        // Assert
+        assertFalse(EvidenceReasonCode.LOCATION_QUALITY_DEGRADED in checkNotNull(state.candidate).reasons)
+    }
+
+    @Test
+    fun `a degradation long before the end is not credited`() {
+        // Arrange
+        val transition = drivenFromEnter()
+            .handle(degraded(at(300), LocationQualityBucket.GOOD, LocationQualityBucket.POOR))
+            .handle(DetectionEvent.VehicleExit(at(700)))
+
+        // Act
+        val state = transition.handle(DetectionEvent.WalkingEnter(at(710)))
+
+        // Assert
+        assertFalse(EvidenceReasonCode.LOCATION_QUALITY_DEGRADED in checkNotNull(state.candidate).reasons)
+    }
+
+    @Test
+    fun `a fix-to-fix drop into poor near the end is credited`() {
+        // Arrange — no event at all: no adapter sends one on a device, so fixes must say it.
+        val transition = drivenFromEnter()
+            .handle(DetectionEvent.Location(fix(at(650), accuracyM = 10f, speedMps = null)))
+            .handle(DetectionEvent.Location(fix(at(670), accuracyM = 80f, speedMps = null)))
+            .handle(DetectionEvent.VehicleExit(at(700)))
+
+        // Act
+        val state = transition.handle(DetectionEvent.WalkingEnter(at(710)))
+
+        // Assert
+        assertTrue(EvidenceReasonCode.LOCATION_QUALITY_DEGRADED in checkNotNull(state.candidate).reasons)
+    }
+
+    @Test
+    fun `a drive that was poor throughout never fell into poor`() {
+        // Arrange — §8b weighs a *fall* into poor. A long underground stretch that was poor
+        // from its first fix has no drop near the end, however poor its last fix is.
+        val transition = drivenFromEnter()
+            .handle(DetectionEvent.Location(fix(at(600), accuracyM = 80f, speedMps = null)))
+            .handle(DetectionEvent.Location(fix(at(650), accuracyM = 90f, speedMps = null)))
+            .handle(DetectionEvent.VehicleExit(at(700)))
+
+        // Act
+        val state = transition.handle(DetectionEvent.WalkingEnter(at(710)))
+
+        // Assert
+        assertFalse(EvidenceReasonCode.LOCATION_QUALITY_DEGRADED in checkNotNull(state.candidate).reasons)
+    }
+
+    @Test
+    fun `a fall into poor near the end still counts after the quality recovers`() {
+        // Arrange — good, poor at 450 s, fair again at 480 s, exit at 600 s: the fall is
+        // inside nearEndHorizon even though the drive did not end on a poor fix.
+        val transition = drivenFromEnter()
+            .handle(DetectionEvent.Location(fix(at(400), accuracyM = 10f, speedMps = null)))
+            .handle(DetectionEvent.Location(fix(at(450), accuracyM = 80f, speedMps = null)))
+            .handle(DetectionEvent.Location(fix(at(480), accuracyM = 30f, speedMps = null)))
+            .handle(DetectionEvent.VehicleExit(at(600)))
+
+        // Act
+        val state = transition.handle(DetectionEvent.WalkingEnter(at(610)))
+
+        // Assert
+        assertTrue(EvidenceReasonCode.LOCATION_QUALITY_DEGRADED in checkNotNull(state.candidate).reasons)
+    }
+
+    // ── §3a "location stop" row: accepted, reported, at or after the entry ───────────
+
+    @Test
+    fun `an outlier fix that reports a stop confirms nothing`() {
+        // Arrange — §3a location stop, condition 1: the drive's §5 gate must accept the fix.
+        val transition = driving()
+            .handle(DetectionEvent.Location(fix(T0 + 10_000, accuracyM = 8f, speedMps = 12f)))
+            .handle(DetectionEvent.VehicleExit(T0 + 20_000))
+
+        // Act — 10 km in 10 s, reporting speed 0: a GPS jump on the way underground.
+        val state = transition.handle(
+            DetectionEvent.Location(fix(T0 + 30_000, accuracyM = 8f, speedMps = 0f, north = 10_000.0)),
+        )
+
+        // Assert
+        assertEquals(DetectionState.PARKING_TRANSITION, state.state)
+        assertEquals(0, state.candidatesCreated)
+    }
+
+    @Test
+    fun `a stopped fix timestamped before the transition confirms nothing`() {
+        // Arrange — §3a location stop, condition 3: at or after the transition's entry.
+        val transition = driving()
+            .handle(DetectionEvent.Location(fix(T0 + 10_000, accuracyM = 8f, speedMps = 12f)))
+            .handle(DetectionEvent.VehicleExit(T0 + 100_000))
+
+        // Act — a fix from before the exit, delivered late.
+        val state = transition.handle(DetectionEvent.Location(fix(T0 + 50_000, accuracyM = 8f, speedMps = 0f)))
+
+        // Assert
+        assertEquals(DetectionState.PARKING_TRANSITION, state.state)
+        assertEquals(0, state.candidatesCreated)
+    }
+
+    @Test
+    fun `a fix with an invalid accuracy confirms nothing`() {
+        // Arrange
+        val transition = driving().handle(DetectionEvent.VehicleExit(T0 + 1_000))
+
+        // Act
+        val state = transition.handle(DetectionEvent.Location(fix(T0 + 30_000, accuracyM = -1f, speedMps = 0f)))
+
+        // Assert
+        assertEquals(DetectionState.PARKING_TRANSITION, state.state)
+    }
+
+    // ── Window rows are stamped at their deadline (§3a, 2026-09-27) ───────────────────
+
+    @Test
+    fun `movementIdle enters the transition at its deadline, not when it is noticed`() {
+        // Arrange
+        val moving = drivenFromEnter().handle(DetectionEvent.Location(fix(at(100), accuracyM = 8f, speedMps = 9f)))
+
+        // Act — noticed 120 s late.
+        val state = moving.handle(DetectionEvent.TimerTick(at(400)))
+
+        // Assert
+        assertEquals(DetectionState.PARKING_TRANSITION, state.state)
+        assertEquals(at(280), state.stateEnteredAtMillis)
+        assertEquals("the stop §8b measures from", at(280), checkNotNull(state.session?.stop).atMillis)
+    }
+
+    @Test
+    fun `the transition window runs from the deadline, so a late-noticed idle cannot stretch it`() {
+        // Arrange
+        val transition = drivenFromEnter()
+            .handle(DetectionEvent.Location(fix(at(100), accuracyM = 8f, speedMps = 9f)))
+            .handle(DetectionEvent.TimerTick(at(400)))
+
+        // Act — 301 s after the deadline, 181 s after it was noticed.
+        val state = transition.handle(
+            DetectionEvent.WalkingEnter(at(280) + ParkingDetectionEngine.TRANSITION_WINDOW_MILLIS + 1_000),
+        )
+
+        // Assert
+        assertEquals(DetectionState.IDLE, state.state)
+        assertEquals(0, state.candidatesCreated)
+    }
+
+    @Test
+    fun `the transition lapse is stamped at its deadline`() {
+        // Arrange
+        val transition = drivenFromEnter().handle(DetectionEvent.VehicleExit(at(200)))
+
+        // Act
+        val state = transition.handle(DetectionEvent.TimerTick(at(900)))
+
+        // Assert
+        assertEquals(DetectionState.IDLE, state.state)
+        assertEquals(at(200) + ParkingDetectionEngine.TRANSITION_WINDOW_MILLIS, state.stateEnteredAtMillis)
+    }
+
+    @Test
+    fun `the driving candidate lapse is stamped at its deadline`() {
+        // Arrange — a link with no vehicle activity: nothing will ever promote it.
+        val candidate = idle().handle(DetectionEvent.CarLinkConnected(T0))
+
+        // Act
+        val state = candidate.handle(DetectionEvent.TimerTick(at(1_000)))
+
+        // Assert
+        assertEquals(DetectionState.IDLE, state.state)
+        assertEquals(T0 + ParkingDetectionEngine.DRIVING_CANDIDATE_WINDOW_MILLIS, state.stateEnteredAtMillis)
+    }
+
+    @Test
+    fun `the session ceiling is stamped at its deadline`() {
+        // Act
+        val state = drivenFromEnter().handle(
+            DetectionEvent.TimerTick(T0 + ParkingDetectionEngine.SESSION_MAXIMUM_DURATION_MILLIS + 600_000),
+        )
+
+        // Assert
+        assertEquals(DetectionState.IDLE, state.state)
+        assertEquals(T0 + ParkingDetectionEngine.SESSION_MAXIMUM_DURATION_MILLIS, state.stateEnteredAtMillis)
+    }
+
+    @Test
+    fun `the candidate expiry is stamped at its deadline`() {
+        // Arrange
+        val pending = pendingCandidate()
+        val expiresAt = checkNotNull(pending.candidate).expiresAtMillis
+
+        // Act
+        val state = pending.handle(DetectionEvent.TimerTick(expiresAt + 600_000))
+
+        // Assert
+        assertEquals(DetectionState.IDLE, state.state)
+        assertEquals(expiresAt, state.stateEnteredAtMillis)
+    }
+
+    @Test
+    fun `the departure lapse is stamped at its deadline`() {
+        // Arrange — the departure's only vehicle evidence is the vehicle_enter at T1.
+        val departing = departureCandidate()
+
+        // Act
+        val state = departing.handle(DetectionEvent.TimerTick(T1 + 900_000))
+
+        // Assert
+        assertEquals(DetectionState.PARKED, state.state)
+        assertEquals(T1 + DrivingConfirmationGuard.RECENT_VEHICLE_WINDOW_MILLIS, state.stateEnteredAtMillis)
+    }
+
+    // ── What a pending candidate's drive keeps ────────────────────────────────────────
+
+    @Test
+    fun `a fix while a candidate is pending is not folded into the finished drive`() {
+        // Arrange — iOS holds the pending candidate's drive aside and folds nothing into it;
+        // a car-link reconnect resumes it exactly as it ended (§3a, the fuel stop).
+        val pending = pendingCandidate()
+        val drive = checkNotNull(pending.session)
+
+        // Act — the walk away from the car.
+        val state = pending.handle(DetectionEvent.Location(fix(T0 + 40_000, accuracyM = 5f, speedMps = 1.2f, north = 80.0)))
+
+        // Assert
+        assertEquals(drive, state.session)
+    }
+
+    @Test
+    fun `a seeded DRIVING session begins where the replay does`() {
+        // Arrange / Act — the iOS runner restores `DRIVING` with the drive starting at the
+        // fixture's origin, so a seeded drive here must not be 90 s older than that one.
+        val state = DetectionEngineState.startingIn(DetectionState.DRIVING, T0)
+
+        // Assert
+        assertEquals(T0, checkNotNull(state.session).evidence.vehicleFirstSeenAtMillis)
+    }
+
     // ── helpers ─────────────────────────────────────────────────────────────────────
+
+    private fun degraded(atMillis: Long, from: LocationQualityBucket, to: LocationQualityBucket) =
+        DetectionEvent.LocationQualityDegraded(atMillis, fromBucket = from, toBucket = to)
 
     // ── §5: the fix a candidate inherits ────────────────────────────────────────────
 
@@ -824,6 +1530,19 @@ class ParkingDetectionEngineTest {
 
     private fun driving() = DetectionEngineState.startingIn(DetectionState.DRIVING, T0)
 
+    /** Seconds after [T0], the unit the iOS twins are written in. */
+    private fun at(seconds: Long): Long = T0 + seconds * 1_000L
+
+    /** iOS `drivingEngine()`: `vehicle_enter` at T0, promoted by the tick at 90 s. */
+    private fun drivenFromEnter() = idle()
+        .handle(DetectionEvent.VehicleEnter(T0))
+        .handle(DetectionEvent.TimerTick(T0 + SUSTAIN))
+
+    /** iOS `idleTransitionEngine()`: moved at 100 s, still since — `movementIdle` at 280 s. */
+    private fun idleTransition() = drivenFromEnter()
+        .handle(DetectionEvent.Location(fix(at(100), accuracyM = 8f, speedMps = 9f)))
+        .handle(DetectionEvent.TimerTick(at(280)))
+
     private fun pendingCandidate() = driving()
         .handle(DetectionEvent.VehicleExit(T0 + 1_000))
         .handle(DetectionEvent.WalkingEnter(T0 + 30_000))
@@ -895,4 +1614,265 @@ class ParkingDetectionEngineTest {
         assertEquals(candidateBefore, state.candidate)
     }
 
+    // ── §3a "A stop-only candidate can still be a long light" (DECIDED 2026-09-27) ──────
+    // Twins of iOS `ParkingTransitionEvidenceTests` "A silent stop that moves on is a long
+    // light": the same events, the same outcomes, so the two engines cannot disagree on
+    // `long_stop_in_traffic` again.
+
+    /**
+     * iOS `stoppedInTrafficEngine()`: moved at 100 s, then stood still reporting a stop until
+     * `movementIdleWindow` opened the transition at 280 s — where that same stopped fix
+     * confirms it. Nothing but absence says this drive ended: a jam, or a parking.
+     */
+    private fun stoppedInTraffic(): Pair<DetectionEngineState, CandidateSnapshot> {
+        val state = drivenFromEnter()
+            .handle(DetectionEvent.Location(fix(at(100), accuracyM = 8f, speedMps = 9f)))
+            .handle(DetectionEvent.Location(fix(at(200), accuracyM = 8f, speedMps = 0f)))
+            .handle(DetectionEvent.Location(fix(at(280), accuracyM = 8f, speedMps = 0f)))
+        return state to checkNotNull(state.candidate) { "the stop at 280 s must confirm the transition" }
+    }
+
+    private fun movingFix(seconds: Long, north: Double, speedMps: Float = 8f) =
+        DetectionEvent.Location(fix(at(seconds), accuracyM = 8f, speedMps = speedMps, north = north))
+
+    @Test
+    fun `a candidate confirmed only by a stop keeps its resume window open`() {
+        // Arrange / Act
+        val (state, candidate) = stoppedInTraffic()
+
+        // Assert
+        assertEquals(DetectionState.CANDIDATE_PENDING, state.state)
+        assertEquals(ConfidenceBucket.LOW, candidate.confidence)
+        val window = checkNotNull(state.stopOnlyResumeWindow) { "a stop-only candidate opens the window" }
+        assertEquals("the drive ended at the transition's entry", at(280), window.driveEndedAtMillis)
+        assertEquals(at(280) + ParkingDetectionEngine.TRANSITION_WINDOW_MILLIS, window.deadlineMillis)
+    }
+
+    @Test
+    fun `a reported moving fix after a stop-only candidate retires it and resumes the same drive`() {
+        // Arrange
+        val (pending, candidate) = stoppedInTraffic()
+
+        // Act — the queue moves. One fix is a spike (§7: one event alone never confirms);
+        // the second is the car.
+        val firstMoving = pending.handle(movingFix(340, north = 150.0))
+        val step = engine.handle(firstMoving, movingFix(355, north = 300.0, speedMps = 9f))
+
+        // Assert — withdrawn, and the trip continues as the same travel session.
+        assertEquals(DetectionState.CANDIDATE_PENDING, firstMoving.state)
+        assertEquals(DetectionState.DRIVING, step.state.state)
+        assertEquals(
+            listOf(DetectionEffect.RetireCandidate(candidate.id)),
+            step.effects.filterIsInstance<DetectionEffect.RetireCandidate>(),
+        )
+        assertTrue("one checkpoint, straight to DRIVING", step.effects.last() is DetectionEffect.PersistCheckpoint)
+        assertNull(step.state.candidate)
+        assertNull(step.state.stopOnlyResumeWindow)
+        val session = checkNotNull(step.state.session)
+        assertEquals("the trip keeps its own start", T0, session.evidence.vehicleFirstSeenAtMillis)
+        assertNull("the stop was a long light, not how the drive ended", session.stop)
+        assertFalse("§12's allowance is restored", session.candidateProduced)
+        assertEquals("the moving fix anchors the idle clock itself", at(355), session.lastMovementEvidenceAtMillis)
+        assertEquals("contract §8: a candidate was created", 1, step.state.candidatesCreated)
+    }
+
+    @Test
+    fun `vehicle enter after a stop-only candidate resumes the same drive, not a new journey`() {
+        // Arrange
+        val (pending, candidate) = stoppedInTraffic()
+
+        // Act
+        val step = engine.handle(pending, DetectionEvent.VehicleEnter(at(330)))
+
+        // Assert
+        assertEquals(DetectionState.DRIVING, step.state.state)
+        assertTrue(DetectionEffect.RetireCandidate(candidate.id) in step.effects)
+        val session = checkNotNull(step.state.session)
+        assertEquals(T0, session.evidence.vehicleFirstSeenAtMillis)
+        assertEquals(
+            "§3a: a resume on vehicle evidence re-anchors the idle clock at the resume",
+            at(330),
+            session.lastMovementEvidenceAtMillis,
+        )
+    }
+
+    @Test
+    fun `the resume window closes transitionWindow after the drive ended and the candidate stands`() {
+        // Arrange
+        val (pending, candidate) = stoppedInTraffic()
+        val deadline = 280 + ParkingDetectionEngine.TRANSITION_WINDOW_MILLIS / 1_000L
+        val oneMoving = pending
+            .handle(movingFix(deadline - 30, north = 150.0))
+            .handle(DetectionEvent.TimerTick(at(deadline - 1)))
+        assertNotNull("still open a second before the deadline", oneMoving.stopOnlyResumeWindow)
+
+        // Act — the second moving fix arrives after the window closed.
+        val closed = oneMoving.handle(DetectionEvent.TimerTick(at(deadline)))
+        val late = engine.handle(closed, movingFix(deadline + 20, north = 300.0))
+
+        // Assert
+        assertNull(closed.stopOnlyResumeWindow)
+        assertEquals(DetectionState.CANDIDATE_PENDING, late.state.state)
+        assertEquals(candidate, late.state.candidate)
+        assertTrue(late.effects.isEmpty())
+    }
+
+    @Test
+    fun `a speedless fix that clears the distance fallback does not retire a candidate`() {
+        // Arrange — the fallback reads the jitter around a parked car as travel (s03's walk
+        // away clears it at 2.01 m/s), so only a Doppler speed may take a candidate back.
+        val (pending, candidate) = stoppedInTraffic()
+
+        // Act — 500 m and then 1000 m from the last stopped fix, no speed.
+        val state = pending
+            .handle(DetectionEvent.Location(fix(at(360), accuracyM = 10f, north = 500.0)))
+            .handle(DetectionEvent.Location(fix(at(440), accuracyM = 10f, north = 1_000.0)))
+
+        // Assert
+        assertEquals(DetectionState.CANDIDATE_PENDING, state.state)
+        assertEquals(candidate, state.candidate)
+    }
+
+    @Test
+    fun `the walk away from the car does not move the spot a later candidate would inherit`() {
+        // Arrange
+        val (pending, _) = stoppedInTraffic()
+        val spot = pending.lastReliableLocation
+
+        // Act — a clean fix 40 m away, at walking pace.
+        val step = engine.handle(pending, DetectionEvent.Location(fix(at(320), accuracyM = 5f, speedMps = 1.3f, north = 40.0)))
+
+        // Assert
+        assertTrue(step.effects.isEmpty())
+        assertEquals(spot, step.state.lastReliableLocation)
+    }
+
+    @Test
+    fun `a stop-only candidate's drive keeps recording fixes inside the window`() {
+        // Arrange — §3a rule 1: anchors and distance keep running, so a resume continues the
+        // drive where the car actually is.
+        val (pending, _) = stoppedInTraffic()
+        val distanceAtStop = checkNotNull(pending.session).evidence.travelDistanceMeters
+
+        // Act
+        val state = pending.handle(movingFix(340, north = 150.0))
+
+        // Assert
+        assertTrue(checkNotNull(state.session).evidence.travelDistanceMeters > distanceAtStop)
+    }
+
+    @Test
+    fun `a walk-confirmed candidate is not retired by movement`() {
+        // Arrange
+        val pending = idleTransition().handle(DetectionEvent.WalkingEnter(at(300)))
+        assertEquals(DetectionState.CANDIDATE_PENDING, pending.state)
+
+        // Act
+        val state = pending
+            .handle(movingFix(330, north = 300.0))
+            .handle(movingFix(345, north = 450.0, speedMps = 9f))
+
+        // Assert
+        assertEquals(DetectionState.CANDIDATE_PENDING, state.state)
+        assertNull(state.stopOnlyResumeWindow)
+    }
+
+    @Test
+    fun `a candidate after an explicit exit is not retired by movement`() {
+        // Arrange
+        val pending = drivenFromEnter()
+            .handle(DetectionEvent.Location(fix(at(100), accuracyM = 8f, speedMps = 9f)))
+            .handle(DetectionEvent.VehicleExit(at(200)))
+            .handle(DetectionEvent.Location(fix(at(230), accuracyM = 8f, speedMps = 0.3f)))
+        assertEquals(DetectionState.CANDIDATE_PENDING, pending.state)
+
+        // Act
+        val state = pending
+            .handle(movingFix(260, north = 300.0))
+            .handle(movingFix(275, north = 450.0, speedMps = 9f))
+
+        // Assert
+        assertEquals(DetectionState.CANDIDATE_PENDING, state.state)
+        assertNull(state.stopOnlyResumeWindow)
+    }
+
+    @Test
+    fun `a walk after a stop-only candidate closes its resume window`() {
+        // Arrange — the walk is the strongest evidence the person left the car; vehicle
+        // evidence after it is a new journey that leaves the candidate answerable.
+        val (pending, candidate) = stoppedInTraffic()
+
+        // Act
+        val walking = pending.handle(DetectionEvent.WalkingEnter(at(300)))
+        val boarding = engine.handle(walking, DetectionEvent.VehicleEnter(at(330)))
+
+        // Assert
+        assertNull(walking.stopOnlyResumeWindow)
+        assertTrue(boarding.effects.none { it is DetectionEffect.RetireCandidate })
+        assertEquals(DetectionState.DRIVING_CANDIDATE, boarding.state.state)
+        assertEquals(candidate, boarding.state.candidate)
+    }
+
+    @Test
+    fun `a vehicle exit after a stop-only candidate closes its resume window`() {
+        // Arrange
+        val (pending, _) = stoppedInTraffic()
+
+        // Act
+        val state = pending
+            .handle(DetectionEvent.VehicleExit(at(300)))
+            .handle(movingFix(320, north = 150.0))
+            .handle(movingFix(335, north = 300.0, speedMps = 9f))
+
+        // Assert
+        assertNull(state.stopOnlyResumeWindow)
+        assertEquals(DetectionState.CANDIDATE_PENDING, state.state)
+    }
+
+    @Test
+    fun `a stationary enter after a stop-only candidate leaves the resume window open`() {
+        // Arrange — the Transition API can report STILL inside a car at a light.
+        val (pending, candidate) = stoppedInTraffic()
+
+        // Act
+        val still = pending.handle(DetectionEvent.StationaryEnter(at(300)))
+        val step = engine.handle(still.handle(movingFix(320, north = 150.0)), movingFix(335, north = 300.0, speedMps = 9f))
+
+        // Assert
+        assertNotNull(still.stopOnlyResumeWindow)
+        assertTrue(DetectionEffect.RetireCandidate(candidate.id) in step.effects)
+        assertEquals(DetectionState.DRIVING, step.state.state)
+    }
+
+    @Test
+    fun `a drive resumed from a stop-only candidate can still produce the real parking`() {
+        // Arrange
+        val resumed = stoppedInTraffic().first
+            .handle(movingFix(340, north = 150.0))
+            .handle(movingFix(355, north = 300.0, speedMps = 9f))
+
+        // Act
+        val step = engine.handle(resumed.handle(DetectionEvent.VehicleExit(at(500))), DetectionEvent.WalkingEnter(at(510)))
+
+        // Assert — the same trip: its duration runs from T0.
+        assertEquals(DetectionState.CANDIDATE_PENDING, step.state.state)
+        assertEquals(500_000L, createCandidate(step.effects).vehicleSessionDurationMillis)
+        assertEquals(2, step.state.candidatesCreated)
+    }
+
+    @Test
+    fun `answering a stop-only candidate closes its window`() {
+        // Arrange
+        val (pending, _) = stoppedInTraffic()
+
+        // Act
+        val confirmed = pending.handle(DetectionEvent.UserConfirmedParking(at(300)))
+        val rejected = pending.handle(DetectionEvent.UserRejectedParking(at(300)))
+        val saved = pending.handle(DetectionEvent.UserSavedParking(at(300)))
+
+        // Assert
+        assertNull(confirmed.stopOnlyResumeWindow)
+        assertNull(rejected.stopOnlyResumeWindow)
+        assertNull(saved.stopOnlyResumeWindow)
+    }
 }

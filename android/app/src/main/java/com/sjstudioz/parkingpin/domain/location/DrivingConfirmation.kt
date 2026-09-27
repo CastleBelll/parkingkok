@@ -75,7 +75,8 @@ data class DrivingSessionEvidence(
      * docs/05 §7 `distance >= 800m`, under the same noise floor as movement evidence.
      *
      * A leg is added only when its displacement clears the combined positional uncertainty
-     * of the two fixes. Failing keeps the anchor, exactly as the movement clause does, so
+     * of the two fixes. Failing keeps the anchor, exactly as the movement clause does — unless
+     * the new fix is materially more accurate than it (§7, see below) — so
      * slow travel still accumulates — one leg later, measured from further back. Clearing
      * it advances the anchor, which is what stops the same metres being counted twice.
      *
@@ -91,7 +92,17 @@ data class DrivingSessionEvidence(
         val displacement =
             GeoDistance.meters(anchor.latitude, anchor.longitude, sample.latitude, sample.longitude)
         if (displacement < MovementEvidencePolicy.noiseFloorMeters(anchor, sample)) {
-            return copy(distanceNoiseFloorRejectCount = distanceNoiseFloorRejectCount + 1)
+            // docs/05 §7 "A coarse anchor is replaced by a materially better fix"
+            // (2026-09-27). Kept, a 1000 m first fix sets a ~2 km floor for every later
+            // leg, so accurate travel accumulates nothing until the car is kilometres from
+            // a point nobody knew (field draft s02). The refused leg is still not added —
+            // that is what keeps jitter out of the sum.
+            val reanchored = sample.horizontalAccuracyM.toDouble() <
+                anchor.horizontalAccuracyM.toDouble() * DISTANCE_REANCHOR_ACCURACY_RATIO
+            return copy(
+                distanceNoiseFloorRejectCount = distanceNoiseFloorRejectCount + 1,
+                distanceAnchor = if (reanchored) MovementAnchor.of(sample) else anchor,
+            )
         }
         return copy(
             travelDistanceMeters = travelDistanceMeters + displacement,
@@ -103,6 +114,15 @@ data class DrivingSessionEvidence(
         candidate == null -> current
         current == null -> candidate
         else -> maxOf(current, candidate)
+    }
+
+    companion object {
+        /**
+         * How much more accurate a fix must be than the distance anchor to replace it after
+         * a refused leg. **unvalidated** — docs/05 §7, the same value iOS's
+         * `DrivingEvidence.distanceReanchorAccuracyRatio` uses.
+         */
+        const val DISTANCE_REANCHOR_ACCURACY_RATIO: Double = 0.5
     }
 }
 

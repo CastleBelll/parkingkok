@@ -65,6 +65,46 @@ struct ParityFixtureOutcome {
     var effects: [DetectionEffect]
 
     var didCreateCandidate: Bool { !candidates.isEmpty }
+
+    /// Candidates each travel session produced, in order. A session opens where the
+    /// engine resets §12's "one candidate per travel session": on entering
+    /// `DRIVING_CANDIDATE`, and on a departure confirmed into `DRIVING` (§11).
+    ///
+    /// A candidate the session itself took back — retired by a car-link reconnect or by the
+    /// drive moving on (§3a), not superseded by the next one — no longer counts: §3a lets
+    /// that trip produce the real parking later, and the user was never left holding two.
+    static func candidatesPerTravelSession(_ effects: [DetectionEffect]) -> [Int] {
+        var counts: [Int] = [0]
+        var sessionOfCandidate: [UUID: Int] = [:]
+        var previousState: DetectionState?
+        for (index, effect) in effects.enumerated() {
+            switch effect {
+            case let .persistCheckpoint(checkpoint):
+                let opensSession = (checkpoint.state == .drivingCandidate && previousState != .drivingCandidate)
+                    || (checkpoint.state == .driving && previousState == .departureCandidate)
+                if opensSession, counts.last != 0 {
+                    counts.append(0)
+                }
+                previousState = checkpoint.state
+            case let .createCandidate(candidate):
+                sessionOfCandidate[candidate.id] = counts.count - 1
+                counts[counts.count - 1] += 1
+            case let .withdrawCandidate(id):
+                let supersedes: Bool
+                if index + 1 < effects.count, case .createCandidate = effects[index + 1] {
+                    supersedes = true
+                } else {
+                    supersedes = false
+                }
+                if !supersedes, let session = sessionOfCandidate[id] {
+                    counts[session] -= 1
+                }
+            default:
+                break
+            }
+        }
+        return counts
+    }
 }
 
 /// Replays a §8 fixture through the real `ParkingDetectionEngine`.

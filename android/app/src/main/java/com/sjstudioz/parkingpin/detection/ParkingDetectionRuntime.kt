@@ -14,7 +14,9 @@ import com.sjstudioz.parkingpin.domain.detection.DetectionEvent
 import com.sjstudioz.parkingpin.domain.detection.MotionDomainEvent
 import com.sjstudioz.parkingpin.domain.detection.MotionEventKind
 import com.sjstudioz.parkingpin.domain.detection.ParkingDetectionEngine
+import com.sjstudioz.parkingpin.domain.location.LocationCaptureModePolicy
 import com.sjstudioz.parkingpin.domain.location.LocationSample
+import com.sjstudioz.parkingpin.domain.location.LocationSessionMode
 import com.sjstudioz.parkingpin.domain.trace.LocationQualityBucket
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -49,10 +51,20 @@ import java.util.UUID
  * actually reaches the user calls it.
  *
  * ### What it does not own
- * The Fused Location request. [com.sjstudioz.parkingpin.domain.location.LocationCaptureModePolicy]
- * and [FusedLocationSessionController] already decide that from the same motion events, and
- * two owners of one registration is what leaks a session. The one exception is a stop, never
- * a start: a hand save ([handleUserSavedParking]) asks the controller to end its capture.
+ * The Fused Location request. [FusedLocationSessionController] owns it, and two owners of one
+ * registration is what leaks a session. The runtime only *reports* what the engine wants of
+ * it after every batch ([followLocationCapture]) — docs/05 §19 "after every event batch the
+ * adapter releases any capture the engine no longer wants", which also covers the edges no
+ * motion event marks — and a hand save ([handleUserSavedParking]) asks for a stop.
+ *
+ * ### The stop-only resume window lives exactly as long as its capture
+ * docs/05 §3a (round 4). The window is stored with the engine state, because the capture it
+ * holds is a Play services `PendingIntent` that outlives this process, and every broadcast
+ * reloads the state. What must not outlive the capture is the window: before any batch —
+ * and before the capture question a motion event asks — a window whose capture is gone
+ * ([captureRunning] false: reboot, force-stop, app update, revoked permission, an expired or
+ * failed request) is closed, the candidate kept. That is rule 4's lost capture, and the
+ * state §19 forbids ("still holds the capture") never reaches the engine or the follow.
  */
 class ParkingDetectionRuntime(
     private val store: DetectionStateStore,
@@ -75,9 +87,29 @@ class ParkingDetectionRuntime(
      * build with no location session: the save then parks the machine and stops nothing.
      */
     private val stopLocationCapture: (suspend () -> Unit)? = null,
+    /**
+     * Told what the engine wants of the capture after every batch — before, then after, each
+     * null for none (docs/05 §3a / §19; see
+     * [LocationCaptureModePolicy.modeWantedBy]). Null in the tests that only care about
+     * state transitions, and in a build with no location session.
+     */
+    private val followLocationCapture: (suspend (LocationSessionMode?, LocationSessionMode?) -> Unit)? = null,
+    /**
+     * Whether the bounded capture is actually running now (docs/05 §3a "The window lives
+     * exactly as long as its capture"). Null in the tests that only care about state
+     * transitions, and in a build with no location session: the window is then taken to hold
+     * its capture, which is what the engine alone assumes.
+     */
+    private val captureRunning: (suspend () -> Boolean)? = null,
 ) {
 
     private val mutex = Mutex()
+
+    /**
+     * Previews an event for the capture decision, and nothing else: its state is discarded,
+     * so the candidate id it would mint does not matter and must not consume one of [engine]'s.
+     */
+    private val previewEngine = ParkingDetectionEngine { PREVIEW_CANDIDATE_ID }
 
     /**
      * §16 `restore`. Reads what the last process left, or starts from `IDLE`.
@@ -87,6 +119,20 @@ class ParkingDetectionRuntime(
      * fix arrives, or the fix opens a new session and the trip is split in two.
      */
     suspend fun restore(): DetectionEngineState = mutex.withLock { current() }
+
+    /**
+     * The capture the engine would want once it has taken [event] — settled against the
+     * event's own timestamp, exactly as [handleMotion] will settle it — without taking it.
+     *
+     * docs/05 §19 "a motion event the engine did not act on opens nothing": the stored state
+     * is not the engine's view. A `DRIVING_CANDIDATE` whose window lapsed, or a stop-only
+     * window whose deadline passed or that this very exit closes, still reads as wanting a
+     * capture there, and a kerb capture opened on that answer is 300 s of HIGH accuracy the
+     * engine drops fix by fix. Asking after the event is what the capture actually serves.
+     */
+    suspend fun captureWantedAfter(event: MotionDomainEvent): LocationSessionMode? = mutex.withLock {
+        LocationCaptureModePolicy.modeWantedBy(previewEngine.handle(current(), event.toDetectionEvent()).state)
+    }
 
     /** One normalized motion transition (docs/05_CROSS_PLATFORM_DOMAIN_CONTRACT.md §2). */
     suspend fun handleMotion(event: MotionDomainEvent): List<DetectionEffect> =
@@ -113,6 +159,8 @@ class ParkingDetectionRuntime(
      * and a failure there must not cost the state machine its `PARKED`.
      */
     suspend fun handleUserSavedParking(atMillis: Long): List<DetectionEffect> {
+        // The follow already releases a capture the engine had asked for; the stop is for one
+        // it had not, since a save answers the question whatever was gathering fixes for it.
         val effects = handle(listOf(DetectionEvent.UserSavedParking(atMillis)))
         stopLocationCapture?.invoke()
         return effects
@@ -152,8 +200,11 @@ class ParkingDetectionRuntime(
      */
     private suspend fun handle(events: List<DetectionEvent>): List<DetectionEffect> {
         if (events.isEmpty()) return emptyList()
-        return mutex.withLock {
+        var wantedBefore: LocationSessionMode? = null
+        var wantedAfter: LocationSessionMode? = null
+        val effects = mutex.withLock {
             var state = current()
+            wantedBefore = LocationCaptureModePolicy.modeWantedBy(state)
             val effects = mutableListOf<DetectionEffect>()
             for (event in events) {
                 val step = engine.handle(state, event)
@@ -164,11 +215,29 @@ class ParkingDetectionRuntime(
             Log.i(TAG, "engine -> ${state.state} effects=${effects.size}")
             apply(effects)
             store.writeEngineStateAndCheckpoint(state, state.toCheckpoint())
+            wantedAfter = LocationCaptureModePolicy.modeWantedBy(state)
             effects
         }
+        // Outside the lock, after the state is durable, as the hand save's stop is: the
+        // capture has a lock of its own, and a failure there must not cost the engine its
+        // transition. Every batch, not only when the want changed (docs/05 §19): a capture
+        // whose owner went away with no state change has no edge to be released on.
+        followLocationCapture?.invoke(wantedBefore, wantedAfter)
+        return effects
     }
 
-    private suspend fun current(): DetectionEngineState = store.readEngineStateOnce() ?: DetectionEngineState()
+    /**
+     * The stored state, less a stop-only window whose capture is gone (docs/05 §3a rule 4's
+     * lost capture: the window closes, the candidate stays). Read at the start of every batch
+     * and every capture question, so a new process handles nothing against a window that no
+     * longer holds its capture; the closure is written with the batch's own state.
+     */
+    private suspend fun current(): DetectionEngineState {
+        val stored = store.readEngineStateOnce() ?: DetectionEngineState()
+        if (stored.stopOnlyResumeWindow == null) return stored
+        val holdsCapture = captureRunning?.invoke() ?: true
+        return if (holdsCapture) stored else stored.copy(stopOnlyResumeWindow = null)
+    }
 
     private suspend fun apply(effects: List<DetectionEffect>) {
         for (effect in effects) {
@@ -204,6 +273,7 @@ class ParkingDetectionRuntime(
 
     private companion object {
         const val TAG = "PkDetection"
+        const val PREVIEW_CANDIDATE_ID = "capture-preview"
     }
 }
 

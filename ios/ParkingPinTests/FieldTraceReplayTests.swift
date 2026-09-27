@@ -164,8 +164,12 @@ struct FieldTraceReplayTests {
         // Assert — these exact figures are asserted on Android too; a difference is a
         // parity defect, not a tuning difference.
         #expect(abs(recordedSteps - 4120.30) < 0.01)
-        #expect(abs(subway.distanceMeters - 3966.49) < 0.1)
-        #expect(subway.distanceNoiseFloorRejects == 50)
+        // 3966.49 m / 50 before docs/05 §7's coarse-anchor rule (2026-09-27): a fix at
+        // least twice as accurate as the anchor now replaces it after a refused leg, and
+        // that refused leg — inside a several-hundred-metre floor, so indistinguishable
+        // from jitter — is no longer recovered by a later, longer chord.
+        #expect(abs(subway.distanceMeters - 3050.54) < 0.1)
+        #expect(subway.distanceNoiseFloorRejects == 48)
         #expect(abs(walk.distanceMeters - 43.82) < 0.1)
         #expect(walk.distanceNoiseFloorRejects == 33)
     }
