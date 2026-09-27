@@ -29,6 +29,10 @@ struct ParityFixtureTests {
             "field_s33_parked.json",
             "long_stop_in_traffic.json",
             "manual_save_parks.json",
+            // §11 departure: the rows are edges, confirmed on a later event (2026-09-27).
+            "manual_save_then_departure.json",
+            // §11: the exit that confirms a departure also ends that drive (2026-09-28).
+            "manual_save_then_short_departure.json",
             "quiet_transition_expires_no_candidate.json",
             "red_light_no_candidate.json",
             "subway_commute_underground.json",

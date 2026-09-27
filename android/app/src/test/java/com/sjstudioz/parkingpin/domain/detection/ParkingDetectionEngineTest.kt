@@ -213,6 +213,72 @@ class ParkingDetectionEngineTest {
         assertEquals("a red light must not create a candidate", 0, state.candidatesCreated)
     }
 
+    // Twins of iOS `ParkingTransitionEvidenceTests` (docs/05 §3a "The PARKING_TRANSITION
+    // rows, exactly"): the same events and the same outcome on both engines.
+
+    @Test
+    fun `a fix with no speed is not a location stop`() {
+        // Arrange — iOS `speedlessFixIsNotALocationStop`.
+        val transition = idleTransition()
+        assertEquals(DetectionState.PARKING_TRANSITION, transition.state)
+
+        // Act — underground there is no Doppler speed, and silence is not stillness (§7).
+        val state = transition.handle(DetectionEvent.Location(fix(at(300), accuracyM = 8f, speedMps = null)))
+
+        // Assert
+        assertEquals(DetectionState.PARKING_TRANSITION, state.state)
+        assertEquals(0, state.candidatesCreated)
+    }
+
+    @Test
+    fun `a speedless fix that clears section 7's movement bar also returns to DRIVING`() {
+        // Arrange — iOS `derivedMovementResumesDriving`: a slow fix at 200 anchors the
+        // distance fallback without moving it.
+        val transition = drivenFromEnter()
+            .handle(DetectionEvent.Location(fix(at(100), accuracyM = 8f, speedMps = 9f)))
+            .handle(DetectionEvent.Location(fix(at(200), accuracyM = 8f, speedMps = 1f)))
+            .handle(DetectionEvent.TimerTick(at(280)))
+        assertEquals(DetectionState.PARKING_TRANSITION, transition.state)
+
+        // Act — 500 m in 90 s at 10 m accuracy: travel, by §7's fallback.
+        val state = transition.handle(DetectionEvent.Location(fix(at(290), accuracyM = 10f, speedMps = null, north = 500.0)))
+
+        // Assert
+        assertEquals(DetectionState.DRIVING, state.state)
+    }
+
+    @Test
+    fun `a red-light resume does not orphan the drive's reliable fix`() {
+        // Arrange — iOS `resumeKeepsTheInheritanceBound`: §5's bound runs from the trip's
+        // start, not from the last red light.
+        val resumed = drivenFromEnter()
+            .handle(DetectionEvent.Location(fix(at(150), accuracyM = 10f, speedMps = 9f)))
+            .handle(DetectionEvent.TimerTick(at(330)))
+            .also { assertEquals(DetectionState.PARKING_TRANSITION, it.state) }
+            .handle(DetectionEvent.VehicleEnter(at(340)))
+
+        // Act
+        val step = engine.handle(resumed.handle(DetectionEvent.VehicleExit(at(400))), DetectionEvent.WalkingEnter(at(410)))
+
+        // Assert
+        val created = createCandidate(step.effects)
+        assertEquals(at(150), created.lastReliableLocation?.capturedAtMillis)
+        assertTrue(EvidenceReasonCode.RELIABLE_LOCATION_CAPTURED in created.reasons)
+    }
+
+    @Test
+    fun `a link reconnecting inside the transition resumes the drive`() {
+        // Arrange — iOS `connectInTransitionResumes`.
+        val transition = idleTransition()
+
+        // Act
+        val state = transition.handle(DetectionEvent.CarLinkConnected(at(300)))
+
+        // Assert — the same drive: its start survives the resume.
+        assertEquals(DetectionState.DRIVING, state.state)
+        assertEquals(T0, checkNotNull(state.session).evidence.vehicleFirstSeenAtMillis)
+    }
+
     @Test
     fun `PARKING_TRANSITION to IDLE when the transition window elapses`() {
         val state = driving()
@@ -351,6 +417,195 @@ class ParkingDetectionEngineTest {
             .handle(DetectionEvent.Location(fix(T1 + 150_000, accuracyM = 5f, speedMps = 16f, north = 1_800.0)))
 
         assertEquals(DetectionState.DRIVING, driving.state)
+    }
+
+    /**
+     * docs/05 §11 "Departure rows are edges" (G3, 2026-09-27): the event that clears §11's
+     * two bars opens `DEPARTURE_CANDIDATE` and nothing more, even when §7's guard is already
+     * met; confirmation is judged on a later event. iOS used to confirm in the same tick
+     * cascade, so the two platforms' state traces differed on the same input. iOS twin:
+     * `DepartureTests` "A departure is confirmed on a later event than the one that opened it".
+     */
+    @Test
+    fun `a departure is confirmed on a later event than the one that opened it`() {
+        // Arrange — saved by hand, got in, one fix to anchor the distance.
+        val gotIn = idle()
+            .handle(DetectionEvent.UserSavedParking(T0))
+            .handle(DetectionEvent.VehicleEnter(T1))
+            .handle(DetectionEvent.Location(fix(T1 + 10_000, accuracyM = 5f, speedMps = 15f)))
+
+        // Act — one fix clears §11's bars (130 s, 1000 m) and would also meet §7's guard.
+        val opening = engine.handle(
+            gotIn,
+            DetectionEvent.Location(fix(T1 + 130_000, accuracyM = 5f, speedMps = 15f, north = 1_000.0)),
+        )
+        val confirming = engine.handle(
+            opening.state,
+            DetectionEvent.Location(fix(T1 + 160_000, accuracyM = 5f, speedMps = 15f, north = 1_300.0)),
+        )
+
+        // Assert — opened, not confirmed; the next event confirms and the parking ends at
+        // the DEPARTURE_CANDIDATE entry.
+        assertEquals(DetectionState.DEPARTURE_CANDIDATE, opening.state.state)
+        assertTrue(opening.effects.none { it is DetectionEffect.EndActiveParking })
+        assertEquals(DetectionState.DRIVING, confirming.state.state)
+        val ended = confirming.effects.filterIsInstance<DetectionEffect.EndActiveParking>().single()
+        assertEquals(T1 + 130_000, ended.endedAtMillis)
+    }
+
+    /**
+     * The short hop into an underground garage (C1): fixes stop on the ramp, and the exit
+     * arrives while `DEPARTURE_CANDIDATE` is still open. §7's guard became true only through
+     * elapsed time, so the exit is what confirms the departure — and it is also the end of
+     * the drive it confirmed. Read in `DRIVING` too, as `DRIVING_CANDIDATE` already reads the
+     * exit that promoted it; swallowed, the next parking was lost. iOS twin: `DepartureTests`
+     * "A vehicle_exit that confirms a departure also ends the drive".
+     */
+    private fun shortDepartureBeforeTheExit(): DetectionEngineState {
+        val departing = idle()
+            .handle(DetectionEvent.UserSavedParking(at(0)))
+            .handle(DetectionEvent.VehicleEnter(at(600)))
+            .handle(DetectionEvent.Location(fix(at(610), accuracyM = 5f, speedMps = 12f)))
+            .handle(DetectionEvent.Location(fix(at(700), accuracyM = 5f, speedMps = 12f, north = 600.0)))
+        assertEquals("the control: §11's bars, short of §7's guard", DetectionState.DEPARTURE_CANDIDATE, departing.state)
+        return departing
+    }
+
+    @Test
+    fun `a vehicle_exit that confirms a departure also ends the drive`() {
+        // Arrange
+        val departing = shortDepartureBeforeTheExit()
+
+        // Act — 140 s after the enter: §7's duration is met on the exit itself.
+        val exit = engine.handle(departing, DetectionEvent.VehicleExit(at(740)))
+        val walk = engine.handle(exit.state, DetectionEvent.WalkingEnter(at(760)))
+
+        // Assert — the old parking ends at the DEPARTURE_CANDIDATE entry, and the exit opens
+        // the transition the walk confirms.
+        val ended = exit.effects.filterIsInstance<DetectionEffect.EndActiveParking>().single()
+        assertEquals(at(700), ended.endedAtMillis)
+        assertEquals(DetectionState.PARKING_TRANSITION, exit.state.state)
+        assertEquals(at(740), exit.state.stateEnteredAtMillis)
+        assertEquals(DetectionState.CANDIDATE_PENDING, walk.state.state)
+        assertTrue(EvidenceReasonCode.VEHICLE_EXIT_DETECTED in createCandidate(walk.effects).reasons)
+    }
+
+    @Test
+    fun `a car link disconnect that confirms a departure opens the candidate outright`() {
+        // Arrange
+        val departing = shortDepartureBeforeTheExit()
+
+        // Act — §3a's link row, reached through the departure the disconnect confirmed.
+        val step = engine.handle(departing, DetectionEvent.CarLinkDisconnected(at(740)))
+
+        // Assert — the end first, then the new parking, on the same event.
+        val endAt = step.effects.indexOfFirst { it is DetectionEffect.EndActiveParking }
+        val createAt = step.effects.indexOfFirst { it is DetectionEffect.CreateCandidate }
+        assertEquals(at(700), (step.effects[endAt] as DetectionEffect.EndActiveParking).endedAtMillis)
+        assertTrue("the parking ends before the next one is raised", endAt in 0 until createAt)
+        assertEquals(DetectionState.CANDIDATE_PENDING, step.state.state)
+    }
+
+    @Test
+    fun `a vehicle_exit that does not meet the guard still returns to PARKED`() {
+        // Arrange
+        val departing = shortDepartureBeforeTheExit()
+
+        // Act — 110 s after the enter, 600 m: neither §7 bar.
+        val step = engine.handle(departing, DetectionEvent.VehicleExit(at(710)))
+
+        // Assert
+        assertEquals(DetectionState.PARKED, step.state.state)
+        assertTrue(step.effects.none { it is DetectionEffect.EndActiveParking })
+    }
+
+    /**
+     * docs/05 §11 "An event that confirms a departure is also read in DRIVING": `walking_enter`
+     * has no `DRIVING` row (§3a), so a walk that confirms a departure confirms it and nothing
+     * else. iOS twin: `DepartureTests` "A walk that confirms a departure only confirms it".
+     */
+    @Test
+    fun `a walk that confirms a departure only confirms it`() {
+        // Arrange
+        val departing = shortDepartureBeforeTheExit()
+
+        // Act — 140 s after the enter: §7's duration is met on the walk itself.
+        val step = engine.handle(departing, DetectionEvent.WalkingEnter(at(740)))
+
+        // Assert
+        assertEquals(DetectionState.DRIVING, step.state.state)
+        assertEquals(at(700), step.effects.filterIsInstance<DetectionEffect.EndActiveParking>().single().endedAtMillis)
+        assertTrue(step.effects.none { it is DetectionEffect.CreateCandidate })
+    }
+
+    /**
+     * §11b "Vehicle evidence goes stale `recentVehicleWindow` after the connect" (C2): a
+     * connect is vehicle evidence for the departure's lapse, even when an earlier
+     * `vehicle_enter` opened the departure's session. iOS twin: `DepartureTests` "A link
+     * connect after an earlier vehicle_enter holds the departure from the connect".
+     */
+    @Test
+    fun `a link connect after an earlier vehicle_enter holds the departure from the connect`() {
+        // Arrange — sitting in the parked car, then the phone joins it.
+        val gotIn = idle()
+            .handle(DetectionEvent.UserSavedParking(at(0)))
+            .handle(DetectionEvent.VehicleEnter(at(600)))
+
+        // Act — the connect lands after the enter's own window (600 + 300 s) has passed.
+        val connected = gotIn.handle(DetectionEvent.CarLinkConnected(at(950)))
+        val held = connected.handle(DetectionEvent.TimerTick(at(1_200)))
+        val lapsed = held.handle(DetectionEvent.TimerTick(at(1_300)))
+
+        // Assert
+        assertEquals(DetectionState.DEPARTURE_CANDIDATE, connected.state)
+        assertEquals(DetectionState.DEPARTURE_CANDIDATE, held.state)
+        assertEquals(DetectionState.PARKED, lapsed.state)
+        assertEquals(at(950) + DrivingConfirmationGuard.RECENT_VEHICLE_WINDOW_MILLIS, lapsed.stateEnteredAtMillis)
+    }
+
+    /** C2's second twin. iOS twin: "A link connect inside DEPARTURE_CANDIDATE postpones the lapse". */
+    @Test
+    fun `a link connect inside DEPARTURE_CANDIDATE postpones the lapse`() {
+        // Arrange — the departure's only vehicle evidence is the enter at T1: it lapses
+        // after T1 + 300 s unless something refreshes it.
+        val departing = departureCandidate()
+        val lateTick = DetectionEvent.TimerTick(T1 + 350_000)
+        val control = engine.handle(departing, lateTick)
+
+        // Act
+        val connected = departing.handle(DetectionEvent.CarLinkConnected(T1 + 100_000))
+        val step = engine.handle(connected, lateTick)
+
+        // Assert — without the connect the departure lapsed; with it, the evidence is still
+        // recent, so the tick meets §7's guard instead.
+        assertEquals(DetectionState.PARKED, control.state.state)
+        assertEquals(DetectionState.DEPARTURE_CANDIDATE, connected.state)
+        assertEquals(DetectionState.DRIVING, step.state.state)
+        assertEquals(T1 + SUSTAIN, step.effects.filterIsInstance<DetectionEffect.EndActiveParking>().single().endedAtMillis)
+    }
+
+    /**
+     * The disconnect half of §11b "The link edge is vehicle evidence for the departure's
+     * lapse". iOS twin: `DepartureTests` "A link disconnect inside DEPARTURE_CANDIDATE
+     * postpones the lapse".
+     */
+    @Test
+    fun `a link disconnect inside DEPARTURE_CANDIDATE postpones the lapse`() {
+        // Arrange — the disconnect at T1 + 100 s leaves §7's guard unmet (100 s, 600 m).
+        val departing = departureCandidate()
+        val lateTick = DetectionEvent.TimerTick(T1 + 350_000)
+        val control = engine.handle(departing, lateTick)
+
+        // Act
+        val disconnected = departing.handle(DetectionEvent.CarLinkDisconnected(T1 + 100_000))
+        val step = engine.handle(disconnected, lateTick)
+
+        // Assert — the disconnect's evidence is 250 s old at the tick: recent, so the tick
+        // meets §7's guard where the control lapsed.
+        assertEquals(DetectionState.PARKED, control.state.state)
+        assertTrue(control.effects.none { it is DetectionEffect.EndActiveParking })
+        assertEquals(DetectionState.DEPARTURE_CANDIDATE, disconnected.state)
+        assertEquals(T1 + SUSTAIN, step.effects.filterIsInstance<DetectionEffect.EndActiveParking>().single().endedAtMillis)
     }
 
     // ── §3a "The car link" ──────────────────────────────────────────────────────────

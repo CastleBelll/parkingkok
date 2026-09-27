@@ -1111,11 +1111,16 @@ class ParkingDetectionEngine(
             // The parking ended when the car pulled away — `stateEnteredAtMillis` is when
             // §11's two bars were first cleared — not now, which is however long the strict
             // guard took to be satisfied afterwards.
-            val step = state.moveTo(DetectionState.DRIVING, event.atMillis)
-            return EngineStep(
-                step.state,
-                listOf(DetectionEffect.EndActiveParking(state.stateEnteredAtMillis)) + step.effects,
-            )
+            val ended = DetectionEffect.EndActiveParking(state.stateEnteredAtMillis)
+            val confirmed = state.moveTo(DetectionState.DRIVING, event.atMillis)
+            // docs/05 §11: the event that confirmed the departure is then read in `DRIVING`,
+            // as `DRIVING_CANDIDATE` reads the exit that promoted it. A `vehicle_exit` or a
+            // link disconnect whose arrival met the guard only through elapsed time is also
+            // the end of that drive — the short hop into an underground garage — and
+            // swallowing it lost the next parking.
+            val next = fromDriving(confirmed.state, event)
+            val step = if (next.effects.isEmpty()) confirmed else next
+            return EngineStep(step.state, listOf(ended) + step.effects)
         }
         // The stale-evidence half of §11's lapse is a timeout and lives in [timeoutRow];
         // an explicit exit is the event half.

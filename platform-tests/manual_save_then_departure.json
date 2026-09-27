@@ -1,0 +1,29 @@
+{
+  "name": "manual_save_then_departure",
+  "initialState": "IDLE",
+  "events": [
+    {"type":"user_saved","t":0},
+    {"type":"vehicle_enter","t":600,"confidence":"high"},
+    {"type":"location","t":610,"accuracy":8,"speed":12,"distanceFromPreviousM":0},
+    {"type":"location","t":730,"accuracy":8,"speed":12,"distanceFromPreviousM":1000},
+    {"type":"location","t":760,"accuracy":8,"speed":12,"distanceFromPreviousM":300},
+    {"type":"location","t":820,"accuracy":8,"speed":12,"distanceFromPreviousM":600},
+    {"type":"location","t":880,"accuracy":8,"speed":0.3,"distanceFromPreviousM":0},
+    {"type":"vehicle_exit","t":900},
+    {"type":"walking_enter","t":920}
+  ],
+  "expected": {
+    "candidate": true,
+    "finalState": "CANDIDATE_PENDING",
+    "confidence": "high",
+    "requiredReasons": [
+      "location_stopped",
+      "recent_vehicle_activity",
+      "reliable_location_captured",
+      "vehicle_distance_met",
+      "vehicle_duration_met",
+      "vehicle_exit_detected",
+      "walking_after_vehicle"
+    ]
+  }
+}

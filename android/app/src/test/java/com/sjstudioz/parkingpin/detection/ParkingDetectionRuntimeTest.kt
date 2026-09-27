@@ -388,8 +388,9 @@ class ParkingDetectionRuntimeTest {
     fun `a capture lost inside the transition leaves a stop-only candidate no resume window`() = runTest {
         // Arrange — R4-B1, docs/05 §3a / §19 "an open window always holds its capture": the
         // location permission is revoked while PARKING_TRANSITION decides, so the stop-only
-        // candidate that stillness then confirms has no capture to hold. iOS twin in
-        // `ParkingTransitionEvidenceTests`: the same sequence must end in the same state with
+        // candidate that stillness then confirms has no capture to hold. iOS twin:
+        // `ParkingTransitionEvidenceTests` "A stop-only candidate whose transition lost its
+        // capture opens no resume window" — the same sequence must end in the same state with
         // the same candidate on both platforms.
         val registrar = FakeLocationSessionRegistrar()
         val controller = FusedLocationSessionController(store, registrar, clock)
@@ -434,6 +435,33 @@ class ParkingDetectionRuntimeTest {
         target.handleLocations(listOf(fix(START + 200_000, speedMps = 0f)))
         target.handleLocations(listOf(fix(STOP_ONLY_DRIVE_END, speedMps = 0f)))
         assertNotNull("a stop-only window is open", target.restore().stopOnlyResumeWindow)
+    }
+
+    @Test
+    fun `a departure survives a process death and still ends the parking`() = runTest {
+        // Arrange — docs/05 §11 / §14 (R2-B3): a hand-saved parking, then §11's two bars
+        // cleared (100 s in the car, 600 m) and §7's guard still unmet. The engine state is
+        // written after every batch, and a broadcast-started process reloads it whole, so a
+        // restart inside DEPARTURE_CANDIDATE keeps the departure's session. iOS twin requested:
+        // a `restore` of DEPARTURE_CANDIDATE that rebuilds the departure, not one that drops it.
+        runtime.handleUserSavedParking(START)
+        runtime.handleMotion(motion(MotionEventKind.ENTERED_VEHICLE, START + 600_000))
+        runtime.handleLocations(listOf(fixNorth(START + 610_000, northMeters = 0.0)))
+        runtime.handleLocations(listOf(fixNorth(START + 700_000, northMeters = 600.0)))
+        assertEquals(DetectionState.DEPARTURE_CANDIDATE, runtime.restore().state)
+        val endedAt = mutableListOf<Long>()
+        val restarted = ParkingDetectionRuntime(
+            store = store,
+            candidates = { coordinator },
+            endParking = { at -> endedAt += at; null },
+        )
+
+        // Act — the next fix meets §7's guard (160 s, 1 300 m).
+        restarted.handleLocations(listOf(fixNorth(START + 760_000, northMeters = 1_300.0)))
+
+        // Assert — confirmed, and the parking ends at the DEPARTURE_CANDIDATE entry.
+        assertEquals(DetectionState.DRIVING, restarted.restore().state)
+        assertEquals(listOf(START + 700_000), endedAt)
     }
 
     /** The want changes only; the per-batch calls in between repeat the same want. */
@@ -520,6 +548,15 @@ class ParkingDetectionRuntimeTest {
     private fun fix(atMillis: Long, speedMps: Float?) =
         LocationSample(atMillis = atMillis, latitude = 37.5, longitude = 127.0, horizontalAccuracyM = 8f, speedMps = speedMps)
 
+    /** A driving-speed fix [northMeters] up the meridian, for the departure's distance bar. */
+    private fun fixNorth(atMillis: Long, northMeters: Double) = LocationSample(
+        atMillis = atMillis,
+        latitude = 37.5 + northMeters / METERS_PER_DEGREE_LATITUDE,
+        longitude = 127.0,
+        horizontalAccuracyM = 8f,
+        speedMps = 12f,
+    )
+
     private fun <T> assertNotNull(value: T?): T {
         assertNotNull("expected a value", value)
         return checkNotNull(value)
@@ -530,5 +567,6 @@ class ParkingDetectionRuntimeTest {
         const val DRIVE_MILLIS = 420_000L
         const val SUSTAIN = ParkingDetectionEngine.MINIMUM_VEHICLE_DURATION_MILLIS
         const val STOP_ONLY_DRIVE_END = START + 280_000L
+        const val METERS_PER_DEGREE_LATITUDE = 111_320.0
     }
 }

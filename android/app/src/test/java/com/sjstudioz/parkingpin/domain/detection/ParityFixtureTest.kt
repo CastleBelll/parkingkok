@@ -74,6 +74,13 @@ class ParityFixtureTest {
                 "field_s33_parked.json",
                 "long_stop_in_traffic.json",
                 "manual_save_parks.json",
+                // §11 / §11c: a hand-saved parking driven away from — the departure opened on
+                // the event that clears §11's bars and §7 together, confirmed on the next
+                // ("Departure rows are edges") — then the next parking.
+                "manual_save_then_departure.json",
+                // docs/05 §11 "An event that confirms a departure is also read in DRIVING": the
+                // vehicle_exit that confirms a short departure also ends that drive (2026-09-28).
+                "manual_save_then_short_departure.json",
                 "quiet_transition_expires_no_candidate.json",
                 "red_light_no_candidate.json",
                 "subway_commute_underground.json",

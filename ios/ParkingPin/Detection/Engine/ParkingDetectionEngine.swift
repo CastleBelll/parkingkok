@@ -253,7 +253,9 @@ actor ParkingDetectionEngine {
             effects += restoreParkingTransition(now: now)
         case .candidatePending:
             isVehicleActive = false
-        case .idle, .parked, .departureCandidate:
+        case .departureCandidate:
+            effects += restoreDeparture(now: now)
+        case .idle, .parked:
             break
         }
         effects += tick(now: now)
@@ -279,6 +281,27 @@ actor ParkingDetectionEngine {
             driving?.markConfirmed(at: checkpoint.stateEnteredAt)
         }
         return [.startBoundedLocationCapture]
+    }
+
+    /// docs/05 §14 "A restored `DEPARTURE_CANDIDATE` is rebuilt, not dropped" (2026-09-28).
+    ///
+    /// Android keeps the whole engine state across a process death, so a departure it was
+    /// watching can still meet §7's guard afterwards. Dropping it here ended nothing but
+    /// lost a real departure, and the two platforms reached different states for the same
+    /// relaunch. The evidence is recreated the way `restoreDrivingSession` recreates a
+    /// drive: from the state's entry and the last vehicle evidence, no distance and no
+    /// moving samples, so the guard has to be met again by what arrives after the relaunch.
+    /// Vehicle activity is not restored — it only feeds `PARKED`'s bars, which a lapse would
+    /// otherwise inherit.
+    private func restoreDeparture(now: Date) -> [DetectionEffect] {
+        driving = DrivingEvidence(
+            startedAt: checkpoint.stateEnteredAt,
+            lastVehicleEvidenceAt: checkpoint.lastAutomotiveAt
+        )
+        // A departure that already lapsed goes back to `PARKED` at its lapse, as the live
+        // one would, without opening a capture it would close in the same breath.
+        let lapsed = departureWindows(now: now)
+        return lapsed.isEmpty ? [.startBoundedLocationCapture] : lapsed
     }
 
     private func restoreParkingTransition(now: Date) -> [DetectionEffect] {
@@ -373,6 +396,58 @@ actor ParkingDetectionEngine {
     /// The transitions this event triggers by itself (the rows of §3a whose condition is
     /// an event rather than a window).
     private func applyEdge(_ event: DetectionEvent, now: Date) -> [DetectionEffect] {
+        let stateAtEdge = checkpoint.state
+        let effects = applyEventRow(event, now: now)
+        return effects + departureEdge(event, stateAtEdge: stateAtEdge, now: now)
+    }
+
+    /// docs/05 §11 "Departure rows are edges" (2026-09-27): `PARKED → DEPARTURE_CANDIDATE`
+    /// and `DEPARTURE_CANDIDATE → DRIVING` are asked once per event, against the state the
+    /// event found — Android's `fromParked` / `fromDepartureCandidate`. So the event that
+    /// opens a departure never also confirms it: the guard is first asked by the next event.
+    /// iOS used to ask both from the window cascade, confirming on the opening event, so the
+    /// `DEPARTURE_CANDIDATE` row landed on a different event on each platform.
+    ///
+    /// Only when the event's own row left the state where it found it: a `vehicle_exit` or a
+    /// car link has already answered for `PARKED`, and `handleVehicleExit` for
+    /// `DEPARTURE_CANDIDATE`.
+    private func departureEdge(_ event: DetectionEvent, stateAtEdge: DetectionState, now: Date) -> [DetectionEffect] {
+        guard checkpoint.state == stateAtEdge, let evidence = driving else { return [] }
+        switch stateAtEdge {
+        case .parked:
+            if case .vehicleExit = event { return [] }
+            if case .carLinkConnected = event { return [] }
+            guard departureBarsCleared(evidence, now: now) else { return [] }
+            return moveTo(.departureCandidate, now: now)
+        case .departureCandidate:
+            if case .vehicleExit = event { return [] }
+            return evidence.meetsDrivingConfirmation(now: now) ? confirmDeparture(on: event, now: now) : []
+        case .idle, .drivingCandidate, .driving, .parkingTransition, .candidatePending:
+            return []
+        }
+    }
+
+    /// docs/05 §11 "An event that confirms a departure is also read in `DRIVING`"
+    /// (2026-09-28): Android's `fromDepartureCandidate → fromDriving`, the chaining
+    /// `DRIVING_CANDIDATE` already does for the exit that promotes it. `vehicle_exit` and a
+    /// link disconnect are the only events with a `DRIVING` row of their own (§3a); every
+    /// other confirming event confirms and nothing else. Swallowed, the exit of a short hop
+    /// into an underground garage — the fixes stop on the ramp, and the exit is the first
+    /// event after §7's guard came true by elapsed time — lost the next parking.
+    private func confirmDeparture(on event: DetectionEvent, now: Date) -> [DetectionEffect] {
+        let confirmed = confirmDeparture(now: now)
+        switch event {
+        case .vehicleExit:
+            return confirmed + endDrivingSession(reason: .vehicleExit, now: now)
+        case let .carLinkDisconnected(_, kind):
+            return confirmed + handleCarLinkDisconnected(kind: kind, now: now)
+        default:
+            return confirmed
+        }
+    }
+
+    /// The row this event triggers by itself in the state it found.
+    private func applyEventRow(_ event: DetectionEvent, now: Date) -> [DetectionEffect] {
         switch event {
         case let .vehicleEnter(at, _):
             return handleVehicleEnter(at: at, now: now)
@@ -518,11 +593,9 @@ actor ParkingDetectionEngine {
         case .departureCandidate:
             return departureWindows(now: now)
 
-        case .parked:
-            guard let evidence = driving, departureBarsCleared(evidence, now: now) else { return [] }
-            return moveTo(.departureCandidate, now: now)
-
-        case .idle:
+        // §11's bars are an edge, not a window (docs/05 §11 "Departure rows are edges"):
+        // see `departureEdge`.
+        case .parked, .idle:
             return []
         }
     }
@@ -552,23 +625,17 @@ actor ParkingDetectionEngine {
         return closeCandidateResume()
     }
 
-    /// §11's departure rows.
+    /// §11's one window-driven departure row: the lapse. Confirmation is an edge
+    /// (`departureEdge`), as on Android.
     private func departureWindows(now: Date) -> [DetectionEffect] {
             guard let evidence = driving else { return moveTo(.parked, now: now) }
-            // §11 "departure confirmed" is §7's guard in full — the one bar this project
-            // has for a meaningful driving session, movement clause included. Leaving a
-            // parking record open is recoverable; ending one the user is still sitting in
-            // is not, which is why departure is the one place the stricter guard is right.
-            if evidence.meetsDrivingConfirmation(now: now) {
-                return confirmDeparture(now: now)
-            }
             // Vehicle evidence went quiet without ever becoming a drive: the phone woke up
             // in a parked car. Back to `PARKED`, silently, having ended nothing.
             //
             // Strictly *past* the window (docs/05 §11, 2026-09-27): §7's guard still counts
             // evidence exactly `vehicleEvidenceMaxAge` old as recent, so at that instant the
-            // departure may still confirm, and the lapse must not pre-empt it. Android's
-            // settle used to lapse first on the same boundary.
+            // departure may still confirm — on this event's edge, which runs after this
+            // window — and the lapse must not pre-empt it.
             let lapse = (evidence.lastVehicleEvidenceAt ?? evidence.startedAt)
                 .addingTimeInterval(DrivingConfirmationPolicy.drivingCandidateWindow)
             guard now > lapse else { return [] }
@@ -698,6 +765,11 @@ actor ParkingDetectionEngine {
         case .driving:
             return endDrivingSession(reason: .vehicleExit, now: now)
         case .departureCandidate:
+            // Android's `fromDepartureCandidate` asks §7's guard before the exit: a drive
+            // that already met it has departed, and the exit is where that drive ends.
+            if let evidence = driving, evidence.meetsDrivingConfirmation(now: now) {
+                return confirmDeparture(on: .vehicleExit(at: now), now: now)
+            }
             return abandonDeparture(now: now)
         case .parked:
             // Got in, got out again. §11 never moved, so there is nothing to undo beyond
@@ -778,7 +850,12 @@ actor ParkingDetectionEngine {
             // with the radio on costs the record nothing — the evidence goes stale and the
             // machine returns to `PARKED`.
             return openDepartureFromCarLink(now: now)
-        case .drivingCandidate, .driving, .departureCandidate:
+        case .departureCandidate:
+            // §11b: the link is vehicle evidence for the departure's lapse, as on Android,
+            // whose fold extends the session on every connect.
+            driving?.noteVehicleEvidence(at: now)
+            return []
+        case .drivingCandidate, .driving:
             return []
         }
     }
@@ -787,11 +864,14 @@ actor ParkingDetectionEngine {
     ///
     /// The session is the one the fold's `vehicle_enter` would have opened; there may be
     /// none yet, in which case the link itself is the first vehicle evidence this departure
-    /// has and the evidence starts here.
+    /// has and the evidence starts here. Either way the evidence is fresh as of the connect
+    /// (§11b "goes stale `recentVehicleWindow` after the connect"): a reused session kept its
+    /// `vehicle_enter`'s time, and a departure opened past that window lapsed on the same event.
     private func openDepartureFromCarLink(now: Date) -> [DetectionEffect] {
         if driving == nil {
             driving = DrivingEvidence(startedAt: now, lastVehicleEvidenceAt: now)
         }
+        driving?.noteVehicleEvidence(at: now)
         return moveTo(.departureCandidate, now: now)
     }
 
@@ -823,7 +903,16 @@ actor ParkingDetectionEngine {
             current.evidence.vehicleExitDetected = true
             transition = current
             return createCandidate(from: current, now: now)
-        case .idle, .candidatePending, .parked, .departureCandidate:
+        case .parked, .departureCandidate:
+            // §11b: the disconnect ends the vehicle activity §11's bars measure and is still
+            // vehicle evidence for the departure's lapse — Android's `endVehicleActivity`.
+            // `departureEdge` then asks §7's guard, and a met guard reads this disconnect in
+            // `DRIVING` too.
+            isVehicleActive = false
+            vehicleActiveSince = nil
+            driving?.noteVehicleEvidence(at: now)
+            return []
+        case .idle, .candidatePending:
             return []
         }
     }

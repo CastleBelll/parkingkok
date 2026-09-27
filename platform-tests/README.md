@@ -9,11 +9,10 @@
 > 각각 로드해서 **실제 엔진에 재생**하고 `expected`와 대조한다. 여기에 더해 `tools/`가
 > fixture를 **만드는** 변환기와 **검사하는** 검증기를 제공한다.
 >
-> 타임아웃 행은 `timer_tick` 이벤트에서만 발화한다(docs/05 §3a). 경과 시간으로 상태가
-> 바뀌기를 기대하는 fixture는 tick을 명시해야 한다. 2026-09-20 에 iOS 러너에 `timer_tick`
-> 이 빠져 있던 것을 고치기 전까지는 **어떤 fixture도 tick 을 쓸 수 없었다** — 그래서 §3a 의
-> 타임아웃 행 네 개에 fixture 가 하나도 없었다. 지금은
-> `quiet_transition_expires_no_candidate` 가 `transitionWindow` 를 고정한다.
+> 경과 시간 행(window)은 **모든 이벤트**에서, 그 이벤트의 시각으로 판정된다(docs/05 §3a
+> "When a timeout fires"). 다음 이벤트 없이 경과 시간만으로 상태가 바뀌기를 기대하는
+> fixture는 그 시각에 `timer_tick`을 명시해야 한다 — fixture에는 그 외의 시계가 없다.
+> `quiet_transition_expires_no_candidate` 가 `transitionWindow` 를 그렇게 고정한다.
 >
 > 차량 링크에 의존하는 fixture 는 만들지 않는다(§3a: "No fixture may depend on a link event
 > being present"). iOS 는 클래식 블루투스 엣지를 관측할 수 없어서, 링크가 있어야만 성립하는
@@ -56,7 +55,7 @@
      이 필드는 fixture로 넘어가지 않는다
 3. trace 파일을 회수한다. 진단 파일과 같은 경로다:
    - iOS: `xcrun devicectl device copy from ...`
-   - Android: `adb exec-out run-as com.parkingkok.app cat ...`
+   - Android: `adb exec-out run-as com.sjstudioz.parkingpin cat ...`
    - sudo/root 불필요
 
 라벨이 없으면 `mode: "unknown"`이고, 변환기는 `expected` 후보를 제안하지 않는다.
@@ -224,12 +223,12 @@ trace까지 왔다면 어댑터 결함이므로 변환기가 거부한다 — `p
 | # | 시나리오 | 라벨 | 상태 |
 |---|---|---|---|
 | 1 | vehicle → underground → walk → candidate | `car` / `parked: true` | ⬜ (`vehicle_then_walk.json`이 지상 버전만 커버) |
-| 2 | 긴 신호대기 → 주행 계속 → candidate 없음 | `car` / `parked: false` | ⬜ |
+| 2 | 긴 신호대기 → 주행 계속 → candidate 없음 | `car` / `parked: false` | ✅ `red_light_no_candidate.json` (짧은 정차), `long_stop_in_traffic.json` (긴 형태: stop-only 후보가 생겼다가 차량 재개로 철회, 최종 `DRIVING`) |
 | 3 | 주유소 → 짧은 도보 → 차량 재개 | `car` / `parked: false` | ⬜ |
 | 4 | taxi → walk → candidate 가능/알려진 한계 | `taxi` | ⬜ |
-| 5 | 버스 반복 정차 → 알림 폭주 없음 | `bus` / `parked: false` | ⬜ |
+| 5 | 버스 반복 정차 → 알림 폭주 없음 | `bus` / `parked: false` | ✅ `bus_repeated_stops_no_storm.json` (+ 양 러너의 travel session당 후보 1개 검사) |
 | 6 | 터널 GPS 소실 → candidate 없음 | `car` / `parked: false` | ✅ `tunnel_no_parking.json` |
-| 7 | 프로세스 사망/재시작 → 중복 candidate 없음 | — | ⬜ ⚠️ |
+| 7 | 프로세스 사망/재시작 → 중복 candidate 없음 | — | ⬜ ⚠️ (fixture 없음. `restore` 의미론은 엔진 단위 테스트가 고정: docs/05 §3a 창 규칙, §14 `DEPARTURE_CANDIDATE` 복원) |
 | 8 | 이동 중 권한 회수 | — | ⬜ ⚠️ |
 | 9 | 절전 모드 저하 동작 | — | ⬜ ⚠️ |
 | 10 | 앱이 기록을 갱신하는 중 위젯 편집 | — | ⬜ ⚠️ |
@@ -286,6 +285,33 @@ M3에서 필드 데이터로 튜닝된다. 지금 박으면 튜닝을 막는다.
 **이 fixture의 쓸모는 M3의 기준선이다.** confidence 튜닝이 지하철 오검출을 실제로
 낮추는지, 이 값이 내려가는 것으로 측정한다. 제품 쪽 방어선은 완곡한 문구
 ("주차한 것 같아요")와 `주차 아님` 액션이며, 그건 엔진이 아니라 UX의 몫이다.
+
+## `manual_save_then_departure` — 출발은 다음 이벤트에서 확정된다 (2026-09-27)
+
+손으로 저장한 주차(`user_saved`) → 다시 탑승 → t=730 한 fix가 §11의 두 기준(90 s, 500 m)을
+넘기면서 §7 guard도 이미 충족하는 순간 → 이어지는 주행 → 하차·도보로 다음 주차.
+docs/05 §11 "Departure rows are edges": 출발을 연 이벤트는 그것을 확정하지 않는다.
+golden이 고정하는 순서는 event 3 `DEPARTURE_CANDIDATE`, event 4 `DRIVING` + `endActiveParking`
+이다. 예전 iOS는 event 3 하나에서 둘 다 했고, 그 차이를 잡는 fixture가 이것 전에는 없었다.
+주차 종료 시각(= `DEPARTURE_CANDIDATE` 진입 시각)은 golden에 없으므로 양 플랫폼 엔진 단위
+테스트("A departure is confirmed on a later event than the one that opened it")가 고정한다.
+`expected`의 `confidence: high`와 `requiredReasons`는 양 엔진이 golden에서 같이 내는 값이고,
+§8로 다시 계산하면 25 + 15(exit) + 30(walk) + 10(stopped) + 5(300 s·1900 m, 둘 다 §7의 두 배
+이상) = 85 → `high`다.
+
+## `manual_save_then_short_departure` — 출발을 확정한 하차는 그 주행의 끝이다 (2026-09-28)
+
+지하주차장으로 들어가는 짧은 이동: 손으로 저장한 주차 → t=600 재탑승 → t=700 한 fix가
+§11의 두 기준(100 s, 600 m)을 넘긴다(§7 guard는 아직 미충족) → 경사로에서 fix가 끊기고 →
+t=740 `vehicle_exit`, 경과 시간만으로 guard 충족(140 s) → t=760 도보.
+docs/05 §11 "An event that confirms a departure is also read in `DRIVING`": 하차는 출발을
+확정하고, 같은 이벤트가 `DRIVING`에서 다시 읽혀 그 주행을 끝낸다. golden이 고정하는 순서는
+event 3 `DEPARTURE_CANDIDATE`, event 4 `PARKING_TRANSITION` + `endActiveParking`, event 5
+후보다. 이 규칙 전에는 하차가 확정에 삼켜져 `DRIVING`에 남았고, 이전 주차만 끝난 채
+다음 주차가 사라졌다. `expected`의 `confidence: medium`과 `requiredReasons`는 양 엔진이
+golden에서 같이 내는 값이고, §8로 다시 계산하면 25 + 15(exit) + 30(walk) = 70 → `medium`
+이다(정지 fix 없음, 140 s·600 m는 §7의 "넉넉히 초과"가 아니다). 링크 disconnect로 확정되는
+같은 경우는 §3a가 링크 fixture를 금지하므로 양 플랫폼 엔진 twin 테스트가 고정한다.
 
 ## 실주행 field fixture — 승격된 것과 drafts에 남은 것 (2026-09-27)
 

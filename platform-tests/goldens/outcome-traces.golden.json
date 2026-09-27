@@ -441,6 +441,67 @@
         "state": "PARKED"
       }
     ],
+    "manual_save_then_departure.json": [
+      {
+        "event": 0,
+        "t": 0.0,
+        "state": "PARKED"
+      },
+      {
+        "event": 3,
+        "t": 730.0,
+        "state": "DEPARTURE_CANDIDATE"
+      },
+      {
+        "event": 4,
+        "t": 760.0,
+        "state": "DRIVING",
+        "effects": [
+          "endActiveParking"
+        ]
+      },
+      {
+        "event": 7,
+        "t": 900.0,
+        "state": "PARKING_TRANSITION"
+      },
+      {
+        "event": 8,
+        "t": 920.0,
+        "state": "CANDIDATE_PENDING",
+        "effects": [
+          "create high location_stopped,recent_vehicle_activity,reliable_location_captured,vehicle_distance_met,vehicle_duration_met,vehicle_exit_detected,walking_after_vehicle"
+        ]
+      }
+    ],
+    "manual_save_then_short_departure.json": [
+      {
+        "event": 0,
+        "t": 0.0,
+        "state": "PARKED"
+      },
+      {
+        "event": 3,
+        "t": 700.0,
+        "state": "DEPARTURE_CANDIDATE"
+      },
+      {
+        "event": 4,
+        "t": 740.0,
+        "state": "PARKING_TRANSITION",
+        "effects": [
+          "endActiveParking"
+        ]
+      },
+      {
+        "event": 5,
+        "t": 760.0,
+        "state": "CANDIDATE_PENDING",
+        "effects": [
+          "create medium recent_vehicle_activity,reliable_location_captured,vehicle_duration_met,vehicle_exit_detected,walking_after_vehicle"
+        ]
+      }
+    ],
     "quiet_transition_expires_no_candidate.json": [
       {
         "event": 0,

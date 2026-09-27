@@ -1,0 +1,24 @@
+{
+  "name": "manual_save_then_short_departure",
+  "initialState": "IDLE",
+  "events": [
+    {"type":"user_saved","t":0},
+    {"type":"vehicle_enter","t":600,"confidence":"high"},
+    {"type":"location","t":610,"accuracy":8,"speed":12,"distanceFromPreviousM":0},
+    {"type":"location","t":700,"accuracy":8,"speed":12,"distanceFromPreviousM":600},
+    {"type":"vehicle_exit","t":740},
+    {"type":"walking_enter","t":760}
+  ],
+  "expected": {
+    "candidate": true,
+    "finalState": "CANDIDATE_PENDING",
+    "confidence": "medium",
+    "requiredReasons": [
+      "recent_vehicle_activity",
+      "reliable_location_captured",
+      "vehicle_duration_met",
+      "vehicle_exit_detected",
+      "walking_after_vehicle"
+    ]
+  }
+}

@@ -115,6 +115,40 @@ struct ParkingTransitionEvidenceTests {
         #expect(await engine.state == .parkingTransition)
     }
 
+    /// §3a location stop, condition 1: the drive's §5 gate must accept the fix. Android
+    /// twin: `an outlier fix that reports a stop confirms nothing`.
+    @Test("An outlier fix that reports a stop confirms nothing")
+    func outlierStopConfirmsNothing() async {
+        // Arrange
+        let engine = await drivingEngine()
+        _ = await engine.handle(fix(100, speed: 12))
+        _ = await engine.handle(.vehicleExit(at: at(110)))
+
+        // Act — 10 km in 10 s, reporting speed 0: a GPS jump on the way underground.
+        let effects = await engine.handle(fix(120, north: 10_000, speed: 0))
+
+        // Assert
+        #expect(await engine.state == .parkingTransition)
+        #expect(candidates(effects).isEmpty)
+    }
+
+    /// §3a location stop, condition 3: at or after the transition's entry. Android twin:
+    /// `a stopped fix timestamped before the transition confirms nothing`.
+    @Test("A stopped fix timestamped before the transition confirms nothing")
+    func stopBeforeTheTransitionConfirmsNothing() async {
+        // Arrange
+        let engine = await drivingEngine()
+        _ = await engine.handle(fix(100, speed: 12))
+        _ = await engine.handle(.vehicleExit(at: at(190)))
+
+        // Act — a fix from before the exit, delivered late.
+        let effects = await engine.handle(fix(140, speed: 0))
+
+        // Assert
+        #expect(await engine.state == .parkingTransition)
+        #expect(candidates(effects).isEmpty)
+    }
+
     // MARK: - §3a "movement evidence returns" (F2, F07)
 
     @Test("A moving fix inside the transition returns to DRIVING and keeps the drive")
@@ -451,6 +485,63 @@ struct ParkingTransitionEvidenceTests {
         #expect(candidate.reasonCodes.contains(.locationQualityDegraded))
     }
 
+    /// §8b weighs a *fall* into poor. Android twin: `a drive that was poor throughout never
+    /// fell into poor`.
+    @Test("A drive that was poor throughout never fell into poor")
+    func poorThroughoutIsNotAFall() async throws {
+        // Arrange — a long underground stretch, poor from its first fix.
+        let engine = await drivingEngine()
+        _ = await engine.handle(fix(600, accuracy: 80, speed: nil))
+        _ = await engine.handle(fix(650, accuracy: 90, speed: nil))
+        _ = await engine.handle(.vehicleExit(at: at(700)))
+
+        // Act
+        let candidate = try #require(await candidates(engine.handle(.walkingEnter(at: at(710)))).first)
+
+        // Assert
+        #expect(!candidate.reasonCodes.contains(.locationQualityDegraded))
+    }
+
+    /// Android twin: `a fall into poor near the end still counts after the quality recovers`.
+    @Test("A fall into poor near the end still counts after the quality recovers")
+    func recoveredFallStillCounts() async throws {
+        // Arrange — good, poor at 450 s, fair again at 480 s, exit at 600 s.
+        let engine = await drivingEngine()
+        _ = await engine.handle(fix(400, accuracy: 10, speed: nil))
+        _ = await engine.handle(fix(450, accuracy: 80, speed: nil))
+        _ = await engine.handle(fix(480, accuracy: 30, speed: nil))
+        _ = await engine.handle(.vehicleExit(at: at(600)))
+
+        // Act
+        let candidate = try #require(await candidates(engine.handle(.walkingEnter(at: at(610)))).first)
+
+        // Assert
+        #expect(candidate.reasonCodes.contains(.locationQualityDegraded))
+    }
+
+    /// §8b `location_stopped`, the re-anchored clause: a `vehicle_enter` resume moves the
+    /// drive's last movement to the resume (§3a "Resuming keeps the drive"), so a stop before
+    /// it belongs to a red light the drive left. Android twin: `a stop from before a vehicle
+    /// enter resume is not how the drive ended`.
+    @Test("A stop from before a vehicle_enter resume is not how the drive ended")
+    func stopBeforeAResumeIsNotLocationStopped() async throws {
+        // Arrange — stopped at 120 s, idled into a transition at 280 s, resumed at 300 s.
+        let engine = await drivingEngine()
+        _ = await engine.handle(fix(100, speed: 9))
+        _ = await engine.handle(fix(120, speed: 0.5))
+        _ = await engine.handle(.timerTick(at: at(290)))
+        #expect(await engine.state == .parkingTransition, "the control")
+        _ = await engine.handle(.vehicleEnter(at: at(300)))
+        #expect(await engine.state == .driving, "the control")
+        _ = await engine.handle(.vehicleExit(at: at(400)))
+
+        // Act
+        let candidate = try #require(await candidates(engine.handle(.walkingEnter(at: at(410)))).first)
+
+        // Assert
+        #expect(!candidate.reasonCodes.contains(.locationStopped))
+    }
+
     // MARK: - §8b reliable_location_captured (F10)
 
     @Test("A reliable fix left by an earlier trip does not earn reliable_location_captured")
@@ -585,6 +676,67 @@ struct ParkingTransitionEvidenceTests {
         // Assert
         #expect(await engine.state == .idle)
         #expect(candidates(effects).isEmpty)
+    }
+
+    /// Android twin: `the transition lapse is stamped at its deadline`.
+    @Test("The transition lapse is stamped at its deadline")
+    func transitionLapseIsStampedAtItsDeadline() async {
+        // Arrange
+        let engine = await drivingEngine()
+        _ = await engine.handle(.vehicleExit(at: at(200)))
+
+        // Act
+        _ = await engine.handle(.timerTick(at: at(900)))
+
+        // Assert
+        #expect(await engine.state == .idle)
+        #expect(await engine.snapshot().checkpoint.stateEnteredAt == at(200 + ParkingTransitionPolicy.transitionWindow))
+    }
+
+    /// Android twin: `the driving candidate lapse is stamped at its deadline`.
+    @Test("The driving candidate lapse is stamped at its deadline")
+    func drivingCandidateLapseIsStampedAtItsDeadline() async {
+        // Arrange — a link with no vehicle activity: nothing will ever promote it.
+        let engine = ParkingDetectionEngine()
+        _ = await engine.restore(nil, seedIfAbsent: false, now: t0)
+        _ = await engine.handle(.carLinkConnected(at: t0, kind: .bluetoothAudio))
+
+        // Act
+        _ = await engine.handle(.timerTick(at: at(1_000)))
+
+        // Assert
+        #expect(await engine.state == .idle)
+        #expect(await engine.snapshot().checkpoint.stateEnteredAt == at(DrivingConfirmationPolicy.drivingCandidateWindow))
+    }
+
+    /// Android twin: `the session ceiling is stamped at its deadline`.
+    @Test("The session ceiling is stamped at its deadline")
+    func sessionCeilingIsStampedAtItsDeadline() async {
+        // Arrange
+        let engine = await drivingEngine()
+
+        // Act
+        _ = await engine.handle(.timerTick(at: at(DrivingSessionTimeoutPolicy.maximumDuration + 600)))
+
+        // Assert
+        #expect(await engine.state == .idle)
+        #expect(await engine.snapshot().checkpoint.stateEnteredAt == at(DrivingSessionTimeoutPolicy.maximumDuration))
+    }
+
+    /// Android twin: `the candidate expiry is stamped at its deadline`.
+    @Test("The candidate expiry is stamped at its deadline")
+    func candidateExpiryIsStampedAtItsDeadline() async throws {
+        // Arrange
+        let engine = await drivingEngine()
+        _ = await engine.handle(.vehicleExit(at: at(300)))
+        let candidate = try #require(await candidates(engine.handle(.walkingEnter(at: at(330)))).first)
+
+        // Act
+        _ = await engine.handle(.timerTick(at: candidate.expiresAt.addingTimeInterval(600)))
+
+        // Assert
+        #expect(await engine.state == .idle)
+        #expect(await engine.snapshot().checkpoint.stateEnteredAt == candidate.expiresAt)
     }
 
     // MARK: - A silent stop that moves on is a long light (docs/05 §3a, B7)
@@ -854,5 +1006,33 @@ struct ParkingTransitionEvidenceTests {
         let parking = try #require(candidates(effects).first)
         #expect(parking.driveDuration == 500)
         #expect(await engine.state == .candidatePending)
+    }
+
+    /// §3a stop-only rule 4: a confirm, a reject or a `user_saved` closes the window and
+    /// releases its capture. Android twin: `answering a stop-only candidate closes its window`.
+    @Test("Answering a stop-only candidate closes its window", arguments: StopOnlyAnswer.allCases)
+    func answeringAStopOnlyCandidateClosesItsWindow(answer: StopOnlyAnswer) async throws {
+        // Arrange
+        let (engine, _) = try await stoppedInTrafficEngine()
+        #expect(await engine.snapshot().isLocationCaptureWanted, "the control: the window holds the capture")
+
+        // Act
+        let effects = await engine.handle(answer.event(at: at(300)))
+
+        // Assert
+        #expect(effects.contains(.stopLocationCapture))
+        #expect(await engine.snapshot().isLocationCaptureWanted == false)
+    }
+
+    enum StopOnlyAnswer: CaseIterable, Sendable {
+        case confirmed, rejected, saved
+
+        func event(at date: Date) -> DetectionEvent {
+            switch self {
+            case .confirmed: .userConfirmedParking(at: date)
+            case .rejected: .userRejectedParking(at: date)
+            case .saved: .userSavedParking(at: date)
+            }
+        }
     }
 }

@@ -591,8 +591,9 @@ platforms. iOS applies this when the candidate is created (`resumable` requires
 `transition.isCapturing`); Android's engine records the window and its runtime closes it
 before the next batch because the capture is not running — the same product outcome. Pinned
 by iOS `ParkingTransitionEvidenceTests` "A stop-only candidate whose transition lost its
-capture opens no resume window"; Android must pin the same sequence at the runtime level.
-The window is not part of
+capture opens no resume window"; its Android twin is `ParkingDetectionRuntimeTest` "a capture
+lost inside the transition leaves a stop-only candidate no resume window", which pins the same
+sequence at the runtime level. The window is not part of
 the §14 `DetectionCheckpoint`, and both engines apply one rule to a process death inside it:
 rule 4's "lost capture" — the window closes, the candidate stays, as it did before this rule.
 What differs is only whether the capture itself survives the process, which is an OS fact,
@@ -1128,6 +1129,55 @@ refuses vehicle evidence stamped after `now` on both platforms. On Android, a `v
 while `PARKED` drops the departure's session, as iOS always did, so §11's 500 m and §7's
 duration are measured per get-in, not accumulated across them.
 
+**Departure rows are edges (DECIDED 2026-09-27).** `PARKED → DEPARTURE_CANDIDATE` (§11's two
+bars, or §11b's link) and `DEPARTURE_CANDIDATE → DRIVING` (§7's guard) are asked at an event's
+**edge**, once, against the state that event found — never in "judge the windows" (§3a "When a
+timeout fires"). The event that opens a departure therefore never also confirms it: §7's guard
+is first asked by the *next* event — a fix, a motion edge or a `timer_tick`, which both
+platforms send once a minute while the capture runs. The lapse is the one departure row a
+window drives; it is judged before the edge, strictly past its deadline, as above. A
+`vehicle_exit` in `DEPARTURE_CANDIDATE` asks the guard first: met, the departure confirms (and
+the exit is then read in `DRIVING`, below); not met, the machine returns to `PARKED`.
+`endActiveParking` carries the `DEPARTURE_CANDIDATE` entry time (§11a) in every case.
+
+Why this and not the reverse: Android always worked this way. iOS asked both rows from its
+window cascade, so an event that cleared §11's bars with §7's guard already met went
+`PARKED → DEPARTURE_CANDIDATE → DRIVING` in one pass, and the `DEPARTURE_CANDIDATE` row and the
+`endActiveParking` landed on a different event on each platform. Making Android confirm in the
+same pass would add a confirming row to its settle — a second place §7's guard is asked —
+while moving iOS's two rows to the edge is a local change. The cost is a confirmation at most
+one event later; the end time is unaffected. Pinned by `platform-tests/manual_save_then_departure.json`
+(its golden trace: `DEPARTURE_CANDIDATE` at event 3, `DRIVING` with `endActiveParking` at
+event 4) and by the engine twins "A departure is confirmed on a later event than the one that
+opened it" (iOS `DepartureTests`) / `a departure is confirmed on a later event than the one
+that opened it` (Android `ParkingDetectionEngineTest`).
+
+**An event that confirms a departure is also read in `DRIVING` (DECIDED 2026-09-28).** After
+`DEPARTURE_CANDIDATE → DRIVING`, the same event is handed to `DRIVING`'s own rows — the chaining
+`DRIVING_CANDIDATE` already does for the exit that promotes it. Only two events have such a
+row (§3a): a `vehicle_exit` ends the drive (`PARKING_TRANSITION`, `vehicle_exit_detected`), and
+a link disconnect opens the candidate outright (§3a's link table). Every other confirming event
+— a fix, a tick, `walking_enter`, `stationary_enter`, a connect — confirms and nothing else.
+`endActiveParking` is emitted first and still carries the `DEPARTURE_CANDIDATE` entry.
+
+Why: the short hop into an underground garage. The fixes stop on the ramp, §7's guard comes
+true by elapsed time alone, and the `vehicle_exit` is the first event to ask it. Swallowed, the
+exit confirmed the departure and left the machine in `DRIVING`; the walk that followed has no
+`DRIVING` row, and `movementIdleWindow` later opened a transition stamped after that walk, which
+lapsed to `IDLE`. The old parking was ended and the new one lost. Declaring the swallow
+intended was the alternative, and it buys nothing: the exit is unambiguous evidence the drive it
+just confirmed is over. iOS had this outcome before the rows became edges (its window cascade
+confirmed ahead of the exit's row), so this is also the restoration of that behaviour.
+
+Pinned by `platform-tests/manual_save_then_short_departure.json` (golden: `DEPARTURE_CANDIDATE`
+at event 3, `PARKING_TRANSITION` with `endActiveParking` at event 4, a `medium` candidate at the
+walk — 25 + 15 exit + 30 walk = 70, no stop fix, and 140 s / 600 m is not "comfortably over"
+§7) and by the engine twins "A vehicle_exit that confirms a departure also ends the drive",
+"A car link disconnect that confirms a departure opens the candidate outright" and "A vehicle_exit
+that does not meet the guard still returns to PARKED" (iOS `DepartureTests`) / the same names
+in Android's `ParkingDetectionEngineTest`, and "A walk that confirms a departure only confirms it"
+(iOS `DepartureTests`) / `a walk that confirms a departure only confirms it` (Android).
+
 If uncertain -> suggestion, not destructive silent end.
 
 ### 11a. What a confirmed departure actually does (2026-09-21)
@@ -1155,8 +1205,9 @@ detected after the user already ended the parking by hand is not an automatic en
 
 **iOS landed the same day (2026-09-21)** and the two platforms now agree. iOS's shape
 differs only where the engines differ: the session is opened by `vehicle_enter` while
-`PARKED`, the bars are checked in `tickOnce`, and the record is closed by the coordinator
-calling `ParkingModel.endActiveParking(at:)`.
+`PARKED`, and the record is closed by the coordinator calling
+`ParkingModel.endActiveParking(at:)`. The bars and the guard are asked at the event's edge on
+both platforms (§11 "Departure rows are edges"; iOS asked them in `tickOnce` until 2026-09-27).
 
 One thing the iOS build had to fix on the way, and it is worth knowing about:
 `DrivingEvidence.isConfirmed` is a **latch**, set by `promoteToDriving` on §3a's 90-second
@@ -1201,8 +1252,22 @@ old one, which was whenever 90 s of vehicle motion and 500 m happened to be reac
 `recentVehicleWindow` after the connect, the lapse row returns the machine to `PARKED`, and
 the record was never touched.
 
+**The link edge is vehicle evidence for the departure's lapse, on both platforms (DECIDED
+2026-09-28).** In `PARKED` and `DEPARTURE_CANDIDATE`, a connect **and** a disconnect set the
+departure's last vehicle evidence to the edge's time (never earlier than it was), so §11's
+lapse is measured from the latest link edge — including when an earlier `vehicle_enter` had
+already opened the departure's session. A disconnect also ends the vehicle activity §11's 90 s
+bar measures, as a `vehicle_exit` does. Android's fold always did both (`openOrExtendSession`,
+`endVehicleActivity`); iOS reused the session's older `vehicle_enter` time, so a connect more
+than `recentVehicleWindow` after the get-in opened the departure and lapsed it on the same
+event, and a connect inside `DEPARTURE_CANDIDATE` did not postpone the lapse.
+
 No fixture covers this: §3a forbids a fixture that depends on a link event being present, so
-it is held by per-platform engine tests on both sides.
+it is held by per-platform engine tests on both sides — "A link connect after an earlier
+vehicle_enter holds the departure from the connect" and "A link connect inside
+DEPARTURE_CANDIDATE postpones the lapse" (iOS `DepartureTests`, Android
+`ParkingDetectionEngineTest`, same names), and "A link disconnect inside DEPARTURE_CANDIDATE
+postpones the lapse" (same name on both).
 
 ### 11c. A parking the user saved arms the departure too (2026-09-24)
 
@@ -1231,12 +1296,14 @@ What the row does, identically on both platforms:
 judged, on both platforms** — iOS used to judge the windows first, so a transition lapsing
 at that instant reported `candidateRuleUnmet` on the way to `PARKED`.
 
-**One known difference, outside the parity fields.** A candidate left behind by
+**A candidate left behind by a new journey is withdrawn too.** A candidate left behind by
 `CANDIDATE_PENDING → DRIVING_CANDIDATE` (§3a keeps it so the user can still answer it) is
-withdrawn by iOS on `user_saved`, and left to its 45-minute expiry (§10) by Android. Android's
-engine keeps the last candidate's snapshot after it is answered, so outside
-`CANDIDATE_PENDING` it cannot tell a live prompt from a settled one. Final state and
-candidate creation are identical; only how long a stale notification stays up differs.
+withdrawn on `user_saved` on both platforms, as the pending one is. Android used to leave it
+to its 45-minute expiry (§10), because its engine kept the last candidate's snapshot after it
+was answered; an answered candidate no longer leaves one, so any candidate still held is live.
+Pinned by the twins "A hand save withdraws a candidate left behind by a new journey" (iOS
+`UserSavedParkingTests`) and `a hand save withdraws a candidate left behind by a new journey`
+(Android `ParkingDetectionEngineTest`).
 
 **The cost, accepted on 2026-09-24:** a parking saved by hand can now be ended by a ride in
 someone else's vehicle — a bus or taxi that clears §11's bars and §7's guard. Detected
@@ -1282,6 +1349,27 @@ checkpoint's `travelDistanceEstimate` is written at the transition's entry, and 
 around an empty drive, so every parking confirmed after a process death lost
 `vehicle_distance_met` and the +5. The duration is still unknown after a restore (the
 checkpoint has the transition's entry, not the session's start) and is not penalised (§8b).
+
+**A restored `DEPARTURE_CANDIDATE` is rebuilt, not dropped** (2026-09-28). A process death
+while §11 watches a departure must not decide the departure. Android's runtime reloads the
+whole engine state for every batch, so the departure survives and a later event can still
+meet §7's guard and end the parking; iOS rebuilt nothing for this state, and the first tick
+after the relaunch found no evidence and returned to `PARKED` — a different final state and
+a lost `endActiveParking` for the same relaunch. The rule is the one `DRIVING` already has:
+the departure's evidence is recreated from the checkpoint, `startedAt = stateEnteredAt` and
+last vehicle evidence `= lastAutomotiveAt`, and the bounded capture is reopened. Nothing the
+checkpoint does not hold is invented: no distance and no moving samples, so §7's guard has to
+be met again by what arrives after the relaunch (leaving a record open is recoverable, ending
+one wrongly is not — §11), and the rebuilt departure still ends `endActiveParking` at
+`stateEnteredAt`, when the car pulled away. A departure whose evidence is already past the
+§11 lapse at the relaunch returns to `PARKED` stamped at the lapse, ending nothing and opening
+no capture. Dropping the departure on restore was the alternative; it would have needed
+Android to tell a relaunch from an ordinary batch, which its runtime deliberately does not.
+Pinned by iOS `DepartureTests` "A departure restored after a process death can still end the
+parking" and "A departure restored with stale evidence returns to PARKED and ends nothing";
+Android needs no code change for this rule; its runtime-level twin,
+`ParkingDetectionRuntimeTest` `a departure survives a process death and can still end the
+parking`, is requested and not yet written.
 
 ## 15. Engine Effects
 Platform-independent conceptual effects:
@@ -1474,8 +1562,10 @@ cost, they do not make it part of the design. Four precise rules:
 Pinned by tests on each side: iOS `DrivingSessionLifecycleTests` "A fix after a movementIdle
 entry…" (the deadline releases with no state change) and `ParkingTransitionEvidenceTests`
 "A relaunch inside a stop-only window forfeits the resume…" (a restored window wants
-nothing); Android must pin IN_VEHICLE EXIT over a stored lapsed `DRIVING_CANDIDATE`, and over
-a stop-only window whose capture already ended, registering no capture at all.
+nothing); Android `TransitionEventIngestorTest` `vehicleExit_afterADrivingCandidateLapsed_opensNoCapture`
+(IN_VEHICLE EXIT over a stored lapsed `DRIVING_CANDIDATE`) and `ParkingDetectionRuntimeTest`
+"an exit inside a stop-only window whose capture ended opens no kerb capture" (the same exit
+over a stop-only window whose capture already ended), each registering no capture at all.
 
 **What one stop costs, per platform.** iOS keeps its single Core Location session
 (`kCLLocationAccuracyBestForNavigation`, no distance filter, ~1 Hz) running through the

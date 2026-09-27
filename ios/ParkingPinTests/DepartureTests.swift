@@ -161,4 +161,341 @@ struct DepartureTests {
         #expect(await engine.state == .parked)
         #expect(endedAt(effects) == nil)
     }
+
+    // MARK: - §11 rows twinned with Android's `ParkingDetectionEngineTest`
+
+    /// Exactly on §11's two bars — 90 s of vehicle activity and 600 m — and short of §7's
+    /// guard (120 s or 800 m), as Android's `departureCandidate()` fixture is built.
+    private func departingEngine(departAt: Date) async -> ParkingDetectionEngine {
+        let engine = await parkedEngine()
+        _ = await engine.handle(.vehicleEnter(at: departAt))
+        _ = await engine.handle(.location(fix(at: departAt.addingTimeInterval(50), north: 0)))
+        _ = await engine.handle(.location(fix(
+            at: departAt.addingTimeInterval(DrivingConfirmationPolicy.minimumVehicleDuration),
+            north: 600
+        )))
+        return engine
+    }
+
+    /// docs/05 §11 "Departure rows are edges" (2026-09-27). Android twin: `a departure is
+    /// confirmed on a later event than the one that opened it`.
+    @Test("A departure is confirmed on a later event than the one that opened it")
+    func departureConfirmsOnALaterEvent() async throws {
+        // Arrange
+        let engine = await parkedEngine()
+        let departAt = at(3600)
+        _ = await engine.handle(.vehicleEnter(at: departAt))
+        _ = await engine.handle(.location(fix(at: departAt.addingTimeInterval(10), north: 0)))
+
+        // Act — one fix clears §11's bars (130 s, 1000 m) and would also meet §7's guard.
+        let opening = await engine.handle(.location(fix(at: departAt.addingTimeInterval(130), north: 1000)))
+        let openedState = await engine.state
+        let confirming = await engine.handle(.location(fix(at: departAt.addingTimeInterval(160), north: 1300)))
+
+        // Assert — the event that opened the departure does not also confirm it; the next one
+        // does, and the parking ends at the DEPARTURE_CANDIDATE entry.
+        #expect(openedState == .departureCandidate)
+        #expect(endedAt(opening) == nil)
+        #expect(await engine.state == .driving)
+        #expect(endedAt(confirming) == departAt.addingTimeInterval(130))
+    }
+
+    /// Android twin: `a departure whose guard is met on the lapse boundary is confirmed`.
+    @Test("A departure whose guard is met on the lapse boundary is confirmed")
+    func departureOnTheLapseBoundaryConfirms() async {
+        // Arrange — the departure's only vehicle evidence is the vehicle_enter at departAt.
+        let departAt = at(3600)
+        let engine = await departingEngine(departAt: departAt)
+        #expect(await engine.state == .departureCandidate, "the control")
+
+        // Act — exactly `vehicleEvidenceMaxAge` later, with §7's guard satisfied.
+        let effects = await engine.handle(.location(fix(
+            at: departAt.addingTimeInterval(DrivingConfirmationPolicy.vehicleEvidenceMaxAge),
+            north: 1500
+        )))
+
+        // Assert — recent evidence is inclusive (<=), so the lapse must be exclusive (>).
+        #expect(await engine.state == .driving)
+        #expect(endedAt(effects) == departAt.addingTimeInterval(DrivingConfirmationPolicy.minimumVehicleDuration))
+    }
+
+    /// Android twin: `the departure lapse is stamped at its deadline`.
+    @Test("The departure lapse is stamped at its deadline")
+    func departureLapseIsStampedAtItsDeadline() async {
+        // Arrange
+        let departAt = at(3600)
+        let engine = await departingEngine(departAt: departAt)
+
+        // Act — noticed long after the evidence went stale.
+        let effects = await engine.handle(.timerTick(at: departAt.addingTimeInterval(900)))
+
+        // Assert
+        #expect(await engine.state == .parked)
+        #expect(endedAt(effects) == nil)
+        #expect(
+            await engine.snapshot().checkpoint.stateEnteredAt
+                == departAt.addingTimeInterval(DrivingConfirmationPolicy.drivingCandidateWindow)
+        )
+    }
+
+    // MARK: - §11 "An event that confirms a departure is also read in DRIVING" (2026-09-28)
+
+    private func createdCandidate(_ effects: [DetectionEffect]) -> ParkingCandidate? {
+        effects.compactMap {
+            if case let .createCandidate(candidate) = $0 { return candidate }
+            return nil
+        }.last
+    }
+
+    /// A hand-saved parking, then §11's two bars cleared at +700 s (100 s in the car, 600 m)
+    /// and §7's guard still unmet there. Built as Android's `shortDepartureBeforeTheExit()`.
+    private func shortDepartureBeforeTheExit() async -> ParkingDetectionEngine {
+        let engine = ParkingDetectionEngine()
+        _ = await engine.restore(nil, seedIfAbsent: false, now: t0)
+        _ = await engine.handle(.userSavedParking(at: at(0)))
+        _ = await engine.handle(.vehicleEnter(at: at(600)))
+        _ = await engine.handle(.location(fix(at: at(610), north: 0)))
+        _ = await engine.handle(.location(fix(at: at(700), north: 600)))
+        return engine
+    }
+
+    /// The short hop into an underground garage: fixes stop on the ramp and the exit arrives
+    /// before any later event has asked §7's guard, which elapsed time alone has since met.
+    /// Android twin: `a vehicle_exit that confirms a departure also ends the drive`.
+    @Test("A vehicle_exit that confirms a departure also ends the drive")
+    func confirmingExitEndsTheDrive() async throws {
+        // Arrange
+        let engine = await shortDepartureBeforeTheExit()
+        #expect(await engine.state == .departureCandidate, "the control: §11's bars, short of §7's guard")
+
+        // Act — 140 s after the enter: §7's duration is met on the exit itself.
+        let exiting = await engine.handle(.vehicleExit(at: at(740)))
+        let exitState = await engine.state
+        let exitEnteredAt = await engine.snapshot().checkpoint.stateEnteredAt
+        let walking = await engine.handle(.walkingEnter(at: at(760)))
+
+        // Assert — the old parking ends at the DEPARTURE_CANDIDATE entry, and the exit opens
+        // the transition the walk confirms.
+        #expect(endedAt(exiting) == at(700))
+        #expect(exiting.contains(.sessionEnded(reason: .vehicleExit, at: at(740))))
+        #expect(exitState == .parkingTransition)
+        #expect(exitEnteredAt == at(740))
+        #expect(await engine.state == .candidatePending)
+        let candidate = try #require(createdCandidate(walking))
+        #expect(candidate.reasonCodes.contains(.vehicleExitDetected))
+        #expect(candidate.reasonCodes.contains(.walkingAfterVehicle))
+    }
+
+    /// Android twin: `a car link disconnect that confirms a departure opens the candidate outright`.
+    @Test("A car link disconnect that confirms a departure opens the candidate outright")
+    func confirmingDisconnectOpensTheCandidate() async throws {
+        // Arrange
+        let engine = await shortDepartureBeforeTheExit()
+
+        // Act — §3a's link row, reached through the departure the disconnect confirmed.
+        let effects = await engine.handle(.carLinkDisconnected(at: at(740), kind: .bluetoothAudio))
+
+        // Assert — the end first, then the new parking, on the same event.
+        let endIndex = try #require(effects.firstIndex { if case .endActiveParking = $0 { true } else { false } })
+        let createIndex = try #require(effects.firstIndex { if case .createCandidate = $0 { true } else { false } })
+        #expect(endedAt(effects) == at(700))
+        #expect(endIndex < createIndex, "the parking ends before the next one is raised")
+        #expect(await engine.state == .candidatePending)
+        let candidate = try #require(createdCandidate(effects))
+        #expect(candidate.reasonCodes.contains(.carProjectionDisconnected))
+        #expect(candidate.reasonCodes.contains(.vehicleExitDetected))
+    }
+
+    /// Android twin: `a vehicle_exit that does not meet the guard still returns to PARKED`.
+    @Test("A vehicle_exit that does not meet the guard still returns to PARKED")
+    func unconfirmingExitReturnsToParked() async {
+        // Arrange
+        let engine = await shortDepartureBeforeTheExit()
+
+        // Act — 110 s after the enter, 600 m: neither §7 bar.
+        let effects = await engine.handle(.vehicleExit(at: at(710)))
+
+        // Assert
+        #expect(await engine.state == .parked)
+        #expect(endedAt(effects) == nil)
+    }
+
+    /// `walking_enter` has no DRIVING row (§3a), so a walk that confirms a departure confirms
+    /// it and nothing else. Android twin requested: `a walk that confirms a departure only
+    /// confirms it`.
+    @Test("A walk that confirms a departure only confirms it")
+    func confirmingWalkOnlyConfirms() async {
+        // Arrange
+        let engine = await shortDepartureBeforeTheExit()
+
+        // Act
+        let effects = await engine.handle(.walkingEnter(at: at(740)))
+
+        // Assert
+        #expect(endedAt(effects) == at(700))
+        #expect(await engine.state == .driving)
+        #expect(createdCandidate(effects) == nil)
+    }
+
+    // MARK: - §11b the link edge is vehicle evidence for the departure's lapse (2026-09-28)
+
+    /// Android twin: `a link connect after an earlier vehicle_enter holds the departure from
+    /// the connect`.
+    @Test("A link connect after an earlier vehicle_enter holds the departure from the connect")
+    func connectAfterEarlierEnterHoldsFromTheConnect() async {
+        // Arrange — sitting in the parked car, then the phone joins it.
+        let engine = ParkingDetectionEngine()
+        _ = await engine.restore(nil, seedIfAbsent: false, now: t0)
+        _ = await engine.handle(.userSavedParking(at: at(0)))
+        _ = await engine.handle(.vehicleEnter(at: at(600)))
+
+        // Act — the connect lands after the enter's own window (600 + 300 s) has passed.
+        _ = await engine.handle(.carLinkConnected(at: at(950), kind: .bluetoothAudio))
+        let connected = await engine.state
+        _ = await engine.handle(.timerTick(at: at(1200)))
+        let held = await engine.state
+        _ = await engine.handle(.timerTick(at: at(1300)))
+
+        // Assert
+        #expect(connected == .departureCandidate)
+        #expect(held == .departureCandidate)
+        #expect(await engine.state == .parked)
+        #expect(
+            await engine.snapshot().checkpoint.stateEnteredAt
+                == at(950).addingTimeInterval(DrivingConfirmationPolicy.drivingCandidateWindow)
+        )
+    }
+
+    /// Android twin: `a link connect inside DEPARTURE_CANDIDATE postpones the lapse`.
+    @Test("A link connect inside DEPARTURE_CANDIDATE postpones the lapse")
+    func connectInsideDeparturePostponesTheLapse() async {
+        // Arrange — the departure's only vehicle evidence is the enter at departAt: it lapses
+        // after departAt + 300 s unless something refreshes it.
+        let departAt = at(3600)
+        let lateTick = DetectionEvent.timerTick(at: departAt.addingTimeInterval(350))
+        let control = await departingEngine(departAt: departAt)
+        _ = await control.handle(lateTick)
+        let engine = await departingEngine(departAt: departAt)
+
+        // Act
+        _ = await engine.handle(.carLinkConnected(at: departAt.addingTimeInterval(100), kind: .bluetoothAudio))
+        let connected = await engine.state
+        let effects = await engine.handle(lateTick)
+
+        // Assert — without the connect the departure lapsed; with it, the evidence is still
+        // recent, so the tick meets §7's guard instead.
+        #expect(await control.state == .parked)
+        #expect(connected == .departureCandidate)
+        #expect(await engine.state == .driving)
+        #expect(endedAt(effects) == departAt.addingTimeInterval(DrivingConfirmationPolicy.minimumVehicleDuration))
+    }
+
+    /// The disconnect half of §11b's sentence. Android twin requested: `a link disconnect
+    /// inside DEPARTURE_CANDIDATE postpones the lapse`.
+    @Test("A link disconnect inside DEPARTURE_CANDIDATE postpones the lapse")
+    func disconnectInsideDeparturePostponesTheLapse() async {
+        // Arrange — the disconnect at +100 s leaves §7's guard unmet (100 s, 600 m).
+        let departAt = at(3600)
+        let lateTick = DetectionEvent.timerTick(at: departAt.addingTimeInterval(350))
+        let control = await departingEngine(departAt: departAt)
+        let controlEffects = await control.handle(lateTick)
+        let engine = await departingEngine(departAt: departAt)
+
+        // Act
+        _ = await engine.handle(.carLinkDisconnected(at: departAt.addingTimeInterval(100), kind: .bluetoothAudio))
+        let disconnected = await engine.state
+        let effects = await engine.handle(lateTick)
+
+        // Assert — the disconnect's evidence is 250 s old at the tick: recent, so the tick
+        // meets §7's guard where the control lapsed. (With the link gone, the same tick then
+        // finds `movementIdleWindow` long closed; where that leads is §3a's business.)
+        #expect(await control.state == .parked)
+        #expect(endedAt(controlEffects) == nil)
+        #expect(disconnected == .departureCandidate)
+        #expect(effects.contains(.drivingConfirmed(at: departAt.addingTimeInterval(350))))
+        #expect(endedAt(effects) == departAt.addingTimeInterval(DrivingConfirmationPolicy.minimumVehicleDuration))
+    }
+
+    /// §11: 500 m is measured per get-in. Android twin: `getting back out of a parked car
+    /// drops the departure's evidence`.
+    @Test("Getting back out of a parked car drops the departure's evidence")
+    func gettingBackOutDropsTheEvidence() async {
+        // Arrange
+        let engine = await parkedEngine()
+        let firstIn = at(3600)
+
+        // Act — in, 300 m, out; then in again and another 300 m.
+        _ = await engine.handle(.vehicleEnter(at: firstIn))
+        _ = await engine.handle(.location(fix(at: firstIn.addingTimeInterval(10), north: 0)))
+        _ = await engine.handle(.location(fix(at: firstIn.addingTimeInterval(40), north: 300)))
+        _ = await engine.handle(.vehicleExit(at: firstIn.addingTimeInterval(50)))
+        let afterExit = await engine.snapshot().driving
+        let secondIn = firstIn.addingTimeInterval(600)
+        _ = await engine.handle(.vehicleEnter(at: secondIn))
+        _ = await engine.handle(.location(fix(at: secondIn.addingTimeInterval(10), north: 300)))
+        _ = await engine.handle(.location(fix(at: secondIn.addingTimeInterval(100), north: 600)))
+
+        // Assert — the second get-in has to earn §11's 500 m on its own.
+        #expect(afterExit == nil)
+        #expect(await engine.state == .parked)
+    }
+
+    // MARK: - §14: a process death inside DEPARTURE_CANDIDATE
+
+    /// docs/05 §14 "A restored DEPARTURE_CANDIDATE is rebuilt, not dropped" (2026-09-28).
+    /// Android keeps the whole engine state across a process death, so the departure it was
+    /// watching can still end the parking; iOS used to drop it on the first tick after the
+    /// relaunch. Android twin: `ParkingDetectionRuntimeTest` `a departure survives a process
+    /// death and can still end the parking`.
+    @Test("A departure restored after a process death can still end the parking")
+    func restoredDepartureCanStillEndTheParking() async throws {
+        // Arrange — the process died after §11's bars were cleared at `departAt`.
+        let departAt = at(3600)
+        let engine = ParkingDetectionEngine()
+        let checkpoint = DetectionCheckpoint(
+            state: .departureCandidate,
+            stateEnteredAt: departAt,
+            lastAutomotiveAt: departAt
+        )
+
+        // Act — relaunch, then keep driving: 900 m in 60 s with vehicle evidence fresh.
+        let restoreEffects = await engine.restore(checkpoint, now: departAt.addingTimeInterval(10))
+        let restoredState = await engine.state
+        var effects: [DetectionEffect] = []
+        effects += await engine.handle(.vehicleEnter(at: departAt.addingTimeInterval(20)))
+        for step in 0 ... 3 {
+            effects += await engine.handle(
+                .location(fix(at: departAt.addingTimeInterval(30 + Double(step) * 20), north: Double(step) * 300))
+            )
+        }
+
+        // Assert — the capture is reopened, and the parking ends when the car pulled away.
+        #expect(restoredState == .departureCandidate)
+        #expect(restoreEffects.contains(.startBoundedLocationCapture))
+        #expect(await engine.state == .driving)
+        #expect(endedAt(effects) == departAt)
+    }
+
+    /// The same rule's other half: the rebuilt evidence lapses exactly as the live one would.
+    @Test("A departure restored with stale evidence returns to PARKED and ends nothing")
+    func restoredStaleDepartureEndsNothing() async {
+        // Arrange
+        let departAt = at(3600)
+        let engine = ParkingDetectionEngine()
+        let checkpoint = DetectionCheckpoint(
+            state: .departureCandidate,
+            stateEnteredAt: departAt,
+            lastAutomotiveAt: departAt
+        )
+        let lapse = departAt.addingTimeInterval(DrivingConfirmationPolicy.drivingCandidateWindow)
+
+        // Act
+        let effects = await engine.restore(checkpoint, now: lapse.addingTimeInterval(1))
+
+        // Assert — back to PARKED, stamped at the lapse, no capture opened, nothing ended.
+        #expect(await engine.state == .parked)
+        #expect(await engine.snapshot().checkpoint.stateEnteredAt == lapse)
+        #expect(!effects.contains(.startBoundedLocationCapture))
+        #expect(endedAt(effects) == nil)
+    }
 }
