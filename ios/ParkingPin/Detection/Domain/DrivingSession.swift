@@ -38,7 +38,7 @@ enum DrivingSessionEndReason: String, Sendable, Equatable, Codable {
 /// A value type with no clock of its own: every time-dependent answer takes `now`, so the
 /// duration and distance boundaries are unit-testable without sleeping
 /// (docs/16_CODING_STANDARDS.md §8).
-struct DrivingEvidence: Sendable, Equatable {
+struct DrivingEvidence: Sendable, Equatable, Codable {
     let startedAt: Date
     /// Newest Core Motion observation that said `automotive`.
     private(set) var lastVehicleEvidenceAt: Date?

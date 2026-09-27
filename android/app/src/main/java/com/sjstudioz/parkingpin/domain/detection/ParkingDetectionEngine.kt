@@ -428,6 +428,25 @@ class ParkingDetectionEngine(
     }
 
     /**
+     * [state] less a `PARKED` get-in whose evidence is too old to reopen a capture for — iOS
+     * `restoreGetIn`'s staleness check (`DrivingSessionTimeoutPolicy.expiryReason`: the 2 h
+     * ceiling from the get-in, or [VEHICLE_EVIDENCE_TIMEOUT_MILLIS] of vehicle silence).
+     *
+     * Asked only after a system reset, the one Android relaunch that reopens a capture on the
+     * stored state's word (docs/05 §14); an ordinary batch never asks it, because a process
+     * death keeps the capture and its own deadline bounds it. The parking stays and nothing is
+     * ended: a get-in is not a departure (§11). `DEPARTURE_CANDIDATE` needs no check here —
+     * its lapse row already returns a stale one to `PARKED` on the reset's tick.
+     */
+    fun dropsStaleGetIn(state: DetectionEngineState, atMillis: Long): DetectionEngineState {
+        if (state.state != DetectionState.PARKED) return state
+        val evidence = state.session?.evidence ?: return state
+        val pastCeiling = atMillis - evidence.vehicleFirstSeenAtMillis >= SESSION_MAXIMUM_DURATION_MILLIS
+        val silent = atMillis - evidence.lastVehicleEvidenceAtMillis >= VEHICLE_EVIDENCE_TIMEOUT_MILLIS
+        return if (pastCeiling || silent) state.copy(session = null) else state
+    }
+
+    /**
      * The evidence half of the fold, and the only part that runs before the windows.
      *
      * Mirrors iOS's `ingest`, which folds a location fix and leaves every motion edge to
@@ -1559,6 +1578,18 @@ class ParkingDetectionEngine(
          * `transitionWindow` reused, the same budget §5 gives the descent into a garage.
          */
         const val NEAR_END_HORIZON_MILLIS: Long = TRANSITION_WINDOW_MILLIS
+
+        /**
+         * iOS `DrivingSessionTimeoutPolicy.vehicleEvidenceTimeout`, 600 s: the silence after
+         * which a session's vehicle evidence no longer justifies reopening a capture. Ten
+         * minutes, not §11's 300 s, because a tunnel or a long queue is silent for minutes
+         * inside a real drive (docs/05 §14, stale get-in).
+         *
+         * Not an engine window — no §3a row reads it, so a fixture with a 45-minute gap between
+         * `vehicle_enter` and `vehicle_exit` still replays. Read only by [dropsStaleGetIn], on
+         * the one Android relaunch that reopens a capture on the stored state's word.
+         */
+        const val VEHICLE_EVIDENCE_TIMEOUT_MILLIS: Long = 10 * 60 * 1000L
 
         /** §11 departure: movement >= 500 m alongside the 90 s vehicle bar. */
         const val DEPARTURE_MOVEMENT_METERS: Double = 500.0

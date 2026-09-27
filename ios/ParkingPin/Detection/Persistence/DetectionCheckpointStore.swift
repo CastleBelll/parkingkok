@@ -59,9 +59,14 @@ protocol DetectionCheckpointStoring: Sendable {
 ///    fail silently in the field and look like a detection bug. The class lives on the
 ///    directory rather than on each write; see `save(_:)`.
 struct FileDetectionCheckpointStore: DetectionCheckpointStoring {
-    /// Bump whenever the encoded shape changes; an older payload is rejected rather than
-    /// half-decoded.
-    static let schemaVersion = 1
+    /// Bump whenever the encoded shape changes; a payload outside `readableSchemaVersions`
+    /// is rejected rather than half-decoded.
+    ///
+    /// 2 (2026-09-28) added `DetectionCheckpoint.departure`. Additive and optional, so a
+    /// schema 1 payload still decodes — with no departure evidence, which the engine treats
+    /// as a departure it cannot judge (docs/05 §14).
+    static let schemaVersion = 2
+    static let readableSchemaVersions: ClosedRange<Int> = 1 ... schemaVersion
 
     private static let directoryName = "Detection"
     private static let fileName = "checkpoint.json"
@@ -109,7 +114,7 @@ struct FileDetectionCheckpointStore: DetectionCheckpointStoring {
             return .failed(.corrupt(Self.reason(for: error)))
         }
 
-        guard envelope.schemaVersion == Self.schemaVersion else {
+        guard Self.readableSchemaVersions.contains(envelope.schemaVersion) else {
             return .failed(.schemaMismatch(found: envelope.schemaVersion, expected: Self.schemaVersion))
         }
         return .restored(envelope.checkpoint)

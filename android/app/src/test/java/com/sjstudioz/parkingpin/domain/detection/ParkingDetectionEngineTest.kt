@@ -1,6 +1,7 @@
 package com.sjstudioz.parkingpin.domain.detection
 
 import com.sjstudioz.parkingpin.domain.location.DrivingConfirmationGuard
+import com.sjstudioz.parkingpin.domain.location.LocationCaptureModePolicy
 import com.sjstudioz.parkingpin.domain.location.LocationSample
 import com.sjstudioz.parkingpin.domain.parking.ConfidenceBucket
 import com.sjstudioz.parkingpin.domain.trace.LocationQualityBucket
@@ -488,6 +489,31 @@ class ParkingDetectionEngineTest {
         assertEquals(at(740), exit.state.stateEnteredAtMillis)
         assertEquals(DetectionState.CANDIDATE_PENDING, walk.state.state)
         assertTrue(EvidenceReasonCode.VEHICLE_EXIT_DETECTED in createCandidate(walk.effects).reasons)
+    }
+
+    /**
+     * docs/05 §11: an exit while `PARKED` keeps the parking and drops the get-in. iOS twin:
+     * `DepartureTests` "A derived exit after getting back in keeps the parking and drops the
+     * get-in" — iOS has no exit edge on a device and derives it from the walk; Android's
+     * Transition API delivers the exit itself, so the same sequence is this `VehicleExit`.
+     */
+    @Test
+    fun `a vehicle_exit after getting back in keeps the parking and drops the get-in`() {
+        // Arrange — PARKED with a get-in session open (+600 enter, +610 fix).
+        val gotIn = idle()
+            .handle(DetectionEvent.UserSavedParking(at(0)))
+            .handle(DetectionEvent.VehicleEnter(at(600)))
+            .handle(DetectionEvent.Location(fix(at(610), accuracyM = 5f, speedMps = 12f)))
+        assertEquals(DetectionState.PARKED, gotIn.state)
+
+        // Act
+        val step = engine.handle(gotIn, DetectionEvent.VehicleExit(at(650)))
+
+        // Assert — the parking stays, the get-in goes, and nothing wants a capture any more.
+        assertEquals(DetectionState.PARKED, step.state.state)
+        assertNull(step.state.session)
+        assertNull(LocationCaptureModePolicy.modeWantedBy(step.state))
+        assertTrue(step.effects.none { it is DetectionEffect.EndActiveParking })
     }
 
     @Test

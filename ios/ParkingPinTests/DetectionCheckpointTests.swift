@@ -87,6 +87,56 @@ struct DetectionCheckpointTests {
         )
     }
 
+    @Test("Round-trips a departure's evidence through the file store")
+    func roundTripsDepartureEvidence() throws {
+        // Arrange — docs/05 §14: the evidence §7's guard reads, anchors included.
+        let file = TemporaryCheckpointFile()
+        let store = FileDetectionCheckpointStore(fileURL: file.url)
+        var drive = DrivingEvidence(startedAt: TestTime.offset(0), lastVehicleEvidenceAt: TestTime.offset(0))
+        for (seconds, north) in [(10.0, 0.0), (100.0, 600.0)] {
+            drive.record(fix: LocationFix(
+                timestamp: TestTime.offset(seconds),
+                latitude: 37.5 + north / 111_320,
+                longitude: 127.0,
+                horizontalAccuracy: 8,
+                speed: 12
+            ))
+        }
+        let checkpoint = DetectionCheckpoint(
+            state: .departureCandidate,
+            stateEnteredAt: TestTime.offset(100),
+            departure: DepartureCheckpoint(drive: drive, vehicleActiveSince: TestTime.offset(0)),
+            revision: 3
+        )
+
+        // Act
+        try store.save(checkpoint)
+        let result = store.load()
+
+        // Assert
+        #expect(result == .restored(checkpoint))
+    }
+
+    @Test("Reads a schema 1 checkpoint, which has no departure evidence")
+    func readsSchemaOneCheckpoint() throws {
+        // Arrange — the shape every install wrote before 2026-09-28.
+        let file = TemporaryCheckpointFile()
+        let payload = """
+        {"schemaVersion":1,"checkpoint":{"state":"DEPARTURE_CANDIDATE","stateEnteredAt":0,\
+        "travelDistanceEstimate":600,"revision":4}}
+        """
+        try Data(payload.utf8).write(to: file.url)
+        let store = FileDetectionCheckpointStore(fileURL: file.url)
+
+        // Act
+        let restored = store.load().checkpoint
+
+        // Assert
+        #expect(restored?.state == .departureCandidate)
+        #expect(restored?.travelDistanceEstimate == 600)
+        #expect(restored?.departure == nil)
+    }
+
     @Test("Overwrites in place so a crash cannot leave two checkpoints")
     func overwritesPreviousCheckpoint() throws {
         // Arrange

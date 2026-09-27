@@ -120,6 +120,10 @@ object LocationCaptureModePolicy {
      *   never owned: the P0 diagnostics override ([ownedByDiagnostics]).
      * - **The engine started wanting one with nothing running** (a car-link connect, the
      *   fuel-stop reconnect): opened in the engine's mode.
+     * - **The engine still wants one that a reboot or an app update dropped**
+     *   ([droppedBySystem]): reopened in the engine's mode, as iOS reopens it on restore
+     *   (docs/05 §14). The system took it, not its own deadline, so no leak guard is undone;
+     *   the reopened capture gets the planner's usual deadlines.
      * - **A transition resumed `DRIVING` while the capture had narrowed to the kerb**:
      *   widened back, or the kerb profile's short deadline would end it mid-drive.
      *
@@ -132,9 +136,10 @@ object LocationCaptureModePolicy {
         wantedAfter: LocationSessionMode?,
         current: LocationSessionMode,
         ownedByDiagnostics: Boolean,
+        droppedBySystem: Boolean = false,
     ): LocationSessionMode = when {
         wantedAfter == null -> if (ownedByDiagnostics) current else LocationSessionMode.IDLE
-        current == LocationSessionMode.IDLE -> if (wantedBefore == null) wantedAfter else current
+        current == LocationSessionMode.IDLE -> if (wantedBefore == null || droppedBySystem) wantedAfter else current
         wantedAfter == LocationSessionMode.DRIVING && current == LocationSessionMode.PARKING_TRANSITION ->
             LocationSessionMode.DRIVING
         else -> current

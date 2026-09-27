@@ -195,6 +195,7 @@ lastReliableLocation
 lastLocationAt
 travelDistanceEstimate
 candidateId
+departure   // schema 2 (2026-09-28): PARKED / DEPARTURE_CANDIDATE session, docs/05 §14
 revision
 ```
 

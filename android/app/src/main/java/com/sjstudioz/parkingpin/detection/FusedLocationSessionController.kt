@@ -83,7 +83,9 @@ class FusedLocationSessionController(
      * nothing feeding it (docs/05 §3a "The window lives exactly as long as its capture"). The
      * removal is issued anyway, so a request that did survive an update is not orphaned.
      * Nothing is restarted here: whether a capture is wanted is the engine's answer, given on
-     * its next batch.
+     * its next batch — [ParkingDetectionRuntime.resumeAfterSystemReset], which the recovery
+     * receiver sends at once, so a restored departure or drive gets its capture back
+     * (docs/05 §14) without waiting for a motion edge.
      */
     suspend fun reconcileAfterSystemReset(): LocationSessionState = mutex.withLock {
         val stored = store.readLocationSessionStateOnce()
@@ -146,6 +148,7 @@ class FusedLocationSessionController(
             wantedAfter = wantedAfter,
             current = stored.mode,
             ownedByDiagnostics = stored.ownedByDiagnostics,
+            droppedBySystem = stored.record == null && stored.lastStopReason == LocationSessionStopReason.SYSTEM_RESET,
         )
         // An engine that wants a capture adopts whatever is running: it is following a drive
         // now, and the override flag would otherwise keep that drive's capture from ending.

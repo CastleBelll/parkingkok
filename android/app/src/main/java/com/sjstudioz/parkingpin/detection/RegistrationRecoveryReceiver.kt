@@ -18,7 +18,8 @@ import kotlinx.coroutines.launch
  * Location request as well, so a session record that outlived it describes a registration
  * that no longer exists and has to be cleared rather than trusted. Clearing it is also what
  * closes a stop-only resume window that capture was holding (docs/05 §3a "The window lives
- * exactly as long as its capture").
+ * exactly as long as its capture"). The engine is then asked once, at the current time, what
+ * it still wants: a restored drive or departure gets its bounded capture back (docs/05 §14).
  */
 class RegistrationRecoveryReceiver : BroadcastReceiver() {
 
@@ -34,6 +35,12 @@ class RegistrationRecoveryReceiver : BroadcastReceiver() {
             try {
                 container.registrationCoordinator.reconcileAfterSystemReset()
                 container.locationSessionController.reconcileAfterSystemReset()
+                // docs/05 §14: settle the restored state and reopen the bounded capture it
+                // still wants — the reboot dropped that request with the others. Not with
+                // Smart Detection off: nothing may open a capture the user switched off.
+                if (container.detectionStateStore.readDesiredEnabledOnce()) {
+                    container.parkingDetectionRuntime.resumeAfterSystemReset(container.clock.nowEpochMillis())
+                }
                 container.diagnosticsExporter.export()
             } finally {
                 pendingResult.finish()

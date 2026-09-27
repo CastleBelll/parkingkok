@@ -184,6 +184,21 @@ class ParkingDetectionRuntime(
         handle(listOf(DetectionEvent.TimerTick(atMillis)))
 
     /**
+     * The first batch after a reboot or an app update (docs/05 §14), sent by
+     * [RegistrationRecoveryReceiver] once the dropped registrations are cleared.
+     *
+     * A tick at [atMillis] settles §3a's windows exactly as iOS's `restore(_:now:)` does — a
+     * departure already past §11's lapse returns to `PARKED` — and the follow that ends every
+     * batch reopens the bounded capture the engine still wants, which the reboot took with it.
+     * Without it a restored `DEPARTURE_CANDIDATE` got no fixes until some motion edge happened
+     * to arrive. A `PARKED` get-in whose vehicle evidence went silent long ago is dropped first
+     * ([ParkingDetectionEngine.dropsStaleGetIn], iOS `restoreGetIn`), so the reset reopens no
+     * capture for it and the parking stays.
+     */
+    suspend fun resumeAfterSystemReset(atMillis: Long): List<DetectionEffect> =
+        handle(listOf(DetectionEvent.TimerTick(atMillis))) { engine.dropsStaleGetIn(it, atMillis) }
+
+    /**
      * One batch of events, in order, under the lock.
      *
      * **§3a's timeout rows need no caller here.** They used to: they fired only on an
@@ -198,13 +213,20 @@ class ParkingDetectionRuntime(
      * [ParkingCandidateCoordinator.expireIfDue] and the notification's own `setTimeoutAfter`;
      * the driving rows are not, and a scheduled tick is the remaining half (docs/05 §3a).
      */
-    private suspend fun handle(events: List<DetectionEvent>): List<DetectionEffect> {
+    private suspend fun handle(
+        events: List<DetectionEvent>,
+        /** What the stored state must become before the batch — a system reset's cleanup. */
+        prepare: (DetectionEngineState) -> DetectionEngineState = { it },
+    ): List<DetectionEffect> {
         if (events.isEmpty()) return emptyList()
         var wantedBefore: LocationSessionMode? = null
         var wantedAfter: LocationSessionMode? = null
         val effects = mutex.withLock {
-            var state = current()
-            wantedBefore = LocationCaptureModePolicy.modeWantedBy(state)
+            val stored = current()
+            // The want before the cleanup: a get-in dropped here is a capture given up, and
+            // the follow releases whatever of it is still running.
+            wantedBefore = LocationCaptureModePolicy.modeWantedBy(stored)
+            var state = prepare(stored)
             val effects = mutableListOf<DetectionEffect>()
             for (event in events) {
                 val step = engine.handle(state, event)

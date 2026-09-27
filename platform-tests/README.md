@@ -228,7 +228,7 @@ trace까지 왔다면 어댑터 결함이므로 변환기가 거부한다 — `p
 | 4 | taxi → walk → candidate 가능/알려진 한계 | `taxi` | ⬜ |
 | 5 | 버스 반복 정차 → 알림 폭주 없음 | `bus` / `parked: false` | ✅ `bus_repeated_stops_no_storm.json` (+ 양 러너의 travel session당 후보 1개 검사) |
 | 6 | 터널 GPS 소실 → candidate 없음 | `car` / `parked: false` | ✅ `tunnel_no_parking.json` |
-| 7 | 프로세스 사망/재시작 → 중복 candidate 없음 | — | ⬜ ⚠️ (fixture 없음. `restore` 의미론은 엔진 단위 테스트가 고정: docs/05 §3a 창 규칙, §14 `DEPARTURE_CANDIDATE` 복원) |
+| 7 | 프로세스 사망/재시작 → 중복 candidate 없음 | — | ⬜ ⚠️ (fixture 없음. `restore` 의미론은 테스트가 고정: docs/05 §3a 창 규칙은 엔진 단위 테스트, §14 "A restored departure keeps its evidence"는 iOS `DepartureTests` ↔ Android `ParkingDetectionRuntimeTest`의 같은 이름·같은 이벤트 twin) |
 | 8 | 이동 중 권한 회수 | — | ⬜ ⚠️ |
 | 9 | 절전 모드 저하 동작 | — | ⬜ ⚠️ |
 | 10 | 앱이 기록을 갱신하는 중 위젯 편집 | — | ⬜ ⚠️ |
@@ -312,6 +312,14 @@ event 3 `DEPARTURE_CANDIDATE`, event 4 `PARKING_TRANSITION` + `endActiveParking`
 golden에서 같이 내는 값이고, §8로 다시 계산하면 25 + 15(exit) + 30(walk) = 70 → `medium`
 이다(정지 fix 없음, 140 s·600 m는 §7의 "넉넉히 초과"가 아니다). 링크 disconnect로 확정되는
 같은 경우는 §3a가 링크 fixture를 금지하므로 양 플랫폼 엔진 twin 테스트가 고정한다.
+t=700과 t=740 사이의 프로세스 사망은 fixture로 표현할 수 없으므로(§8 어휘에 재시작 없음) 같은
+결과 — 이전 주차 종료 t=700, 다음 주차의 `medium` 후보 — 를 twin 테스트 "A short departure
+restored before its exit still becomes the next parking"이 고정한다(docs/05 §14).
+단, 이 fixture와 twin은 명시적 `vehicle_exit`를 쓴다. iPhone 실기기에는 그 edge가 없고
+`BackgroundCoordinator`가 도보로부터 하차를 유도한다(`endDrivingSession(.walkingDetected)`).
+그 경로의 같은 결과는 iOS 전용 `DepartureTests` "A derived exit that confirms a departure also
+ends the drive"와 "A short departure restored before its derived exit still becomes the next
+parking"이 고정한다(docs/05 §11 "An adapter-decided end never leaves the parking behind").
 
 ## 실주행 field fixture — 승격된 것과 drafts에 남은 것 (2026-09-27)
 

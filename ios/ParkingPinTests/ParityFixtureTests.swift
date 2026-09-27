@@ -13,7 +13,7 @@ import Testing
 @Suite("Cross-platform parity fixtures")
 struct ParityFixtureTests {
     /// The exact committed set, as Android's `every committed fixture is replayed` states it:
-    /// a renamed or deleted fixture must fail loudly here, not vanish from the gate.
+    /// a renamed or deleted fixture or draft must fail loudly here, not vanish from the gate.
     @Test("Every fixture in platform-tests/ is loaded and replayed")
     func everyFixtureIsPresent() throws {
         // Arrange
@@ -39,13 +39,30 @@ struct ParityFixtureTests {
             "tunnel_no_parking.json",
             "vehicle_then_walk.json"
         ]
+        // Field drafts: replayed against the golden only (contract §8), never against an
+        // `expected`. Listed so a draft deleted with its golden entry fails here too.
+        let drafts: Set<String> = [
+            "drafts/field_s02_parked.json",
+            "drafts/field_s05_unknown.json",
+            "drafts/field_s06_parked.json",
+            "drafts/field_s22_unknown.json",
+            "drafts/field_s23_unknown.json",
+            "drafts/field_s24_unknown.json",
+            "drafts/field_s25_unknown.json",
+            "drafts/field_s27_unknown.json",
+            "drafts/field_s28_unknown.json",
+            "drafts/field_s29_unknown.json",
+            "drafts/field_s31_parked.json"
+        ]
 
         // Act
         let files = try ParityFixtureLoader.committedFileNames()
         let fixtures = try ParityFixtureLoader.loadAll()
+        let replayed = try Set(ParityFixtureLoader.loadReplayInputs().keys)
 
         // Assert
         #expect(Set(files) == committed)
+        #expect(replayed == committed.union(drafts))
         #expect(Set(fixtures.map(\.name)).count == fixtures.count, "two fixtures share a name")
     }
 

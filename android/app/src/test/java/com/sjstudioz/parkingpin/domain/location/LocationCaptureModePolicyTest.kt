@@ -189,6 +189,39 @@ class LocationCaptureModePolicyTest {
     }
 
     @Test
+    fun `a capture a reboot dropped is reopened while the engine still wants one`() {
+        // Arrange — docs/05 §14 (FG11): a reboot or an app update dropped the request, not its
+        // own deadline, so a restored DEPARTURE_CANDIDATE gets its bounded capture back, as
+        // iOS reopens it on restore.
+        // Act
+        val mode = LocationCaptureModePolicy.modeFollowingEngine(
+            wantedBefore = LocationSessionMode.DRIVING_CANDIDATE,
+            wantedAfter = LocationSessionMode.DRIVING_CANDIDATE,
+            current = LocationSessionMode.IDLE,
+            ownedByDiagnostics = false,
+            droppedBySystem = true,
+        )
+
+        // Assert
+        assertEquals(LocationSessionMode.DRIVING_CANDIDATE, mode)
+    }
+
+    @Test
+    fun `a capture a reboot dropped is not reopened for an engine that wants none`() {
+        // Act
+        val mode = LocationCaptureModePolicy.modeFollowingEngine(
+            wantedBefore = LocationSessionMode.DRIVING_CANDIDATE,
+            wantedAfter = null,
+            current = LocationSessionMode.IDLE,
+            ownedByDiagnostics = false,
+            droppedBySystem = true,
+        )
+
+        // Assert
+        assertEquals(LocationSessionMode.IDLE, mode)
+    }
+
+    @Test
     fun `an engine with nothing open leaves the diagnostics override alone`() {
         // Arrange — the P0 diagnostics override starts a capture with the engine IDLE; it is
         // the one capture the engine never owned.

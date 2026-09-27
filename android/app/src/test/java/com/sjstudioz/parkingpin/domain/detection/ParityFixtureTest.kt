@@ -125,8 +125,9 @@ class ParityFixtureTest {
     @Test
     fun `the storm counter keeps a superseded candidate in its own travel session`() {
         // Arrange — two drives, each ended by an exit and a walk; the second candidate
-        // supersedes the first. The user was asked twice, once per trip. iOS twin:
-        // `supersededCandidateStillCounts`.
+        // supersedes the first. The user was asked twice, once per trip. iOS twin, same name
+        // and events: `ParityFixtureTests` "The storm counter keeps a superseded candidate in
+        // its own travel session".
         val effects = replayEffects(
             DetectionEvent.VehicleEnter(at(0)), DetectionEvent.TimerTick(at(150)),
             DetectionEvent.VehicleExit(at(160)), DetectionEvent.WalkingEnter(at(170)),
@@ -152,7 +153,8 @@ class ParityFixtureTest {
      * docs/05 §17 `long_stop_in_traffic`, replayed by the loop above like every fixture, and
      * kept as its own test for what the loop cannot say: the candidate was silent (§9 `low`
      * posts nothing), the session withdrew it, and contract §8's per-session count is `[0]`.
-     * iOS twin: `longStopInTrafficResumesTheDrive`.
+     * iOS twin: `ParityFixtureTests` "long_stop_in_traffic: a jam that moves on retires its
+     * silent candidate".
      */
     @Test
     fun `long_stop_in_traffic - a jam that moves on retires its silent candidate`() {
@@ -214,7 +216,9 @@ class ParityFixtureTest {
     @Test
     fun `the storm counter opens a travel session on a confirmed departure`() {
         // Arrange — a parking confirmed, then a drive away that §11 confirms as a departure:
-        // that drive is a new travel session with its own allowance.
+        // that drive is a new travel session with its own allowance. iOS twin, same name and
+        // events: `ParityFixtureTests` "The storm counter opens a travel session on a
+        // confirmed departure".
         val effects = replayEffects(
             DetectionEvent.VehicleEnter(at(0)), DetectionEvent.TimerTick(at(150)),
             DetectionEvent.VehicleExit(at(160)), DetectionEvent.WalkingEnter(at(170)),
