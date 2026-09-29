@@ -1,0 +1,20 @@
+{
+  "name": "long_stop_in_traffic",
+  "initialState": "IDLE",
+  "events": [
+    {"type":"vehicle_enter","t":0},
+    {"type":"location","t":30,"accuracy":8,"speed":9},
+    {"type":"location","t":60,"accuracy":8,"speed":9,"distanceFromPreviousM":270},
+    {"type":"location","t":100,"accuracy":8,"speed":9,"distanceFromPreviousM":360},
+    {"type":"location","t":160,"accuracy":8,"speed":0,"distanceFromPreviousM":20},
+    {"type":"location","t":220,"accuracy":8,"speed":0,"distanceFromPreviousM":0},
+    {"type":"location","t":280,"accuracy":8,"speed":0,"distanceFromPreviousM":0},
+    {"type":"location","t":310,"accuracy":8,"speed":0,"distanceFromPreviousM":0},
+    {"type":"location","t":340,"accuracy":8,"speed":8,"distanceFromPreviousM":150},
+    {"type":"location","t":370,"accuracy":8,"speed":9,"distanceFromPreviousM":270}
+  ],
+  "expected": {
+    "candidate": true,
+    "finalState": "DRIVING"
+  }
+}

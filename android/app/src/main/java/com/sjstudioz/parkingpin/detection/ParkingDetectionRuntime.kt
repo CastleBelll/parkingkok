@@ -14,7 +14,9 @@ import com.sjstudioz.parkingpin.domain.detection.DetectionEvent
 import com.sjstudioz.parkingpin.domain.detection.MotionDomainEvent
 import com.sjstudioz.parkingpin.domain.detection.MotionEventKind
 import com.sjstudioz.parkingpin.domain.detection.ParkingDetectionEngine
+import com.sjstudioz.parkingpin.domain.location.LocationCaptureModePolicy
 import com.sjstudioz.parkingpin.domain.location.LocationSample
+import com.sjstudioz.parkingpin.domain.location.LocationSessionMode
 import com.sjstudioz.parkingpin.domain.trace.LocationQualityBucket
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -49,10 +51,20 @@ import java.util.UUID
  * actually reaches the user calls it.
  *
  * ### What it does not own
- * The Fused Location request. [com.sjstudioz.parkingpin.domain.location.LocationCaptureModePolicy]
- * and [FusedLocationSessionController] already decide that from the same motion events, and
- * two owners of one registration is what leaks a session. The one exception is a stop, never
- * a start: a hand save ([handleUserSavedParking]) asks the controller to end its capture.
+ * The Fused Location request. [FusedLocationSessionController] owns it, and two owners of one
+ * registration is what leaks a session. The runtime only *reports* what the engine wants of
+ * it after every batch ([followLocationCapture]) — docs/05 §19 "after every event batch the
+ * adapter releases any capture the engine no longer wants", which also covers the edges no
+ * motion event marks — and a hand save ([handleUserSavedParking]) asks for a stop.
+ *
+ * ### The stop-only resume window lives exactly as long as its capture
+ * docs/05 §3a (round 4). The window is stored with the engine state, because the capture it
+ * holds is a Play services `PendingIntent` that outlives this process, and every broadcast
+ * reloads the state. What must not outlive the capture is the window: before any batch —
+ * and before the capture question a motion event asks — a window whose capture is gone
+ * ([captureRunning] false: reboot, force-stop, app update, revoked permission, an expired or
+ * failed request) is closed, the candidate kept. That is rule 4's lost capture, and the
+ * state §19 forbids ("still holds the capture") never reaches the engine or the follow.
  */
 class ParkingDetectionRuntime(
     private val store: DetectionStateStore,
@@ -75,9 +87,35 @@ class ParkingDetectionRuntime(
      * build with no location session: the save then parks the machine and stops nothing.
      */
     private val stopLocationCapture: (suspend () -> Unit)? = null,
+    /**
+     * Told what the engine wants of the capture after every batch — before, then after, each
+     * null for none (docs/05 §3a / §19; see
+     * [LocationCaptureModePolicy.modeWantedBy]). Null in the tests that only care about
+     * state transitions, and in a build with no location session.
+     */
+    private val followLocationCapture: (suspend (LocationSessionMode?, LocationSessionMode?) -> Unit)? = null,
+    /**
+     * Whether the bounded capture is actually running now (docs/05 §3a "The window lives
+     * exactly as long as its capture"). Null in the tests that only care about state
+     * transitions, and in a build with no location session: the window is then taken to hold
+     * its capture, which is what the engine alone assumes.
+     */
+    private val captureRunning: (suspend () -> Boolean)? = null,
+    /**
+     * Whether the user has Smart Detection switched on (docs/05 §19: "nothing may open a
+     * capture the user switched off"). Null in the tests that only care about state
+     * transitions: detection is then always on, which is what the engine alone assumes.
+     */
+    private val detectionEnabled: (suspend () -> Boolean)? = null,
 ) {
 
     private val mutex = Mutex()
+
+    /**
+     * Previews an event for the capture decision, and nothing else: its state is discarded,
+     * so the candidate id it would mint does not matter and must not consume one of [engine]'s.
+     */
+    private val previewEngine = ParkingDetectionEngine { PREVIEW_CANDIDATE_ID }
 
     /**
      * §16 `restore`. Reads what the last process left, or starts from `IDLE`.
@@ -88,16 +126,72 @@ class ParkingDetectionRuntime(
      */
     suspend fun restore(): DetectionEngineState = mutex.withLock { current() }
 
+    /**
+     * The capture the engine would want once it has taken [event] — settled against the
+     * event's own timestamp, exactly as [handleMotion] will settle it — without taking it.
+     *
+     * docs/05 §19 "a motion event the engine did not act on opens nothing": the stored state
+     * is not the engine's view. A `DRIVING_CANDIDATE` whose window lapsed, or a stop-only
+     * window whose deadline passed or that this very exit closes, still reads as wanting a
+     * capture there, and a kerb capture opened on that answer is 300 s of HIGH accuracy the
+     * engine drops fix by fix. Asking after the event is what the capture actually serves.
+     */
+    suspend fun captureAfter(event: MotionDomainEvent): MotionCaptureAnswer = mutex.withLock {
+        if (!isDetectionEnabled()) return@withLock MotionCaptureAnswer(wanted = null, continuesSession = false)
+        val before = current()
+        val after = previewEngine.handle(before, event.toDetectionEvent()).state
+        MotionCaptureAnswer(
+            wanted = LocationCaptureModePolicy.modeWantedBy(after),
+            continuesSession = after.continuesSessionOf(before),
+        )
+    }
+
+    /**
+     * Whether Smart Detection is on. Every sensor entry point below reads it, so a transition,
+     * a fix or a car-link edge that arrives after the opt-out feeds nothing and opens nothing.
+     */
+    suspend fun isDetectionEnabled(): Boolean = detectionEnabled?.invoke() ?: true
+
     /** One normalized motion transition (docs/05_CROSS_PLATFORM_DOMAIN_CONTRACT.md §2). */
     suspend fun handleMotion(event: MotionDomainEvent): List<DetectionEffect> =
-        handle(listOfNotNull(event.toDetectionEvent()))
+        handle(listOfNotNull(event.toDetectionEvent()), sensor = true)
 
     /** One Fused Location delivery, oldest fix first so the engine sees the drive in order. */
     suspend fun handleLocations(samples: List<LocationSample>): List<DetectionEffect> =
-        handle(samples.sortedBy { it.atMillis }.map(DetectionEvent::Location))
+        handle(samples.sortedBy { it.atMillis }.map(DetectionEvent::Location), sensor = true)
 
-    /** §3a "The car link". [CarLinkReceiver] is the only caller on this platform. */
-    suspend fun handleCarLink(event: DetectionEvent): List<DetectionEffect> = handle(listOf(event))
+    /**
+     * §3a "The car link". [CarLinkReceiver] is the only caller on this platform. Gated on
+     * Smart Detection like every sensor entry: a car connect while the user has detection off
+     * would otherwise open a capture and the location foreground service on every drive.
+     */
+    suspend fun handleCarLink(event: DetectionEvent): List<DetectionEffect> = handle(listOf(event), sensor = true)
+
+    /**
+     * The user switched Smart Detection off (docs/05 §11 / §19). Called by
+     * [DetectionRegistrationCoordinator.setDetectionEnabled] once the flag is already off, so
+     * no sensor batch can reopen what this closes, and again by every reconcile while it is
+     * off — the relaunch that ends what a process dying mid-opt-out left behind (§3a).
+     *
+     * The engine drops whatever it was inferring — iOS's `.smartDetectionDisabled`, the same
+     * resulting state — and the capture is stopped outright, as a hand save stops it: the
+     * follow already releases what the engine wanted, and the stop covers anything else a
+     * drive had open. Not gated: it is what the gate is for.
+     */
+    suspend fun handleSmartDetectionDisabled(atMillis: Long): List<DetectionEffect> {
+        val event = DetectionEvent.SmartDetectionDisabled(atMillis)
+        // Idempotent, because every relaunch while opted out runs it again (docs/05 §3a: it
+        // ends whatever a process that died mid-opt-out left behind): a state the opt-out
+        // would leave as it is is not rewritten. The capture is stopped either way — a
+        // Play services request outlives the process that asked for it.
+        val changes = mutex.withLock {
+            val stored = store.readEngineStateOnce() ?: DetectionEngineState()
+            previewEngine.handle(current(), event).state != stored
+        }
+        val effects = if (changes) handle(listOf(event)) else emptyList()
+        stopLocationCapture?.invoke()
+        return effects
+    }
 
     /** The user answered the prompt. Fed back so the state machine leaves `CANDIDATE_PENDING`. */
     suspend fun handleUserAnswer(event: DetectionEvent): List<DetectionEffect> = handle(listOf(event))
@@ -113,6 +207,8 @@ class ParkingDetectionRuntime(
      * and a failure there must not cost the state machine its `PARKED`.
      */
     suspend fun handleUserSavedParking(atMillis: Long): List<DetectionEffect> {
+        // The follow already releases a capture the engine had asked for; the stop is for one
+        // it had not, since a save answers the question whatever was gathering fixes for it.
         val effects = handle(listOf(DetectionEvent.UserSavedParking(atMillis)))
         stopLocationCapture?.invoke()
         return effects
@@ -133,7 +229,22 @@ class ParkingDetectionRuntime(
      * would cost something, and a parked phone ticks never.
      */
     suspend fun handleTick(atMillis: Long): List<DetectionEffect> =
-        handle(listOf(DetectionEvent.TimerTick(atMillis)))
+        handle(listOf(DetectionEvent.TimerTick(atMillis)), sensor = true)
+
+    /**
+     * The first batch after a reboot or an app update (docs/05 §14), sent by
+     * [RegistrationRecoveryReceiver] once the dropped registrations are cleared.
+     *
+     * A tick at [atMillis] settles §3a's windows exactly as iOS's `restore(_:now:)` does — a
+     * departure already past §11's lapse returns to `PARKED` — and the follow that ends every
+     * batch reopens the bounded capture the engine still wants, which the reboot took with it.
+     * Without it a restored `DEPARTURE_CANDIDATE` got no fixes until some motion edge happened
+     * to arrive. A `PARKED` get-in whose vehicle evidence went silent long ago is dropped first
+     * ([ParkingDetectionEngine.dropsStaleGetIn], iOS `restoreGetIn`), so the reset reopens no
+     * capture for it and the parking stays.
+     */
+    suspend fun resumeAfterSystemReset(atMillis: Long): List<DetectionEffect> =
+        handle(listOf(DetectionEvent.TimerTick(atMillis)), sensor = true) { engine.dropsStaleGetIn(it, atMillis) }
 
     /**
      * One batch of events, in order, under the lock.
@@ -150,10 +261,33 @@ class ParkingDetectionRuntime(
      * [ParkingCandidateCoordinator.expireIfDue] and the notification's own `setTimeoutAfter`;
      * the driving rows are not, and a scheduled tick is the remaining half (docs/05 §3a).
      */
-    private suspend fun handle(events: List<DetectionEvent>): List<DetectionEffect> {
+    private suspend fun handle(
+        events: List<DetectionEvent>,
+        /**
+         * A sensor batch (motion, fix, car link, tick), which Smart Detection being off
+         * discards. User events and the opt-out itself are never gated.
+         */
+        sensor: Boolean = false,
+        /** What the stored state must become before the batch — a system reset's cleanup. */
+        prepare: (DetectionEngineState) -> DetectionEngineState = { it },
+    ): List<DetectionEffect> {
         if (events.isEmpty()) return emptyList()
-        return mutex.withLock {
-            var state = current()
+        var wantedBefore: LocationSessionMode? = null
+        var wantedAfter: LocationSessionMode? = null
+        var windowOpenAfter = false
+        val effects = mutex.withLock {
+            val stored = current()
+            // The want before the cleanup: a get-in dropped here is a capture given up, and
+            // the follow releases whatever of it is still running.
+            wantedBefore = LocationCaptureModePolicy.modeWantedBy(stored)
+            // Read under the lock, so a batch either runs wholly before the opt-out's own
+            // batch or sees the flag off. Off: the engine is not fed, and the follow below
+            // releases any capture still running rather than trusting the stored want.
+            if (sensor && !isDetectionEnabled()) {
+                Log.i(TAG, "sensor batch ignored: smart detection off")
+                return@withLock emptyList()
+            }
+            var state = prepare(stored)
             val effects = mutableListOf<DetectionEffect>()
             for (event in events) {
                 val step = engine.handle(state, event)
@@ -164,11 +298,59 @@ class ParkingDetectionRuntime(
             Log.i(TAG, "engine -> ${state.state} effects=${effects.size}")
             apply(effects)
             store.writeEngineStateAndCheckpoint(state, state.toCheckpoint())
+            wantedAfter = LocationCaptureModePolicy.modeWantedBy(state)
+            windowOpenAfter = state.stopOnlyResumeWindow != null
             effects
         }
+        // Outside the lock, after the state is durable, as the hand save's stop is: the
+        // capture has a lock of its own, and a failure there must not cost the engine its
+        // transition. Every batch, not only when the want changed (docs/05 §19): a capture
+        // whose owner went away with no state change has no edge to be released on. Asked
+        // again here because the opt-out may have landed since the lock was released: a want
+        // read before it must not reopen what it stopped.
+        if (!isDetectionEnabled()) wantedAfter = null
+        followLocationCapture?.invoke(wantedBefore, wantedAfter)
+        if (windowOpenAfter) closeWindowWithoutCapture(wantedAfter)
+        return effects
     }
 
-    private suspend fun current(): DetectionEngineState = store.readEngineStateOnce() ?: DetectionEngineState()
+    /**
+     * docs/05 §3a "The window lives exactly as long as its capture", made durable the moment
+     * the follow shows the capture is not there: a stop-only candidate whose transition had no
+     * capture (a drive that lost it, docs/05 §11 "The kept session stays without a capture")
+     * opens no window. Closing it only at the next batch's [current] is too late on Android:
+     * `TransitionEventIngestor` shapes the capture before the engine takes the event, so the
+     * `vehicle_enter` of a new journey opens a capture first and would find the window it
+     * never held looking backed by one — resuming `DRIVING` and withdrawing the candidate,
+     * where iOS keeps it.
+     */
+    private suspend fun closeWindowWithoutCapture(wanted: LocationSessionMode?) {
+        val holdsCapture = captureRunning ?: return
+        val closed = mutex.withLock {
+            val stored = store.readEngineStateOnce() ?: return@withLock false
+            if (stored.stopOnlyResumeWindow == null || holdsCapture()) return@withLock false
+            val withoutWindow = stored.copy(stopOnlyResumeWindow = null)
+            store.writeEngineStateAndCheckpoint(withoutWindow, withoutWindow.toCheckpoint())
+            Log.i(TAG, "stop-only window closed: no capture holds it")
+            true
+        }
+        // Whatever of a capture is left (a record whose background permission went) is no
+        // longer the engine's, as the next batch's follow would say.
+        if (closed) followLocationCapture?.invoke(wanted, null)
+    }
+
+    /**
+     * The stored state, less a stop-only window whose capture is gone (docs/05 §3a rule 4's
+     * lost capture: the window closes, the candidate stays). Read at the start of every batch
+     * and every capture question, so a new process handles nothing against a window that no
+     * longer holds its capture; the closure is written with the batch's own state.
+     */
+    private suspend fun current(): DetectionEngineState {
+        val stored = store.readEngineStateOnce() ?: DetectionEngineState()
+        if (stored.stopOnlyResumeWindow == null) return stored
+        val holdsCapture = captureRunning?.invoke() ?: true
+        return if (holdsCapture) stored else stored.copy(stopOnlyResumeWindow = null)
+    }
 
     private suspend fun apply(effects: List<DetectionEffect>) {
         for (effect in effects) {
@@ -204,7 +386,33 @@ class ParkingDetectionRuntime(
 
     private companion object {
         const val TAG = "PkDetection"
+        const val PREVIEW_CANDIDATE_ID = "capture-preview"
     }
+}
+
+/**
+ * What the engine would make of a motion event, for the capture it shapes before the engine
+ * takes it ([ParkingDetectionRuntime.captureAfter]).
+ */
+data class MotionCaptureAnswer(
+    /** The capture the engine wants once it has taken the event, or null for none. */
+    val wanted: LocationSessionMode?,
+    /**
+     * Whether the engine is still on the session it was on before the event — the one a lost
+     * capture belongs to (docs/05 §11 "The kept session stays without a capture"). False when
+     * the event opens a new journey or ends the session.
+     */
+    val continuesSession: Boolean,
+)
+
+/**
+ * The same travel session on both sides: a session's identity is when its journey began,
+ * which extending it keeps and a new journey replaces (docs/05 §3a).
+ */
+private fun DetectionEngineState.continuesSessionOf(before: DetectionEngineState): Boolean {
+    val previous = before.session ?: return false
+    val next = session ?: return false
+    return next.evidence.vehicleFirstSeenAtMillis == previous.evidence.vehicleFirstSeenAtMillis
 }
 
 /**

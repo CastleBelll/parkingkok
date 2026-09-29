@@ -125,6 +125,22 @@ AND
 
 GPS degradation alone cannot satisfy rule.
 
+Each clause is a predicate both engines evaluate the same way (2026-09-27, detail in
+`docs/05_PARKING_DETECTION_ENGINE.md` §8b):
+
+| clause | true when |
+|---|---|
+| recent meaningful vehicle session | the drive reached `DRIVING` |
+| vehicle session ended/stopped | `PARKING_TRANSITION` was entered — by `vehicle_exit`, by `movementIdle`, or by a car-link disconnect. *Stopped* is `movementIdle`; it satisfies this clause but does not earn `vehicle_exit_detected` |
+| a confirmation signal | observed at or after the transition's entry: `walking_enter`, `stationary_enter`, a location stop (a fix reporting < 2.0 m/s), or a car-link disconnect |
+
+§8 fixtures may pin `confidence` and `requiredReasons`. A fixture that pins neither checks
+only the state, and two engines can then disagree on whether the user is notified while
+both pass — which is what the 2026-09-27 field-draft replay found. Since then every promoted
+field fixture (`field_s*_parked`) pins the bucket and the full reason set both engines
+produce, each checked against engine §8's weights and §8b's definitions; and §8's outcome
+traces pin the bucket and reasons of **every** candidate in every fixture and draft.
+
 ## 7. Last Reliable Location
 A local-only domain value.
 Must include:
@@ -156,6 +172,89 @@ JSON fixture schema example:
 ```
 
 Both projects must run equivalent fixture suite in CI.
+
+**`candidate` means "a candidate was created".** Both runners set it from the
+`createCandidate` effects, so a candidate that was created and later withdrawn — a stop-only
+candidate the drive moved on from (engine §3a), a fuel-stop reconnect — still reads `true`, and
+`finalState` says how the trip ended.
+
+**The storm check counts per travel session** (engine §12, §3a "A recording can hold two
+travel sessions", 2026-09-27). Both suites assert that no travel session produced more than one
+candidate, where a session opens on entering `DRIVING_CANDIDATE` or on a confirmed departure,
+and a candidate the session itself withdrew (not superseded by the next) no longer counts.
+Field draft s03 holds two travel sessions and one candidate in each.
+
+The count is computed from the replay's effect list alone, identically on both runners
+(iOS `ParityFixtureOutcome.candidatesPerTravelSession`; Android's twin must match it line for
+line, and the test is named "No travel session produces more than one candidate" on both):
+
+1. Start with one session, count 0. Track the state of the last `persistCheckpoint`.
+2. A `persistCheckpoint` **opens a new session** when it enters `DRIVING_CANDIDATE` from any
+   other state, or enters `DRIVING` from `DEPARTURE_CANDIDATE`. If the current session's count
+   is still 0 it is reused instead of appending another empty one.
+3. `createCandidate` adds 1 to the current session and remembers which session that
+   candidate id belongs to.
+4. `withdrawCandidate` / `RetireCandidate` **immediately followed** by a `createCandidate` in
+   the same effect list is a supersession (§10a) and changes nothing. Any other withdrawal —
+   expiry, a car-link reconnect, a stop-only resume, `user_saved` — subtracts 1 from the
+   session that created that candidate.
+5. Every count must be ≤ 1.
+
+Pinned values, each by a test of the same name on both runners: engine §17
+`long_stop_in_traffic` gives `[0]` (and its candidate is `low`, withdrawn, never notified); two
+drives each ended by an exit and a walk, the second superseding the first, give `[1, 1]` ("The
+storm counter keeps a superseded candidate in its own travel session"); a confirmed parking
+followed by a drive away that §11 confirms gives `[1, 0]` ("The storm counter opens a travel
+session on a confirmed departure"). Engines emit a supersession as withdraw-then-create,
+adjacent — asserted directly in the `[1, 1]` test on both platforms — and a self-withdrawal
+never directly before a create.
+
+### Outcome traces — per-event parity, drafts included (2026-09-27)
+
+`expected` states what the product must do; it does not show that the two engines did the
+same thing on the way, and a draft has no `expected` a conformant engine can meet. So both
+runners also replay **every committed fixture and every file in `platform-tests/drafts/`**
+and compare the result, with `expected` ignored, to one committed golden:
+`platform-tests/goldens/outcome-traces.golden.json`.
+
+```jsonc
+{ "fixtures": {
+  "field_s04_parked.json": [                   // key: file name; drafts are "drafts/<file>"
+    {"event": 4,  "t": 1235.0, "state": "DRIVING_CANDIDATE"},
+    {"event": 39, "t": 4907.0, "state": "CANDIDATE_PENDING",
+     "effects": ["create high location_quality_degraded,location_stopped,..."]}
+  ] } }
+```
+
+- One entry per event that changed the state **or** emitted an outcome effect; `event` is the
+  index into `events`, `t` its relative time.
+- `state` is the state after the event, present only when it changed.
+- `effects`, in emission order: `create <bucket> <wire codes, sorted, comma-joined>`,
+  `withdraw`, `endActiveParking`. Checkpoints, notifications and capture requests are not
+  outcomes and are not recorded.
+- The golden's key set must equal the files on disk, so a new fixture or draft fails until
+  its trace is recorded.
+- Each runner also lists the exact committed names — the fixtures and the drafts — so a file
+  deleted together with its golden entry fails too, rather than leaving both key sets equal and
+  smaller. iOS `ParityFixtureTests` "Every fixture in platform-tests/ is loaded and replayed";
+  Android `ParityFixtureTest` `every committed fixture is replayed` and `every committed draft
+  is replayed` (the same eleven draft names).
+
+This is the committed proof behind "same result on both platforms": two engines that each
+match one golden agree with each other at every event — final state, candidate created,
+bucket, reason set and active-parking transitions. A change to the golden is a product
+change and is reviewed as one; it is regenerated only from an engine change the spec backs,
+and both runners must pass it in the same change.
+
+**There is exactly one copy.** Both runners resolve it inside `platform-tests/` — Android
+through the same `fixtureDirectory()` it reads fixtures from, iOS through the bundled
+`platform-tests` folder reference — and neither keeps a private copy (no
+`src/test/resources/` golden). Android is the only writer, with `UPDATE_PARITY_GOLDEN=1`,
+and writes that same path; iOS only asserts it. A second copy is how the proof breaks: a
+regeneration rewrites one runner's expectation, the other keeps asserting the old one, and
+both suites stay green while the engines disagree. iOS `ParityFixtureTests` "The
+outcome-trace golden exists exactly once, in platform-tests/goldens/" fails on any file of
+that name elsewhere in the checkout (build output excluded).
 
 ## 9. Trace Recording
 

@@ -16,17 +16,32 @@ import Foundation
 /// candidate scored here has already survived all three, so fields for them would be
 /// constants — and a weight that can never apply is worse than no weight, because it reads
 /// as if the engine considered something it did not.
+///
+/// The fourth negative, `trip below minimum`, *can* be true here — a drive of 90–120 s
+/// under 800 m promotes and can park — so it is applied (`tripBelowMinimumWeight`).
 struct ParkingEvidence: Sendable, Equatable {
     /// A bounded driving session was confirmed under §7 before it ended. This is §6's
     /// "evidence of recent meaningful vehicle session".
     var hasMeaningfulVehicleSession = false
-    /// The vehicle session ended — §6's second clause.
+    /// The vehicle session ended or stopped — §6's second clause. True for every way into
+    /// `PARKING_TRANSITION`, `movementIdle` included, and it carries no weight of its own:
+    /// the weight belongs to *how* it ended, below.
     var vehicleEnded = false
-    /// Walking observed after the vehicle evidence. The strongest single signal §8 has.
+    /// docs/05 §8b `vehicle_exit_detected` (+15): an explicit exit ended this drive — the
+    /// §2 `vehicle_exit`, the iOS-derived one (`walkingDetected`, `vehicleEvidenceExpired`)
+    /// or a car-link disconnect — at the transition's entry or while it was open. A
+    /// `movementIdle` entry is an inference from absence and earns `location_stopped`
+    /// instead; crediting both would count one inference twice.
+    var vehicleExitDetected = false
+    /// Walking observed inside the transition. The strongest single signal §8 has.
     var walkingAfterVehicle = false
     var stationaryAfterVehicle = false
-    /// Movement evidence went quiet for `ParkingTransitionPolicy.movementIdleWindow`
-    /// before the session ended.
+    /// §3a's third confirming signal: a fix *inside the transition* reported a speed below
+    /// `movingSpeedThreshold`. Distinct from `locationStopped`, which is §8's weight and can
+    /// be earned by the entry itself — only an observation can confirm.
+    var locationStopConfirmed = false
+    /// docs/05 §8b `location_stopped` (+10): the transition was entered by `movementIdle`,
+    /// or a reported stop came after the drive's last moving sample and near its end.
     var locationStopped = false
     /// The fix quality collapsed towards the end of the drive — the underground pattern
     /// in §13. **Supporting evidence only**: §6 says it can never satisfy the rule alone,
@@ -37,16 +52,16 @@ struct ParkingEvidence: Sendable, Equatable {
     /// flag; the *kind* is carried by `CarLinkKind` and never becomes a reason code,
     /// because §4 is closed.
     var carProjectionDisconnected = false
-    /// A reliable point was captured for this drive.
-    var reliableLocationCaptured = false
-    /// §8's "route duration/distance comfortably over minimum".
+    /// §8's duration/distance, measured at the vehicle end (§8b) and frozen there. A `nil`
+    /// duration means unknown — a transition rebuilt from a checkpoint.
     var driveDuration: TimeInterval?
     var driveDistanceMeters: Double?
 
     /// §6: at least one of walking / stationary / location stop / projection disconnect.
-    /// GPS degradation is not on this list by construction.
+    /// GPS degradation is not on this list by construction, and neither is the
+    /// `location_stopped` weight — see `locationStopConfirmed`.
     var confirmationSignals: Int {
-        [walkingAfterVehicle, stationaryAfterVehicle, locationStopped, carProjectionDisconnected]
+        [walkingAfterVehicle, stationaryAfterVehicle, locationStopConfirmed, carProjectionDisconnected]
             .filter(\.self)
             .count
     }
@@ -60,13 +75,18 @@ struct ParkingEvidence: Sendable, Equatable {
 enum ParkingCandidatePolicy {
     // ── §8 positive weights ─────────────────────────────────────────────────
     static let meaningfulVehicleSessionWeight = 25
-    static let vehicleEndedWeight = 15
+    static let vehicleExitDetectedWeight = 15
     static let walkingAfterVehicleWeight = 30
     static let stationaryAfterVehicleWeight = 10
     static let locationStoppedWeight = 10
     static let gpsQualityDegradedWeight = 5
     static let carProjectionDisconnectedWeight = 20
     static let comfortablyOverMinimumWeight = 5
+
+    // ── §8 negative weights that can still apply at scoring time ────────────
+    /// §8 "trip below minimum": neither `vehicle_duration_met` nor `vehicle_distance_met`.
+    /// Applied only when the duration is known — unknown is not short.
+    static let tripBelowMinimumWeight = -15
 
     // ── §9 buckets ──────────────────────────────────────────────────────────
     static let highMinimumScore = 80
@@ -133,8 +153,8 @@ enum ParkingCandidatePolicy {
         if evidence.hasMeaningfulVehicleSession {
             total += meaningfulVehicleSessionWeight
         }
-        if evidence.vehicleEnded {
-            total += vehicleEndedWeight
+        if evidence.vehicleExitDetected {
+            total += vehicleExitDetectedWeight
         }
         if evidence.walkingAfterVehicle {
             total += walkingAfterVehicleWeight
@@ -153,6 +173,9 @@ enum ParkingCandidatePolicy {
         }
         if isComfortablyOverMinimum(evidence) {
             total += comfortablyOverMinimumWeight
+        }
+        if isBelowMinimum(evidence) {
+            total += tripBelowMinimumWeight
         }
         return max(0, total)
     }
@@ -188,7 +211,7 @@ enum ParkingCandidatePolicy {
            distance >= DrivingConfirmationPolicy.minimumDistance {
             codes.append(.vehicleDistanceMet)
         }
-        if evidence.vehicleEnded {
+        if evidence.vehicleExitDetected {
             codes.append(.vehicleExitDetected)
         }
         if evidence.walkingAfterVehicle {
@@ -203,13 +226,23 @@ enum ParkingCandidatePolicy {
         if evidence.gpsQualityDegraded {
             codes.append(.locationQualityDegraded)
         }
-        if lastReliableLocation != nil || evidence.reliableLocationCaptured {
+        // docs/05 §8b: the code says this candidate *carries* a point from this drive —
+        // the §5 inheritance rule already decided that — not that some reliable fix
+        // exists somewhere on the device, which after the first drive is always true.
+        if lastReliableLocation != nil {
             codes.append(.reliableLocationCaptured)
         }
         if evidence.carProjectionDisconnected {
             codes.append(.carProjectionDisconnected)
         }
         return codes
+    }
+
+    private static func isBelowMinimum(_ evidence: ParkingEvidence) -> Bool {
+        guard let duration = evidence.driveDuration else { return false }
+        let distance = evidence.driveDistanceMeters ?? 0
+        return duration < DrivingConfirmationPolicy.minimumDuration
+            && distance < DrivingConfirmationPolicy.minimumDistance
     }
 
     private static func isComfortablyOverMinimum(_ evidence: ParkingEvidence) -> Bool {
@@ -255,6 +288,12 @@ enum ParkingTransitionPolicy {
     /// case is deliberately not idle: a session that has not yet moved is what
     /// `DrivingSessionTimeoutPolicy.vehicleEvidenceTimeout` already governs, and treating
     /// it as a parking transition would open a candidate for a car that never left.
+    /// docs/05 §8b. How far before the drive's end the "near end" evidence may lie —
+    /// `location_stopped`'s reported stop and `location_quality_degraded`'s fall into poor.
+    /// **unvalidated** — reused from `transitionWindow`, the same budget §5 gives the
+    /// descent into a garage.
+    static let nearEndHorizon: TimeInterval = transitionWindow
+
     static func isMovementIdle(lastMovingSampleAt: Date?, now: Date) -> Bool {
         guard let lastMovingSampleAt else { return false }
         return now.timeIntervalSince(lastMovingSampleAt) >= movementIdleWindow

@@ -192,6 +192,7 @@ final class DetectionRuntime {
             // Before rehydration, because rehydration replays motion history and docs/05 §9
             // records nothing while the user is opted out.
             await coordinator.setTraceRecordingEnabled(isOptedIn)
+            await coordinator.setSmartDetectionEnabled(isOptedIn)
             await coordinator.rehydrate(launchReason: launchReason)
             await coordinator.handleCarLink(carLink.observe())
             #if PK_DEV
@@ -378,6 +379,7 @@ final class DetectionRuntime {
             requestNextLocationPermission()
             startMonitoringIfPermitted()
             Task { [weak self, coordinator] in
+                await coordinator.setSmartDetectionEnabled(true)
                 await coordinator.setTraceRecordingEnabled(true)
                 await self?.exportDiagnostics()
             }
@@ -386,7 +388,7 @@ final class DetectionRuntime {
             // Neither the bounded session nor the open trace may outlive the opt-in that
             // authorized them (docs/05 §9).
             Task { [weak self, coordinator] in
-                await coordinator.stopDrivingSessionForOptOut()
+                await coordinator.setSmartDetectionEnabled(false)
                 await coordinator.setTraceRecordingEnabled(false)
                 await self?.exportDiagnostics()
             }

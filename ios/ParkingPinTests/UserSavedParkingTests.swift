@@ -182,6 +182,33 @@ struct UserSavedParkingTests {
         #expect(persistedStates(effects).map(\.state) == [.parked])
     }
 
+    /// §11c: a candidate left behind by `CANDIDATE_PENDING → DRIVING_CANDIDATE` (§3a keeps it
+    /// answerable) is withdrawn by a hand save too. Android twin: `a hand save withdraws a
+    /// candidate left behind by a new journey`.
+    @Test("A hand save withdraws a candidate left behind by a new journey")
+    func leftBehindCandidateIsRetired() async throws {
+        // Arrange
+        let engine = await drivingEngine()
+        _ = await engine.handle(.vehicleExit(at: at(600)))
+        let raised = await engine.handle(.walkingEnter(at: at(630)))
+        let candidate = try #require(raised.compactMap {
+            if case let .createCandidate(candidate) = $0 {
+                return candidate
+            }
+            return nil
+        }.first)
+        _ = await engine.handle(.vehicleEnter(at: at(900)))
+        #expect(await engine.state == .drivingCandidate, "the control: a new journey")
+
+        // Act
+        let effects = await engine.handle(.userSavedParking(at: at(1_000)))
+
+        // Assert
+        #expect(await engine.state == .parked)
+        #expect(effects.contains(.withdrawCandidate(id: candidate.id)))
+        expectNothingInferred(effects)
+    }
+
     @Test("PARKED: saving again stays PARKED and re-stamps the entry")
     func parkedStaysParked() async {
         // Arrange

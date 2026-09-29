@@ -27,7 +27,8 @@ class ParkingpinApplication : Application() {
         // and the SDK must honour it wherever it happens to be loaded.
         created.applicationScope.launch { created.analyticsCollectionGate.run() }
         // Process death leaves the Play services subscription intact, so this normally
-        // resolves to "already registered" and issues no call at all.
+        // resolves to "already registered" and issues no call at all. With Smart Detection
+        // off it also ends whatever a process that died mid-opt-out left behind (docs/05 §3a).
         created.applicationScope.launch {
             created.registrationCoordinator.reconcile()
             // The third leak guard: a session record left behind by a process that died

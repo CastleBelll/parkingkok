@@ -1,6 +1,7 @@
 package com.sjstudioz.parkingpin.domain.detection
 
 import com.sjstudioz.parkingpin.domain.location.LocationSample
+import com.sjstudioz.parkingpin.domain.trace.LocationQualityBucket
 
 /**
  * Everything [ParkingDetectionEngine] can be told, in the normalized vocabulary of
@@ -34,19 +35,29 @@ sealed interface DetectionEvent {
     }
 
     /**
-     * A drop in location quality, as §2 reports it.
+     * A drop in location quality, with the §2 `fromBucket`/`toBucket` pair.
      *
-     * It carries no buckets, because nothing acts on their values: §8 weighs *that* quality
-     * degraded near the end of a drive, not by how much. The `fromBucket`/`toBucket` pair
-     * belongs to the trace format, which is a recording that has to stay readable years
-     * later, and lives there.
+     * The buckets are carried because §8 "GPS quality degraded near end" weighs losing the
+     * sky, and only a drop **to `poor`** says that: a good-to-fair wobble happens on every
+     * street and used to earn the weight here while iOS ignored it — the same field draft
+     * scored MEDIUM on Android and LOW on iOS. A missing `toBucket` is read as `poor`, the
+     * way iOS reads it, so an event from an older recorder still counts.
      *
      * No Android adapter emits this — Fused Location reports accuracies, not transitions —
-     * so on this platform the engine derives the same conclusion from the fixes themselves
-     * (see [TravelSession.lastQualityBucket]). It stays in the vocabulary because the
-     * fixtures spell it out and because iOS has the event for real.
+     * and iOS feeds none to its engine either; on device both engines derive the same
+     * evidence from the fixes themselves, as an accepted `poor` fix whose predecessor was
+     * `good` or `fair` (docs/05 §8b). It stays in the vocabulary because the fixtures,
+     * which are recorded traces, spell it out, and both engines read either form into one
+     * "fell into poor" time.
      */
-    data class LocationQualityDegraded(override val atMillis: Long) : DetectionEvent
+    data class LocationQualityDegraded(
+        override val atMillis: Long,
+        val fromBucket: LocationQualityBucket? = null,
+        val toBucket: LocationQualityBucket? = null,
+    ) : DetectionEvent {
+        /** Whether this drop lost the sky, which is the only drop §8 weighs. */
+        val reachedPoor: Boolean get() = toBucket == null || toBucket == LocationQualityBucket.POOR
+    }
 
     /**
      * §3a "The car link".
@@ -62,27 +73,19 @@ sealed interface DetectionEvent {
     data class CarLinkDisconnected(override val atMillis: Long) : DetectionEvent
 
     /**
-     * The only thing that fires a §3a **timeout**.
+     * "Nothing happened, and time passed" — an invitation to re-judge §3a's windows.
      *
-     * The transition table mixes two kinds of elapsed-time rule and they must not be
-     * treated alike:
+     * It is **not** the only thing that fires a timeout. Every event is settled against its
+     * own timestamp — ingest, windows, edge, windows (docs/05 §3a "The windows are judged
+     * before the edge too") — so a drive that keeps producing events needs no tick at all.
+     * The tick exists for the drive that produces none: underground, no fixes, no transition
+     * delivered. [com.sjstudioz.parkingpin.detection.DrivingLocationService] sends one a
+     * minute while, and only while, the bounded capture runs; fixtures use it to state that
+     * time passed.
      *
-     * - *A condition that became true by holding* — `DRIVING_CANDIDATE -> DRIVING` after
-     *   90 s of sustained vehicle activity, `PARKED -> DEPARTURE_CANDIDATE` once §11's two
-     *   bars are cleared. These are evaluated on **every** event, because the answer is
-     *   already true when we look and looking late cannot make it false.
-     * - *A timeout — nothing happened for long enough* — `drivingCandidateWindow`,
-     *   `movementIdleWindow`, `transitionWindow`, the 45-minute expiry. These fire **only
-     *   here**, because a timeout that fired opportunistically on the next unrelated event
-     *   would retroactively kill a session that had already earned its promotion.
-     *
-     * `subway_commute_underground` is the fixture that proves the distinction is load
-     * bearing: `vehicle_enter` at t=6404 is followed by silence until t=6707 (303 s, past
-     * `drivingCandidateWindow`) and the next fix is at t=7719 (1012 s, past
-     * `movementIdleWindow`). Evaluated opportunistically, either gap discards a drive the
-     * contract expects to end in `CANDIDATE_PENDING`. The fixture vocabulary has carried a
-     * `timer_tick` event all along and none of the five committed fixtures uses one, which
-     * is the same statement from the other side.
+     * Ingesting the event's evidence before judging the windows is what keeps
+     * `subway_commute_underground` a drive: a fix that lands more than `movementIdleWindow`
+     * after the last one is movement continuing, not a parking.
      */
     data class TimerTick(override val atMillis: Long) : DetectionEvent
 
@@ -100,5 +103,17 @@ sealed interface DetectionEvent {
      * engine was never told about is one no drive away could ever end.
      */
     data class UserSavedParking(override val atMillis: Long) : DetectionEvent
+
+    /**
+     * The user switched Smart Detection off (docs/05 §11 / §3a rule 4) — iOS's
+     * `endDrivingSession(reason: .smartDetectionDisabled)`.
+     *
+     * Not a sensor event and not a user answer: it drops whatever the engine was inferring and
+     * decides nothing. A drive or a transition goes to `IDLE` with no candidate, a departure
+     * or a get-in returns to `PARKED` ending nothing, and a stop-only candidate's resume window
+     * closes with the candidate kept. Turning detection off never closes a parking and never
+     * withdraws a candidate the user may still answer.
+     */
+    data class SmartDetectionDisabled(override val atMillis: Long) : DetectionEvent
 }
 

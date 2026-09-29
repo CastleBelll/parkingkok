@@ -1,0 +1,344 @@
+{
+ "name": "field_s17_parked",
+ "initialState": "IDLE",
+ "events": [
+  {
+   "type": "walking_enter",
+   "t": 0,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_enter",
+   "t": 27,
+   "confidence": "high"
+  },
+  {
+   "type": "walking_enter",
+   "t": 30,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_exit",
+   "t": 30,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_enter",
+   "t": 39,
+   "confidence": "high"
+  },
+  {
+   "type": "walking_enter",
+   "t": 91,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_exit",
+   "t": 91,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_enter",
+   "t": 142,
+   "confidence": "high"
+  },
+  {
+   "type": "walking_enter",
+   "t": 144,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_exit",
+   "t": 144,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_enter",
+   "t": 148,
+   "confidence": "high"
+  },
+  {
+   "type": "walking_enter",
+   "t": 150,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_exit",
+   "t": 150,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_enter",
+   "t": 177,
+   "confidence": "high"
+  },
+  {
+   "type": "walking_enter",
+   "t": 431,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_exit",
+   "t": 431,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_enter",
+   "t": 472,
+   "confidence": "high"
+  },
+  {
+   "type": "walking_enter",
+   "t": 491,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_exit",
+   "t": 491,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_enter",
+   "t": 605,
+   "confidence": "high"
+  },
+  {
+   "type": "walking_enter",
+   "t": 884,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_exit",
+   "t": 884,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_enter",
+   "t": 1156,
+   "confidence": "high"
+  },
+  {
+   "type": "walking_enter",
+   "t": 1234,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_exit",
+   "t": 1234,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_enter",
+   "t": 1353,
+   "confidence": "high"
+  },
+  {
+   "type": "vehicle_enter",
+   "t": 1366,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_exit",
+   "t": 1367,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_enter",
+   "t": 1508,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_exit",
+   "t": 1525,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_enter",
+   "t": 1619,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_exit",
+   "t": 1644,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_enter",
+   "t": 1647,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_exit",
+   "t": 1716,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_enter",
+   "t": 1756,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_exit",
+   "t": 1756,
+   "confidence": "high"
+  },
+  {
+   "type": "location",
+   "t": 2100,
+   "accuracy": 7.999999515502651
+  },
+  {
+   "type": "location",
+   "t": 2401,
+   "accuracy": 8.000000000000002
+  },
+  {
+   "type": "location",
+   "t": 2580,
+   "accuracy": 31.719015988600614,
+   "speed": 1.1807287931442025
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 2580,
+   "fromBucket": "good",
+   "toBucket": "fair"
+  },
+  {
+   "type": "location",
+   "t": 2678,
+   "accuracy": 420.99205755445786,
+   "distanceFromPreviousM": 116.34956462491834
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 2678,
+   "fromBucket": "fair",
+   "toBucket": "poor"
+  },
+  {
+   "type": "location",
+   "t": 2715,
+   "accuracy": 1107.1070632572337,
+   "distanceFromPreviousM": 608.1458794744991
+  },
+  {
+   "type": "location",
+   "t": 2789,
+   "accuracy": 1414,
+   "distanceFromPreviousM": 478.4931386924884
+  },
+  {
+   "type": "location",
+   "t": 2807,
+   "accuracy": 21.21826176650963,
+   "distanceFromPreviousM": 304.87551276323205
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 2807,
+   "fromBucket": "good",
+   "toBucket": "fair"
+  },
+  {
+   "type": "location",
+   "t": 2823,
+   "accuracy": 18.681440173472655,
+   "distanceFromPreviousM": 0.11599338727422376
+  },
+  {
+   "type": "location",
+   "t": 2839,
+   "accuracy": 12.090355505718104,
+   "distanceFromPreviousM": 0.04471380131055471
+  },
+  {
+   "type": "location",
+   "t": 2858,
+   "accuracy": 12.090610192545082,
+   "distanceFromPreviousM": 0.00903613014560086
+  },
+  {
+   "type": "location",
+   "t": 2875,
+   "accuracy": 12.090892343912596,
+   "distanceFromPreviousM": 1.2786238204816769e-07
+  },
+  {
+   "type": "location",
+   "t": 2893,
+   "accuracy": 9.190265615993223,
+   "distanceFromPreviousM": 0.0071286499357680385
+  },
+  {
+   "type": "location",
+   "t": 2910,
+   "accuracy": 9.190714068747953,
+   "distanceFromPreviousM": 4.387434678186832e-08
+  },
+  {
+   "type": "location",
+   "t": 2927,
+   "accuracy": 9.191129185637186,
+   "distanceFromPreviousM": 4.1429106507922977e-08
+  },
+  {
+   "type": "location",
+   "t": 2943,
+   "accuracy": 9.191488251892624,
+   "distanceFromPreviousM": 3.535532288022972e-08
+  },
+  {
+   "type": "location",
+   "t": 2958,
+   "accuracy": 9.191875010922198,
+   "distanceFromPreviousM": 3.8910383863683744e-08
+  },
+  {
+   "type": "location",
+   "t": 2973,
+   "accuracy": 9.192241830324841,
+   "distanceFromPreviousM": 3.762435878282266e-08
+  },
+  {
+   "type": "location",
+   "t": 2988,
+   "accuracy": 9.192639835199543,
+   "distanceFromPreviousM": 3.886013572108336e-08
+  },
+  {
+   "type": "location",
+   "t": 3003,
+   "accuracy": 9.19299631512547,
+   "distanceFromPreviousM": 3.522102484990446e-08
+  },
+  {
+   "type": "location",
+   "t": 3018,
+   "accuracy": 9.193393425833257,
+   "distanceFromPreviousM": 4.0129244179615666e-08
+  },
+  {
+   "type": "location",
+   "t": 3033,
+   "accuracy": 8.35346547025271,
+   "distanceFromPreviousM": 0.0017011543203205263
+  },
+  {
+   "type": "vehicle_exit",
+   "t": 3038,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_enter",
+   "t": 3038,
+   "confidence": "high"
+  }
+ ],
+ "expected": {
+  "candidate": true,
+  "finalState": "CANDIDATE_PENDING",
+  "confidence": "low",
+  "requiredReasons": ["recent_vehicle_activity", "reliable_location_captured", "stationary_after_vehicle", "vehicle_distance_met", "vehicle_duration_met", "vehicle_exit_detected"]
+ }
+}

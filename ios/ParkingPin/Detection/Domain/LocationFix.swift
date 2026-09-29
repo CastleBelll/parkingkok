@@ -14,7 +14,7 @@ import Foundation
 /// projection with a test on the encoded bytes, `AppLog` call sites take accuracy and
 /// timestamps only, and nothing here is uploaded (CLAUDE.md Hard Constraints,
 /// docs/00_CORE_RULES.md Privacy).
-struct LocationFix: Sendable, Equatable {
+struct LocationFix: Sendable, Equatable, Codable {
     let timestamp: Date
     let latitude: Double
     let longitude: Double

@@ -7,7 +7,7 @@ import Foundation
 /// Decoded rather than hand-transcribed, and the files themselves are **never edited from
 /// this side**: the Android engine reads the same bytes, and a fixture a platform can
 /// adjust is not a contract.
-struct ParityFixture: Decodable {
+struct ParityFixture: ParityReplayInput {
     let name: String
     let initialState: DetectionState
     let events: [ParityFixtureEvent]
@@ -24,6 +24,21 @@ struct ParityFixture: Decodable {
         /// more evidence than the fixture chose to name.
         let requiredReasons: [CandidateReasonCode]?
     }
+}
+
+/// What a replay needs from a file: a committed fixture, or a `platform-tests/drafts/` draft
+/// whose `expected` is absent or one no conformant engine can meet.
+protocol ParityReplayInput: Decodable {
+    var name: String { get }
+    var initialState: DetectionState { get }
+    var events: [ParityFixtureEvent] { get }
+}
+
+/// A draft, read for its events alone — its `expected` is ignored (and may be `null`).
+struct ParityDraft: ParityReplayInput {
+    let name: String
+    let initialState: DetectionState
+    let events: [ParityFixtureEvent]
 }
 
 /// The union of the fields §8's event vocabulary allows. Every one after `type` and `t` is
@@ -63,8 +78,51 @@ struct ParityFixtureOutcome {
     var finalState: DetectionState
     var candidates: [ParkingCandidate]
     var effects: [DetectionEffect]
+    /// One entry per event that changed the product outcome — the unit of
+    /// `platform-tests/goldens/outcome-traces.golden.json`, which both runners assert.
+    var trace: [OutcomeTraceEntry]
 
     var didCreateCandidate: Bool { !candidates.isEmpty }
+
+    /// Candidates each travel session produced, in order. A session opens where the
+    /// engine resets §12's "one candidate per travel session": on entering
+    /// `DRIVING_CANDIDATE`, and on a departure confirmed into `DRIVING` (§11).
+    ///
+    /// A candidate the session itself took back — retired by a car-link reconnect or by the
+    /// drive moving on (§3a), not superseded by the next one — no longer counts: §3a lets
+    /// that trip produce the real parking later, and the user was never left holding two.
+    static func candidatesPerTravelSession(_ effects: [DetectionEffect]) -> [Int] {
+        var counts: [Int] = [0]
+        var sessionOfCandidate: [UUID: Int] = [:]
+        var previousState: DetectionState?
+        for (index, effect) in effects.enumerated() {
+            switch effect {
+            case let .persistCheckpoint(checkpoint):
+                let opensSession = (checkpoint.state == .drivingCandidate && previousState != .drivingCandidate)
+                    || (checkpoint.state == .driving && previousState == .departureCandidate)
+                if opensSession, counts.last != 0 {
+                    counts.append(0)
+                }
+                previousState = checkpoint.state
+            case let .createCandidate(candidate):
+                sessionOfCandidate[candidate.id] = counts.count - 1
+                counts[counts.count - 1] += 1
+            case let .withdrawCandidate(id):
+                let supersedes: Bool
+                if index + 1 < effects.count, case .createCandidate = effects[index + 1] {
+                    supersedes = true
+                } else {
+                    supersedes = false
+                }
+                if !supersedes, let session = sessionOfCandidate[id] {
+                    counts[session] -= 1
+                }
+            default:
+                break
+            }
+        }
+        return counts
+    }
 }
 
 /// Replays a §8 fixture through the real `ParkingDetectionEngine`.
@@ -91,20 +149,33 @@ enum ParityFixtureRunner {
     /// step is exactly the distance the fixture recorded.
     private static let metersPerDegreeLatitude = 6_371_000.0 * .pi / 180
 
-    static func run(_ fixture: ParityFixture, startingAt origin: Date = Date(timeIntervalSince1970: 1_700_000_000)) async throws -> ParityFixtureOutcome {
+    static func run(_ fixture: some ParityReplayInput, startingAt origin: Date = Date(timeIntervalSince1970: 1_700_000_000)) async throws -> ParityFixtureOutcome {
         let engine = ParkingDetectionEngine()
         var effects = await engine.restore(
-            try seedCheckpoint(for: fixture, at: origin),
+            try seedCheckpoint(for: fixture.initialState, at: origin),
             seedIfAbsent: false,
             now: origin
         )
 
+        var trace: [OutcomeTraceEntry] = []
         var metersNorth = 0.0
-        for event in fixture.events {
+        for (index, event) in fixture.events.enumerated() {
             let at = origin.addingTimeInterval(event.t)
             metersNorth += event.distanceFromPreviousM ?? 0
             let normalized = try normalize(event, at: at, metersNorth: metersNorth)
-            effects += await engine.handle(normalized)
+            let before = await engine.state
+            let step = await engine.handle(normalized)
+            let after = await engine.state
+            let labels = step.compactMap(OutcomeTraceEntry.label(for:))
+            if before != after || !labels.isEmpty {
+                trace.append(OutcomeTraceEntry(
+                    event: index,
+                    t: event.t,
+                    state: before != after ? after.rawValue : nil,
+                    effects: labels
+                ))
+            }
+            effects += step
         }
 
         let candidates: [ParkingCandidate] = effects.compactMap {
@@ -114,25 +185,26 @@ enum ParityFixtureRunner {
         return ParityFixtureOutcome(
             finalState: await engine.state,
             candidates: candidates,
-            effects: effects
+            effects: effects,
+            trace: trace
         )
     }
 
     /// `initialState` is the state the recording began in, so a fixture that starts mid-trip
     /// has to be handed the evidence that state implies — otherwise `DRIVING` is a state
     /// with no drive in it and the very first window closes it.
-    private static func seedCheckpoint(for fixture: ParityFixture, at origin: Date) throws -> DetectionCheckpoint? {
-        switch fixture.initialState {
+    private static func seedCheckpoint(for initialState: DetectionState, at origin: Date) throws -> DetectionCheckpoint? {
+        switch initialState {
         case .idle:
             return nil
         case .driving, .drivingCandidate:
             return DetectionCheckpoint(
-                state: fixture.initialState,
+                state: initialState,
                 stateEnteredAt: origin,
                 lastAutomotiveAt: origin
             )
         case .parkingTransition, .candidatePending, .parked, .departureCandidate:
-            throw ParityFixtureError.unsupportedInitialState(fixture.initialState)
+            throw ParityFixtureError.unsupportedInitialState(initialState)
         }
     }
 
@@ -166,9 +238,8 @@ enum ParityFixtureRunner {
         case "projection_disconnected": return .carLinkDisconnected(at: date, kind: .projection)
         case "bluetooth_car_connected": return .carLinkConnected(at: date, kind: .bluetoothAudio)
         case "bluetooth_car_disconnected": return .carLinkDisconnected(at: date, kind: .bluetoothAudio)
-        // §3a: the four timeout rows fire on this and nothing else, so a fixture that
-        // expects elapsed time to change the state has to say so. Its absence here is why
-        // none of the committed fixtures could.
+        // §3a: the windows are judged on every event; a tick is how a fixture says time
+        // passed with nothing else arriving.
         case "timer_tick": return .timerTick(at: date)
         case "user_confirmed": return .userConfirmedParking(at: date)
         case "user_rejected": return .userRejectedParking(at: date)
@@ -188,15 +259,114 @@ enum ParityFixtureLoader {
     /// Only present so `Bundle(for:)` has a class in this bundle to resolve against.
     private final class BundleToken {}
 
+    /// The committed contract: `platform-tests/*.json`.
     static func loadAll() throws -> [ParityFixture] {
-        let bundle = Bundle(for: BundleToken.self)
-        guard let directory = bundle.url(forResource: "platform-tests", withExtension: nil) else {
-            return []
+        try load(ParityFixture.self, in: nil).map(\.value)
+    }
+
+    /// The file names of the committed contract, which is what a rename changes.
+    static func committedFileNames() throws -> [String] {
+        try load(ParityDraft.self, in: nil).map(\.file)
+    }
+
+    /// The committed fixtures and the drafts, keyed as the golden keys them: the file name,
+    /// prefixed with `drafts/` for a draft.
+    static func loadReplayInputs() throws -> [String: any ParityReplayInput] {
+        var inputs: [String: any ParityReplayInput] = [:]
+        for (file, fixture) in try load(ParityDraft.self, in: nil) {
+            inputs[file] = fixture
+        }
+        for (file, draft) in try load(ParityDraft.self, in: draftDirectoryName) {
+            inputs["\(draftDirectoryName)/\(file)"] = draft
+        }
+        return inputs
+    }
+
+    /// `platform-tests/goldens/outcome-traces.golden.json`.
+    static func loadGolden() throws -> OutcomeTraceGolden {
+        let url = try rootDirectory()
+            .appendingPathComponent(goldenDirectoryName)
+            .appendingPathComponent(goldenFileName)
+        return try JSONDecoder().decode(OutcomeTraceGolden.self, from: Data(contentsOf: url))
+    }
+
+    private static let draftDirectoryName = "drafts"
+    private static let goldenDirectoryName = "goldens"
+    private static let goldenFileName = "outcome-traces.golden.json"
+
+    /// A folder reference that did not reach the bundle throws, so the suite fails loudly
+    /// rather than passing by finding nothing.
+    private static func rootDirectory() throws -> URL {
+        guard let directory = Bundle(for: BundleToken.self).url(forResource: "platform-tests", withExtension: nil) else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        return directory
+    }
+
+    /// The `*.json` files directly inside `platform-tests/` (or one of its subdirectories),
+    /// sorted by name. Not recursive: a draft or a golden is never read as a fixture.
+    private static func load<T: Decodable>(_ type: T.Type, in subdirectory: String?) throws -> [(file: String, value: T)] {
+        var directory = try rootDirectory()
+        if let subdirectory {
+            directory.appendPathComponent(subdirectory)
         }
         let urls = try FileManager.default
             .contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
             .filter { $0.pathExtension == "json" }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
-        return try urls.map { try JSONDecoder().decode(ParityFixture.self, from: Data(contentsOf: $0)) }
+        return try urls.map { url in
+            (url.lastPathComponent, try JSONDecoder().decode(T.self, from: Data(contentsOf: url)))
+        }
     }
+}
+
+/// One event of a replay that changed the product outcome — the unit of the golden outcome
+/// trace (contract §8 "Outcome traces"). Platform-neutral, and identical in shape to Android's
+/// `OutcomeTraceEntry`, so one file is asserted by both runners:
+/// - `event` is the index into the fixture's `events`, `t` its relative time;
+/// - `state` is the engine state after the event, present only when the event changed it;
+/// - `effects` are, in emission order, `withdraw`, `create <bucket> <sorted wire codes>` and
+///   `endActiveParking`. Checkpoints, notifications and capture requests are not outcomes.
+struct OutcomeTraceEntry: Codable, Equatable, CustomStringConvertible {
+    let event: Int
+    let t: Double
+    let state: String?
+    let effects: [String]
+
+    init(event: Int, t: Double, state: String?, effects: [String]) {
+        self.event = event
+        self.t = t
+        self.state = state
+        self.effects = effects
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        event = try container.decode(Int.self, forKey: .event)
+        t = try container.decode(Double.self, forKey: .t)
+        state = try container.decodeIfPresent(String.self, forKey: .state)
+        effects = try container.decodeIfPresent([String].self, forKey: .effects) ?? []
+    }
+
+    static func label(for effect: DetectionEffect) -> String? {
+        switch effect {
+        case let .createCandidate(candidate):
+            let codes = candidate.reasonCodes.map(\.rawValue).sorted().joined(separator: ",")
+            return "create \(candidate.confidenceBucket.rawValue) \(codes)"
+        case .withdrawCandidate:
+            return "withdraw"
+        case .endActiveParking:
+            return "endActiveParking"
+        default:
+            return nil
+        }
+    }
+
+    var description: String {
+        "{event \(event), t \(t), state \(state ?? "-"), effects \(effects)}"
+    }
+}
+
+struct OutcomeTraceGolden: Decodable {
+    let fixtures: [String: [OutcomeTraceEntry]]
 }

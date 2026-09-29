@@ -150,7 +150,9 @@ struct DrivingSessionLifecycleTests {
         #expect(store.savedCheckpoints.last?.state == .candidatePending)
     }
 
-    @Test("Silence past the ceiling ends the session and releases the capture")
+    /// The silence ends the drive; the capture then runs on while `PARKING_TRANSITION`
+    /// decides (docs/05 §3a / §19), and is released the moment it has.
+    @Test("Silence past the ceiling ends the session, and the capture is released when the transition decides")
     func timeoutEndsSession() async {
         // Arrange
         let harness = harness(motion: [automotive(secondsAgo: 30)])
@@ -159,15 +161,24 @@ struct DrivingSessionLifecycleTests {
         // Act
         harness.clock.advance(by: DrivingSessionTimeoutPolicy.vehicleEvidenceTimeout)
         await harness.coordinator.evaluateDrivingTimeouts()
-        let snapshot = await harness.coordinator.currentSnapshot()
+        let ended = await harness.coordinator.currentSnapshot()
+        let capturingWhileDeciding = harness.capture.isActive()
+        harness.clock.advance(by: ParkingTransitionPolicy.transitionWindow)
+        await harness.coordinator.evaluateDrivingTimeouts()
+        let decided = await harness.coordinator.currentSnapshot()
 
         // Assert
+        #expect(ended.lastDrivingSessionEndReason == .vehicleEvidenceExpired)
+        #expect(ended.currentCheckpoint?.state == .parkingTransition)
+        #expect(capturingWhileDeciding)
+        #expect(decided.currentCheckpoint?.state == .idle)
         #expect(!harness.capture.isActive())
         #expect(harness.capture.stopCount == 1)
-        #expect(snapshot.lastDrivingSessionEndReason == .vehicleEvidenceExpired)
-        #expect(!snapshot.isCapturingDrivingLocation)
+        #expect(!decided.isCapturingDrivingLocation)
     }
 
+    /// docs/05 §11 "A lost capture decides nothing" (2026-09-28): the capture is released,
+    /// and the drive is kept for the next exit or tick to decide, as on Android.
     @Test("Losing authorization mid-session releases the capture instead of stalling it")
     func authorizationLossEndsSession() async {
         // Arrange
@@ -181,8 +192,9 @@ struct DrivingSessionLifecycleTests {
         // Assert
         #expect(!harness.capture.isActive())
         #expect(harness.capture.stopCount == 1)
-        #expect(snapshot.lastDrivingSessionEndReason == .authorizationLost)
+        #expect(snapshot.lastDrivingSessionEndReason == nil)
         #expect(snapshot.captureFailure != nil)
+        #expect(snapshot.currentCheckpoint?.state == .drivingCandidate)
     }
 
     @Test("Turning Smart Detection off ends the session the opt-in authorized")
@@ -192,7 +204,7 @@ struct DrivingSessionLifecycleTests {
         await harness.coordinator.rehydrate(launchReason: .significantLocationChange)
 
         // Act
-        await harness.coordinator.stopDrivingSessionForOptOut()
+        await harness.coordinator.setSmartDetectionEnabled(false)
 
         // Assert
         #expect(!harness.capture.isActive())
@@ -206,12 +218,88 @@ struct DrivingSessionLifecycleTests {
         await harness.coordinator.rehydrate(launchReason: .significantLocationChange)
 
         // Act
-        await harness.coordinator.stopDrivingSessionForOptOut()
-        await harness.coordinator.stopDrivingSessionForOptOut()
+        await harness.coordinator.setSmartDetectionEnabled(false)
+        await harness.coordinator.setSmartDetectionEnabled(false)
 
         // Assert
         #expect(!harness.capture.isActive())
         #expect(harness.capture.stopCount == 1)
+    }
+
+    // MARK: - While Smart Detection is off (docs/05 §3a "Turning Smart Detection off")
+
+    /// Android twin: `a car link while opted out opens no capture` (`CarLinkReceiver` gated on
+    /// the desired-enabled flag).
+    @Test("While Smart Detection is off a car link connect opens no capture")
+    func optedOutCarLinkOpensNoCapture() async {
+        // Arrange
+        let harness = harness()
+        await harness.coordinator.setSmartDetectionEnabled(false)
+        await harness.coordinator.rehydrate(launchReason: .userInitiated)
+
+        // Act
+        await harness.coordinator.handleCarLink(CarLinkObservation(connected: [.bluetoothAudio]))
+
+        // Assert
+        #expect(harness.capture.startCount == 0)
+        #expect(harness.store.savedCheckpoints.last?.state ?? .idle == .idle)
+    }
+
+    @Test("A relaunch while Smart Detection is off replays no motion into the engine")
+    func optedOutRelaunchReplaysNoMotion() async {
+        // Arrange — the same recent vehicle evidence that opens a session when opted in.
+        let harness = harness(motion: [automotive(secondsAgo: 30)])
+        await harness.coordinator.setSmartDetectionEnabled(false)
+
+        // Act
+        await harness.coordinator.rehydrate(launchReason: .userInitiated)
+
+        // Assert
+        #expect(harness.capture.startCount == 0)
+        #expect(harness.store.savedCheckpoints.last?.state ?? .idle == .idle)
+    }
+
+    /// The process died between the opt-out and the end it asked for: the relaunch ends the
+    /// session the way the opt-out would have, without opening its capture first.
+    @Test("A relaunch while Smart Detection is off ends the session a dead process left open")
+    func optedOutRelaunchEndsTheLeftoverSession() async {
+        // Arrange
+        let interrupted = DetectionCheckpoint(
+            state: .driving,
+            stateEnteredAt: reference.addingTimeInterval(-300),
+            lastAutomotiveAt: reference.addingTimeInterval(-60),
+            revision: 4
+        )
+        let harness = harness(checkpoint: .restored(interrupted))
+        await harness.coordinator.setSmartDetectionEnabled(false)
+
+        // Act
+        await harness.coordinator.rehydrate(launchReason: .userInitiated)
+
+        // Assert
+        #expect(harness.capture.startCount == 0)
+        #expect(harness.store.savedCheckpoints.last?.state == .idle)
+        #expect(await harness.coordinator.currentSnapshot().lastDrivingSessionEndReason == .smartDetectionDisabled)
+    }
+
+    /// Turning detection back on reads the link afresh: the connect observed while it was
+    /// off was never handed to the engine, so the first observation after is the edge.
+    @Test("Turning Smart Detection back on hears a link that is already connected")
+    func reenabledDetectionHearsAConnectedLink() async {
+        // Arrange
+        let harness = harness()
+        await harness.coordinator.rehydrate(launchReason: .userInitiated)
+        await harness.coordinator.handleCarLink(CarLinkObservation(connected: [.bluetoothAudio]))
+        await harness.coordinator.setSmartDetectionEnabled(false)
+        await harness.coordinator.handleCarLink(CarLinkObservation(connected: [.bluetoothAudio]))
+
+        // Act
+        await harness.coordinator.setSmartDetectionEnabled(true)
+        await harness.coordinator.handleCarLink(CarLinkObservation(connected: [.bluetoothAudio]))
+
+        // Assert
+        #expect(harness.store.savedCheckpoints.last?.state == .drivingCandidate)
+        #expect(harness.capture.isActive())
     }
 
     // MARK: - Recreation after background relaunch (docs/04 §3)
@@ -310,6 +398,43 @@ struct DrivingSessionLifecycleTests {
         #expect(snapshot.reliableLocationRejectCount == 1)
         #expect(snapshot.currentCheckpoint?.lastReliableLocation?.horizontalAccuracy == 6)
         #expect(snapshot.currentCheckpoint?.lastReliableLocation?.capturedAt == reference)
+    }
+
+    /// docs/05 §3a / §19 (2026-09-27): two of `PARKING_TRANSITION`'s three exits are
+    /// location rows, so the capture keeps running until the transition decides. Stopped
+    /// at the entry, as it used to be, neither row could ever fire on a device — the engine
+    /// could pass every fixture and still never see the fix that answers the question.
+    @Test("A fix after a movementIdle entry still reaches the engine and confirms the parking")
+    func fixAfterMovementIdleEntryReachesTheEngine() async {
+        // Arrange — a drive that moved, promoted, then stood still past the idle window.
+        let harness = harness(motion: [automotive(secondsAgo: 30)])
+        await harness.coordinator.rehydrate(launchReason: .significantLocationChange)
+        await harness.coordinator.handleDrivingFix(TestGeo.fix(at: reference, metersNorth: 0, accuracy: 8))
+        harness.clock.advance(by: 90)
+        await harness.coordinator.handleDrivingFix(
+            TestGeo.fix(at: reference.addingTimeInterval(90), metersNorth: 900, accuracy: 8)
+        )
+        harness.clock.advance(by: 300)
+        await harness.coordinator.evaluateDrivingTimeouts()
+        #expect(harness.store.savedCheckpoints.last?.state == .parkingTransition)
+        #expect(harness.capture.isActive())
+
+        // Act — the car has stopped, and the fix says so.
+        harness.clock.advance(by: 10)
+        await harness.coordinator.handleDrivingFix(
+            TestGeo.fix(at: reference.addingTimeInterval(400), metersNorth: 900, accuracy: 8, speed: 0.3)
+        )
+
+        // Assert — a stop-only candidate (movementIdle, no exit, no walk) keeps the capture
+        // until the drive's own window closes, so the car moving on could still take it
+        // back (docs/05 §3a "A stop-only candidate can still be a long light"). Idle began
+        // at 90 + 180 = 270, so that window closes at 570.
+        #expect(harness.store.savedCheckpoints.last?.state == .candidatePending)
+        #expect(harness.capture.isActive())
+        harness.clock.advance(by: 170)
+        await harness.coordinator.evaluateDrivingTimeouts()
+        #expect(harness.store.savedCheckpoints.last?.state == .candidatePending)
+        #expect(!harness.capture.isActive())
     }
 
     @Test("Fixes arriving with no session open are ignored rather than silently stored")

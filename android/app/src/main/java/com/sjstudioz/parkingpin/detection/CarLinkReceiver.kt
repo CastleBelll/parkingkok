@@ -33,6 +33,11 @@ import kotlinx.coroutines.launch
  * `try`/`catch` below covers the narrower window where the broadcast arrives and the grant
  * is revoked before the device's class is read.
  *
+ * ### Smart Detection off means no capture
+ * The edge still reaches [ParkingDetectionRuntime.handleCarLink], which discards it while the
+ * user has detection switched off — one gate for every sensor entry, so a car connect cannot
+ * open a capture and the location foreground service the user turned off (docs/05 §19).
+ *
  * ### Privacy
  * A device class integer is the only thing read. The name, the alias and the MAC address
  * are never touched, never logged and never reach analytics — docs/09 keeps them on the

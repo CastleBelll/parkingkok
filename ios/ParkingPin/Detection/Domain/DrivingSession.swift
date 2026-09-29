@@ -38,7 +38,7 @@ enum DrivingSessionEndReason: String, Sendable, Equatable, Codable {
 /// A value type with no clock of its own: every time-dependent answer takes `now`, so the
 /// duration and distance boundaries are unit-testable without sleeping
 /// (docs/16_CODING_STANDARDS.md §8).
-struct DrivingEvidence: Sendable, Equatable {
+struct DrivingEvidence: Sendable, Equatable, Codable {
     let startedAt: Date
     /// Newest Core Motion observation that said `automotive`.
     private(set) var lastVehicleEvidenceAt: Date?
@@ -95,6 +95,16 @@ struct DrivingEvidence: Sendable, Equatable {
     /// been since the device actually *moved*, and this is the only field that answers it.
     /// In memory only, exactly like `lastFix`.
     private(set) var lastMovingSampleAt: Date?
+    /// The newest accepted fix that *reported* a speed below `movingSpeedThreshold`.
+    ///
+    /// docs/05 §8b "location_stopped". Only a reported speed counts: underground there is
+    /// no Doppler speed, and reading silence as stillness would hand every underground
+    /// drive a weight it did not earn. In memory only, exactly like `lastFix`.
+    private(set) var lastStoppedFixAt: Date?
+    /// The newest moment the fix quality fell into the §2 `poor` bucket — from a fix whose
+    /// predecessor was `good` or `fair`, or from a `location_quality_degraded` event that
+    /// ended in `poor` (or named no bucket). docs/05 §8b "location_quality_degraded".
+    private(set) var lastDegradedToPoorAt: Date?
 
     init(startedAt: Date, lastVehicleEvidenceAt: Date? = nil) {
         self.startedAt = startedAt
@@ -115,7 +125,10 @@ struct DrivingEvidence: Sendable, Equatable {
     /// > recent vehicle evidence AND (duration >=120s OR distance >=800m) AND movement
     /// > evidence consistent with travel.
     func meetsDrivingConfirmation(now: Date) -> Bool {
+        // Evidence stamped after `now` is a clock problem, not recent evidence — the same
+        // boundary Android's guard has (`now >= lastVehicle`).
         guard let lastVehicle = lastVehicleEvidenceAt,
+              lastVehicle <= now,
               now.timeIntervalSince(lastVehicle) <= DrivingConfirmationPolicy.vehicleEvidenceMaxAge
         else { return false }
         let longEnough = duration(now: now) >= DrivingConfirmationPolicy.minimumDuration
@@ -137,6 +150,42 @@ struct DrivingEvidence: Sendable, Equatable {
         confirmedAt = date
     }
 
+    /// docs/05 §3a "Resuming keeps the drive" (2026-09-27): a drive that comes back from
+    /// `PARKING_TRANSITION` on vehicle or link evidence gets a full `movementIdleWindow`
+    /// from the resume, rather than falling straight back on the stale anchor.
+    ///
+    /// A drive that has never moved stays un-anchored: §3a "an absent fix is not absent
+    /// movement", and seeding the anchor here would let an underground drive idle out.
+    mutating func reanchorMovementIdle(at date: Date) {
+        guard let lastMoving = lastMovingSampleAt else { return }
+        lastMovingSampleAt = max(lastMoving, date)
+    }
+
+    /// A `location_quality_degraded` event. Counted only when it ends in `poor`, or names
+    /// no bucket at all — a fixture may record the degradation without them. good→fair is
+    /// ordinary urban noise, not §13's underground pattern.
+    mutating func noteQualityDegraded(at date: Date, to bucket: LocationAccuracyBucket?) {
+        guard bucket == nil || bucket == .poor else { return }
+        lastDegradedToPoorAt = max(lastDegradedToPoorAt ?? date, date)
+    }
+
+    /// docs/05 §8b "location_stopped": a reported stop, after the drive's last moving
+    /// sample, no earlier than `nearEndHorizon` before the drive ended.
+    func stoppedNearEnd(endedAt: Date) -> Bool {
+        guard let stopped = lastStoppedFixAt else { return false }
+        if let lastMoving = lastMovingSampleAt, stopped <= lastMoving {
+            return false
+        }
+        return stopped >= endedAt.addingTimeInterval(-ParkingTransitionPolicy.nearEndHorizon)
+    }
+
+    /// docs/05 §8b "location_quality_degraded": a fall into `poor` no earlier than
+    /// `nearEndHorizon` before the drive ended.
+    func degradedNearEnd(endedAt: Date) -> Bool {
+        guard let degraded = lastDegradedToPoorAt else { return false }
+        return degraded >= endedAt.addingTimeInterval(-ParkingTransitionPolicy.nearEndHorizon)
+    }
+
     /// Folds one fix into the session. Returns `false` when the step was rejected as an
     /// outlier, so the caller can count it rather than discover it later as inflated
     /// distance (docs/05 §5).
@@ -156,11 +205,24 @@ struct DrivingEvidence: Sendable, Equatable {
                 return false
             }
         }
+        noteQualityDrop(from: lastFix, to: fix)
         lastFix = fix
 
         accumulateDistance(to: fix)
         recordMovementEvidence(from: fix)
         return true
+    }
+
+    /// The fix-derived half of §8b's degradation. The iOS adapter sends no
+    /// `location_quality_degraded` event to the engine, so on a device this is the only
+    /// half that runs; Android derives it from its fixes the same way.
+    private mutating func noteQualityDrop(from previous: LocationFix?, to fix: LocationFix) {
+        guard let previous,
+              let before = LocationAccuracyBucket(horizontalAccuracy: previous.horizontalAccuracy),
+              LocationAccuracyBucket(horizontalAccuracy: fix.horizontalAccuracy) == .poor,
+              before != .poor
+        else { return }
+        lastDegradedToPoorAt = max(lastDegradedToPoorAt ?? fix.timestamp, fix.timestamp)
     }
 
     /// docs/05 §7 `distance >= 800m`, under the same noise floor as movement evidence.
@@ -188,11 +250,23 @@ struct DrivingEvidence: Sendable, Equatable {
         let displacement = GeoDistance.meters(from: anchor, to: fix)
         guard displacement >= MovementEvidencePolicy.noiseFloor(from: anchor, to: fix) else {
             distanceNoiseFloorRejectCount += 1
+            // docs/05 §7 "A coarse anchor is replaced by a materially better fix"
+            // (2026-09-27). Kept, a 1000 m first fix sets a ~2 km floor for every later
+            // leg, so accurate travel accumulates nothing until the car is kilometres from
+            // a point nobody knew (field draft s02). The refused leg is still not added —
+            // that is what keeps jitter out of the sum.
+            if fix.horizontalAccuracy < anchor.horizontalAccuracy * Self.distanceReanchorAccuracyRatio {
+                distanceAnchor = fix
+            }
             return
         }
         distanceMeters += displacement
         distanceAnchor = fix
     }
+
+    /// How much more accurate a fix must be than the distance anchor to replace it after a
+    /// refused leg. **unvalidated** — docs/05 §7.
+    static let distanceReanchorAccuracyRatio: Double = 0.5
 
     /// docs/05 §7 "movement evidence consistent with travel", for one accepted fix.
     ///
@@ -210,6 +284,8 @@ struct DrivingEvidence: Sendable, Equatable {
             if speed >= DrivingConfirmationPolicy.movingSpeedThreshold {
                 movingSampleCount += 1
                 lastMovingSampleAt = fix.timestamp
+            } else {
+                lastStoppedFixAt = fix.timestamp
             }
             // A fix that carried a speed is still the freshest anchor available to the
             // next fix that does not, so the fallback does not have to start cold when

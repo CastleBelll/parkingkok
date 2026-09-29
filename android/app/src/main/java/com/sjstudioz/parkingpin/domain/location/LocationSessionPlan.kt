@@ -1,5 +1,6 @@
 package com.sjstudioz.parkingpin.domain.location
 
+import com.sjstudioz.parkingpin.domain.detection.ParkingDetectionEngine
 import kotlinx.serialization.Serializable
 
 /**
@@ -19,7 +20,7 @@ enum class LocationSessionMode {
     /** Confirmed vehicle session; bounded high-accuracy capture. */
     DRIVING,
 
-    /** Vehicle session ended; capture the last reliable points, then stop. */
+    /** Vehicle session ended; capture at the kerb while `PARKING_TRANSITION` decides, then stop. */
     PARKING_TRANSITION,
 }
 
@@ -62,8 +63,10 @@ object LocationSessionProfiles {
      * device already holding a v1 registration to re-register: on the S21+ it kept
      * delivering 60s batches across the upgrade until the version told the planner to
      * replace it.
+     *
+     * v3 made PARKING_TRANSITION last the whole `transitionWindow` (docs/05 §3a / §19).
      */
-    const val VERSION: Int = 2
+    const val VERSION: Int = 3
 
     /**
      * Absolute ceiling on one bounded session, per mode. A drive longer than the DRIVING
@@ -75,7 +78,7 @@ object LocationSessionProfiles {
         LocationSessionMode.IDLE -> 0L
         LocationSessionMode.DRIVING_CANDIDATE -> 10 * 60_000L
         LocationSessionMode.DRIVING -> 120 * 60_000L
-        LocationSessionMode.PARKING_TRANSITION -> 3 * 60_000L
+        LocationSessionMode.PARKING_TRANSITION -> PARKING_TRANSITION_WINDOW_MILLIS
     }
 
     fun configFor(mode: LocationSessionMode, remainingMillis: Long): LocationSessionConfig? = when (mode) {
@@ -115,17 +118,27 @@ object LocationSessionProfiles {
             maxUpdates = null,
         )
 
-        // The one moment accuracy is worth full price, and the one mode with a hard update
-        // budget: a handful of fixes at the kerb, then stop.
+        // The one moment accuracy is worth full price. docs/05 §3a / §19 (2026-09-27): it
+        // lasts while PARKING_TRANSITION decides, because two of that state's three exits —
+        // a location stop and returning movement — are fixes. It used to stop after five
+        // fixes and a minute, so a transition entered on `vehicle_exit` could almost never
+        // reach either row on a device while every fixture still passed. The cost §19
+        // accepts is one `transitionWindow` of capture per stop; the update budget is that
+        // window's worth of fixes, a second bound rather than a shorter one.
         LocationSessionMode.PARKING_TRANSITION -> LocationSessionConfig(
             tier = LocationAccuracyTier.HIGH,
-            intervalMillis = 5_000L,
+            intervalMillis = PARKING_TRANSITION_INTERVAL_MILLIS,
             minUpdateIntervalMillis = 3_000L,
             maxUpdateDelayMillis = 0L,
-            durationMillis = remainingMillis.coerceAtMost(60_000L),
-            maxUpdates = 5,
+            durationMillis = remainingMillis.coerceAtMost(PARKING_TRANSITION_WINDOW_MILLIS),
+            maxUpdates = (PARKING_TRANSITION_WINDOW_MILLIS / PARKING_TRANSITION_INTERVAL_MILLIS).toInt(),
         )
     }
+
+    /** §3a `transitionWindow`: the kerb capture lasts exactly as long as the engine decides. */
+    private const val PARKING_TRANSITION_WINDOW_MILLIS: Long = ParkingDetectionEngine.TRANSITION_WINDOW_MILLIS
+
+    private const val PARKING_TRANSITION_INTERVAL_MILLIS: Long = 5_000L
 }
 
 /** Durable record of the registration currently held with Play services. */
@@ -139,7 +152,15 @@ data class LocationSessionRecord(
     /** When the current Play services request expires by itself. */
     val registrationExpiresAtMillis: Long,
     val deliveredUpdateCount: Int = 0,
-)
+) {
+    /**
+     * Whether Play services is still delivering to this registration at [nowMillis]: it ends
+     * by itself at [registrationExpiresAtMillis] when no delivery renewed it, and nothing may
+     * outlive [hardDeadlineAtMillis].
+     */
+    fun isLiveAt(nowMillis: Long): Boolean =
+        nowMillis < registrationExpiresAtMillis && nowMillis < hardDeadlineAtMillis
+}
 
 /** Why a session was torn down. Surfaced in diagnostics so a stop is never silent. */
 @Serializable
@@ -149,6 +170,12 @@ enum class LocationSessionStopReason {
     UPDATE_BUDGET_SPENT,
     PERMISSION_LOST,
     PROFILE_CHANGED,
+
+    /**
+     * A reboot or an app update dropped the Play services request while its record survived
+     * on disk (docs/04 §6 recovery). Recorded so the diagnostics tell it from a planned stop.
+     */
+    SYSTEM_RESET,
 }
 
 /** What the planner decided to do about the Play services location registration. */
@@ -174,7 +201,8 @@ sealed interface LocationSessionAction {
  *  3. Reconciliation on process start and boot, which stops a record that is already past
  *     its deadline.
  *
- * A reboot drops Play services registrations outright, so there is no fourth case.
+ * A reboot or app update drops the Play services registration outright; its record is then
+ * forgotten by `FusedLocationSessionController.reconcileAfterSystemReset`, not trusted.
  */
 object LocationSessionPlanner {
 
@@ -219,8 +247,9 @@ object LocationSessionPlanner {
         val config = LocationSessionProfiles.configFor(desiredMode, current.hardDeadlineAtMillis - nowMillis)
             ?: return LocationSessionAction.Stop(LocationSessionStopReason.DEADLINE_REACHED)
 
-        // PARKING_TRANSITION is the mode with a fixed update budget: a handful of fixes at
-        // the kerb, then stop. Spending it is a normal, successful end to a session.
+        // PARKING_TRANSITION is the mode with a fixed update budget: one transition
+        // window's worth of fixes at the kerb, then stop. Spending it is a normal,
+        // successful end to a session.
         val budget = config.maxUpdates
         if (budget != null && current.deliveredUpdateCount >= budget) {
             return LocationSessionAction.Stop(LocationSessionStopReason.UPDATE_BUDGET_SPENT)

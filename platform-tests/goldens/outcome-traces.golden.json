@@ -1,0 +1,580 @@
+{
+  "fixtures": {
+    "bus_repeated_stops_no_storm.json": [],
+    "drafts/field_s02_parked.json": [
+      {
+        "event": 3,
+        "t": 1908.0,
+        "state": "DRIVING_CANDIDATE"
+      },
+      {
+        "event": 5,
+        "t": 2230.0,
+        "state": "DRIVING"
+      },
+      {
+        "event": 67,
+        "t": 9114.0,
+        "state": "IDLE"
+      }
+    ],
+    "drafts/field_s05_unknown.json": [
+      {
+        "event": 4,
+        "t": 1785.0,
+        "state": "DRIVING_CANDIDATE"
+      },
+      {
+        "event": 8,
+        "t": 1912.0,
+        "state": "DRIVING"
+      },
+      {
+        "event": 22,
+        "t": 2495.0,
+        "state": "PARKING_TRANSITION"
+      },
+      {
+        "event": 23,
+        "t": 2796.0,
+        "state": "IDLE"
+      }
+    ],
+    "drafts/field_s06_parked.json": [
+      {
+        "event": 3,
+        "t": 1337.0,
+        "state": "DRIVING_CANDIDATE"
+      },
+      {
+        "event": 6,
+        "t": 1432.0,
+        "state": "DRIVING"
+      },
+      {
+        "event": 80,
+        "t": 2941.0,
+        "state": "PARKING_TRANSITION"
+      },
+      {
+        "event": 110,
+        "t": 3220.0,
+        "state": "IDLE"
+      }
+    ],
+    "drafts/field_s22_unknown.json": [
+      {
+        "event": 9,
+        "t": 1617.0,
+        "state": "DRIVING_CANDIDATE"
+      },
+      {
+        "event": 14,
+        "t": 1782.0,
+        "state": "DRIVING"
+      },
+      {
+        "event": 155,
+        "t": 3851.0,
+        "state": "PARKING_TRANSITION"
+      }
+    ],
+    "drafts/field_s23_unknown.json": [
+      {
+        "event": 1,
+        "t": 0.0,
+        "state": "DRIVING_CANDIDATE"
+      },
+      {
+        "event": 6,
+        "t": 96.0,
+        "state": "DRIVING"
+      },
+      {
+        "event": 12,
+        "t": 264.0,
+        "state": "PARKING_TRANSITION"
+      },
+      {
+        "event": 15,
+        "t": 377.0,
+        "state": "DRIVING"
+      }
+    ],
+    "drafts/field_s24_unknown.json": [
+      {
+        "event": 1,
+        "t": 0.0,
+        "state": "DRIVING_CANDIDATE"
+      },
+      {
+        "event": 12,
+        "t": 92.0,
+        "state": "DRIVING"
+      },
+      {
+        "event": 117,
+        "t": 1831.0,
+        "state": "PARKING_TRANSITION"
+      },
+      {
+        "event": 119,
+        "t": 1847.0,
+        "state": "DRIVING"
+      },
+      {
+        "event": 404,
+        "t": 5721.0,
+        "state": "CANDIDATE_PENDING",
+        "effects": [
+          "create low location_stopped,recent_vehicle_activity,reliable_location_captured,vehicle_distance_met,vehicle_duration_met"
+        ]
+      }
+    ],
+    "drafts/field_s25_unknown.json": [
+      {
+        "event": 3,
+        "t": 307.0,
+        "state": "DRIVING_CANDIDATE"
+      },
+      {
+        "event": 10,
+        "t": 402.0,
+        "state": "DRIVING"
+      },
+      {
+        "event": 307,
+        "t": 5243.0,
+        "state": "IDLE"
+      }
+    ],
+    "drafts/field_s27_unknown.json": [
+      {
+        "event": 1,
+        "t": 0.0,
+        "state": "DRIVING_CANDIDATE"
+      },
+      {
+        "event": 9,
+        "t": 103.0,
+        "state": "DRIVING"
+      },
+      {
+        "event": 140,
+        "t": 2768.0,
+        "state": "IDLE"
+      }
+    ],
+    "drafts/field_s28_unknown.json": [
+      {
+        "event": 1,
+        "t": 0.0,
+        "state": "DRIVING_CANDIDATE"
+      },
+      {
+        "event": 8,
+        "t": 96.0,
+        "state": "DRIVING"
+      },
+      {
+        "event": 148,
+        "t": 2201.0,
+        "state": "PARKING_TRANSITION"
+      }
+    ],
+    "drafts/field_s29_unknown.json": [
+      {
+        "event": 3,
+        "t": 1463.0,
+        "state": "DRIVING_CANDIDATE"
+      },
+      {
+        "event": 10,
+        "t": 1559.0,
+        "state": "DRIVING"
+      },
+      {
+        "event": 127,
+        "t": 3483.0,
+        "state": "PARKING_TRANSITION"
+      }
+    ],
+    "drafts/field_s31_parked.json": [
+      {
+        "event": 1,
+        "t": 0.0,
+        "state": "DRIVING_CANDIDATE"
+      },
+      {
+        "event": 7,
+        "t": 96.0,
+        "state": "DRIVING"
+      },
+      {
+        "event": 73,
+        "t": 1016.0,
+        "state": "PARKING_TRANSITION"
+      }
+    ],
+    "field_s03_parked.json": [
+      {
+        "event": 12,
+        "t": 1303.0,
+        "state": "DRIVING_CANDIDATE"
+      },
+      {
+        "event": 13,
+        "t": 1431.0,
+        "state": "PARKING_TRANSITION"
+      },
+      {
+        "event": 14,
+        "t": 1431.0,
+        "state": "CANDIDATE_PENDING",
+        "effects": [
+          "create medium recent_vehicle_activity,vehicle_duration_met,vehicle_exit_detected,walking_after_vehicle"
+        ]
+      },
+      {
+        "event": 15,
+        "t": 1436.0,
+        "state": "DRIVING_CANDIDATE"
+      },
+      {
+        "event": 16,
+        "t": 1537.0,
+        "state": "DRIVING"
+      },
+      {
+        "event": 91,
+        "t": 4138.0,
+        "effects": [
+          "withdraw"
+        ]
+      },
+      {
+        "event": 114,
+        "t": 4482.0,
+        "state": "CANDIDATE_PENDING",
+        "effects": [
+          "create low location_stopped,recent_vehicle_activity,reliable_location_captured,vehicle_distance_met,vehicle_duration_met"
+        ]
+      }
+    ],
+    "field_s04_parked.json": [
+      {
+        "event": 4,
+        "t": 1235.0,
+        "state": "DRIVING_CANDIDATE"
+      },
+      {
+        "event": 5,
+        "t": 1327.0,
+        "state": "DRIVING"
+      },
+      {
+        "event": 38,
+        "t": 4907.0,
+        "state": "PARKING_TRANSITION"
+      },
+      {
+        "event": 39,
+        "t": 4907.0,
+        "state": "CANDIDATE_PENDING",
+        "effects": [
+          "create high location_quality_degraded,location_stopped,recent_vehicle_activity,reliable_location_captured,vehicle_duration_met,vehicle_exit_detected,walking_after_vehicle"
+        ]
+      }
+    ],
+    "field_s16_parked.json": [
+      {
+        "event": 9,
+        "t": 1784.0,
+        "state": "DRIVING_CANDIDATE"
+      },
+      {
+        "event": 12,
+        "t": 2300.0,
+        "state": "DRIVING"
+      },
+      {
+        "event": 50,
+        "t": 3670.0,
+        "state": "PARKING_TRANSITION"
+      },
+      {
+        "event": 60,
+        "t": 3738.0,
+        "state": "CANDIDATE_PENDING",
+        "effects": [
+          "create low location_quality_degraded,location_stopped,recent_vehicle_activity,reliable_location_captured,vehicle_distance_met,vehicle_duration_met"
+        ]
+      }
+    ],
+    "field_s17_parked.json": [
+      {
+        "event": 26,
+        "t": 1366.0,
+        "state": "DRIVING_CANDIDATE"
+      },
+      {
+        "event": 28,
+        "t": 1508.0,
+        "state": "DRIVING"
+      },
+      {
+        "event": 60,
+        "t": 3038.0,
+        "state": "PARKING_TRANSITION"
+      },
+      {
+        "event": 61,
+        "t": 3038.0,
+        "state": "CANDIDATE_PENDING",
+        "effects": [
+          "create low recent_vehicle_activity,reliable_location_captured,stationary_after_vehicle,vehicle_distance_met,vehicle_duration_met,vehicle_exit_detected"
+        ]
+      }
+    ],
+    "field_s26_parked.json": [
+      {
+        "event": 5,
+        "t": 604.0,
+        "state": "DRIVING_CANDIDATE"
+      },
+      {
+        "event": 12,
+        "t": 697.0,
+        "state": "DRIVING"
+      },
+      {
+        "event": 67,
+        "t": 1505.0,
+        "state": "PARKING_TRANSITION"
+      },
+      {
+        "event": 68,
+        "t": 1505.0,
+        "state": "CANDIDATE_PENDING",
+        "effects": [
+          "create high location_stopped,recent_vehicle_activity,reliable_location_captured,vehicle_distance_met,vehicle_duration_met,vehicle_exit_detected,walking_after_vehicle"
+        ]
+      }
+    ],
+    "field_s32_parked.json": [
+      {
+        "event": 2,
+        "t": 302.0,
+        "state": "DRIVING_CANDIDATE"
+      },
+      {
+        "event": 8,
+        "t": 397.0,
+        "state": "DRIVING"
+      },
+      {
+        "event": 23,
+        "t": 602.0,
+        "state": "PARKING_TRANSITION"
+      },
+      {
+        "event": 24,
+        "t": 602.0,
+        "state": "CANDIDATE_PENDING",
+        "effects": [
+          "create high location_stopped,recent_vehicle_activity,reliable_location_captured,vehicle_distance_met,vehicle_duration_met,vehicle_exit_detected,walking_after_vehicle"
+        ]
+      }
+    ],
+    "field_s33_parked.json": [
+      {
+        "event": 3,
+        "t": 1172.0,
+        "state": "DRIVING_CANDIDATE"
+      },
+      {
+        "event": 7,
+        "t": 1322.0,
+        "state": "DRIVING"
+      },
+      {
+        "event": 148,
+        "t": 3608.0,
+        "state": "CANDIDATE_PENDING",
+        "effects": [
+          "create low location_quality_degraded,location_stopped,recent_vehicle_activity,reliable_location_captured,vehicle_distance_met,vehicle_duration_met"
+        ]
+      }
+    ],
+    "long_stop_in_traffic.json": [
+      {
+        "event": 0,
+        "t": 0.0,
+        "state": "DRIVING_CANDIDATE"
+      },
+      {
+        "event": 3,
+        "t": 100.0,
+        "state": "DRIVING"
+      },
+      {
+        "event": 6,
+        "t": 280.0,
+        "state": "CANDIDATE_PENDING",
+        "effects": [
+          "create low location_stopped,recent_vehicle_activity,reliable_location_captured,vehicle_duration_met"
+        ]
+      },
+      {
+        "event": 9,
+        "t": 370.0,
+        "state": "DRIVING",
+        "effects": [
+          "withdraw"
+        ]
+      }
+    ],
+    "manual_save_parks.json": [
+      {
+        "event": 0,
+        "t": 0.0,
+        "state": "PARKED"
+      }
+    ],
+    "manual_save_then_departure.json": [
+      {
+        "event": 0,
+        "t": 0.0,
+        "state": "PARKED"
+      },
+      {
+        "event": 3,
+        "t": 730.0,
+        "state": "DEPARTURE_CANDIDATE"
+      },
+      {
+        "event": 4,
+        "t": 760.0,
+        "state": "DRIVING",
+        "effects": [
+          "endActiveParking"
+        ]
+      },
+      {
+        "event": 7,
+        "t": 900.0,
+        "state": "PARKING_TRANSITION"
+      },
+      {
+        "event": 8,
+        "t": 920.0,
+        "state": "CANDIDATE_PENDING",
+        "effects": [
+          "create high location_stopped,recent_vehicle_activity,reliable_location_captured,vehicle_distance_met,vehicle_duration_met,vehicle_exit_detected,walking_after_vehicle"
+        ]
+      }
+    ],
+    "manual_save_then_short_departure.json": [
+      {
+        "event": 0,
+        "t": 0.0,
+        "state": "PARKED"
+      },
+      {
+        "event": 3,
+        "t": 700.0,
+        "state": "DEPARTURE_CANDIDATE"
+      },
+      {
+        "event": 4,
+        "t": 740.0,
+        "state": "PARKING_TRANSITION",
+        "effects": [
+          "endActiveParking"
+        ]
+      },
+      {
+        "event": 5,
+        "t": 760.0,
+        "state": "CANDIDATE_PENDING",
+        "effects": [
+          "create medium recent_vehicle_activity,reliable_location_captured,vehicle_duration_met,vehicle_exit_detected,walking_after_vehicle"
+        ]
+      }
+    ],
+    "quiet_transition_expires_no_candidate.json": [
+      {
+        "event": 0,
+        "t": 0.0,
+        "state": "DRIVING_CANDIDATE"
+      },
+      {
+        "event": 1,
+        "t": 95.0,
+        "state": "DRIVING"
+      },
+      {
+        "event": 2,
+        "t": 600.0,
+        "state": "PARKING_TRANSITION"
+      },
+      {
+        "event": 3,
+        "t": 901.0,
+        "state": "IDLE"
+      }
+    ],
+    "red_light_no_candidate.json": [],
+    "subway_commute_underground.json": [
+      {
+        "event": 41,
+        "t": 6404.0,
+        "state": "DRIVING_CANDIDATE"
+      },
+      {
+        "event": 42,
+        "t": 6707.0,
+        "state": "DRIVING"
+      },
+      {
+        "event": 88,
+        "t": 9111.0,
+        "state": "PARKING_TRANSITION"
+      },
+      {
+        "event": 89,
+        "t": 9111.0,
+        "state": "CANDIDATE_PENDING",
+        "effects": [
+          "create high location_quality_degraded,recent_vehicle_activity,reliable_location_captured,vehicle_distance_met,vehicle_duration_met,vehicle_exit_detected,walking_after_vehicle"
+        ]
+      }
+    ],
+    "tunnel_no_parking.json": [],
+    "vehicle_then_walk.json": [
+      {
+        "event": 0,
+        "t": 0.0,
+        "state": "DRIVING_CANDIDATE"
+      },
+      {
+        "event": 2,
+        "t": 150.0,
+        "state": "DRIVING"
+      },
+      {
+        "event": 4,
+        "t": 240.0,
+        "state": "PARKING_TRANSITION"
+      },
+      {
+        "event": 5,
+        "t": 270.0,
+        "state": "CANDIDATE_PENDING",
+        "effects": [
+          "create high location_stopped,recent_vehicle_activity,reliable_location_captured,vehicle_duration_met,vehicle_exit_detected,walking_after_vehicle"
+        ]
+      }
+    ]
+  }
+}

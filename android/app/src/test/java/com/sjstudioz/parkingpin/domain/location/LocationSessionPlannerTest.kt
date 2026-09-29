@@ -1,5 +1,6 @@
 package com.sjstudioz.parkingpin.domain.location
 
+import com.sjstudioz.parkingpin.domain.detection.ParkingDetectionEngine
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -120,6 +121,27 @@ class LocationSessionPlannerTest {
 
         // Act & Assert
         assertEquals(LocationSessionAction.None, plan(healthy, LocationSessionMode.DRIVING))
+    }
+
+    @Test
+    fun `PARKING_TRANSITION captures for the whole transition window`() {
+        // docs/05 §3a / §19 (2026-09-27): two of the transition's three exits are location
+        // rows, so the capture has to outlast `transitionWindow`, not stop after five fixes
+        // and a minute.
+        val window = ParkingDetectionEngine.TRANSITION_WINDOW_MILLIS
+        val config = requireNotNull(
+            LocationSessionProfiles.configFor(
+                LocationSessionMode.PARKING_TRANSITION,
+                LocationSessionProfiles.maxSessionMillis(LocationSessionMode.PARKING_TRANSITION),
+            ),
+        )
+
+        assertEquals(window, LocationSessionProfiles.maxSessionMillis(LocationSessionMode.PARKING_TRANSITION))
+        assertEquals(window, config.durationMillis)
+        assertTrue(
+            "the update budget must not end the capture before the window does",
+            requireNotNull(config.maxUpdates) * config.intervalMillis >= window,
+        )
     }
 
     @Test

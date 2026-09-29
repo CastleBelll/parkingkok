@@ -146,6 +146,36 @@ struct DrivingDistanceAccumulationTests {
         #expect(abs(afterOrdinaryFix.distanceMeters - 40) < 0.01)
     }
 
+    /// docs/05 §7 "A coarse anchor is replaced by a materially better fix" (2026-09-27).
+    /// Field draft s02: a 1000 m first fix set a ~2 km floor for every later leg, so
+    /// 8 m-accurate travel at 6–12 m/s accumulated nothing for the rest of the drive.
+    @Test("A coarse anchor is replaced by a fix at least twice as accurate, without adding the leg")
+    func coarseAnchorIsReplacedByAMuchBetterFix() {
+        // Arrange — a 1000 m anchor, then an 8 m fix 100 m away: inside the floor.
+        var evidence = record(session(), atSecond: 0, metersNorth: 0, accuracy: 1000)
+        evidence = record(evidence, atSecond: 30, metersNorth: 100, accuracy: 8)
+
+        // Act — 300 m further on, at the same 8 m.
+        evidence = record(evidence, atSecond: 60, metersNorth: 400, accuracy: 8)
+
+        // Assert — the refused leg is still refused; the one measured from the new anchor
+        // counts in full.
+        #expect(abs(evidence.distanceMeters - 300) < 0.5)
+    }
+
+    @Test("A fix that is better but not twice as accurate keeps the old anchor")
+    func slightlyBetterFixKeepsTheAnchor() {
+        // Arrange — 30 m then 20 m: better, but not materially. The floor is ~72 m.
+        var evidence = record(session(), atSecond: 0, metersNorth: 0, accuracy: 30)
+        evidence = record(evidence, atSecond: 10, metersNorth: 50, accuracy: 20)
+
+        // Act — 80 m from the first fix, 30 m from the second.
+        evidence = record(evidence, atSecond: 20, metersNorth: 80, accuracy: 20)
+
+        // Assert — measured from the kept anchor: 80 m ≥ 2·sqrt(30² + 20²) ≈ 72 m.
+        #expect(abs(evidence.distanceMeters - 80) < 0.5)
+    }
+
     @Test("An invalid fix is not a leg at all")
     func invalidFixIsNotALeg() {
         // Arrange — docs/05 §5: a negative accuracy is Core Location saying "not a fix".

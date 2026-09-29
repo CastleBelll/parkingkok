@@ -43,6 +43,9 @@ class TransitionEventIngestor(
     )
 
     suspend fun ingest(transitions: List<RawTransition>) {
+        // docs/05 §19: a transition delivered after the opt-out (the unregister races a
+        // broadcast already in flight) must not open the confirmation capture on its own.
+        if (detectionRuntime?.isDetectionEnabled() == false) return
         val receivedAtMillis = clock.nowEpochMillis()
         transitions
             .mapNotNull { raw ->
@@ -56,8 +59,18 @@ class TransitionEventIngestor(
             .forEach { event ->
                 persist(event)
                 // After persisting, never before: if the process dies here the evidence
-                // survives and the next reconcile re-derives the session from it.
-                locationSessionController.onMotionEvent(event)
+                // survives and the next reconcile re-derives the session from it. Told whether
+                // the engine, having taken this event, still follows a drive, so an exit it has
+                // no use for opens no kerb capture (docs/05 §19), and whether it stays on the
+                // session it was on, so a session that lost its capture keeps the loss
+                // (docs/05 §11). With no engine wired every motion edge shapes the capture and
+                // there is no session to keep a loss, as before §3a landed.
+                val capture = detectionRuntime?.captureAfter(event)
+                locationSessionController.onMotionEvent(
+                    event,
+                    engineWantsCapture = capture?.let { it.wanted != null } ?: true,
+                    continuesEngineSession = capture?.continuesSession ?: false,
+                )
                 // docs/05 §3a. The capture decision above shapes the request; this decides
                 // what the trip *is*, and is the only step that can reach the user.
                 detectionRuntime?.handleMotion(event)

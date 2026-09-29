@@ -286,10 +286,12 @@ struct ParkingDetectionEngineTests {
         let effects = await engine.handle(.vehicleEnter(at: at(400)))
 
         // Assert — restored as DRIVING, not DRIVING_CANDIDATE: the session was already
-        // confirmed, and nothing was ever shown to take back.
+        // confirmed, and nothing was ever shown to take back. The capture never stopped:
+        // the transition kept it running (docs/05 §3a / §19), so there is none to reopen.
         #expect(await engine.state == .driving)
         #expect(candidates(effects).isEmpty)
-        #expect(effects.contains(.startBoundedLocationCapture))
+        #expect(!effects.contains(.stopLocationCapture))
+        #expect(await engine.snapshot().isLocationCaptureWanted)
     }
 
     @Test("PARKING_TRANSITION → IDLE when transitionWindow closes with no confirming signal")

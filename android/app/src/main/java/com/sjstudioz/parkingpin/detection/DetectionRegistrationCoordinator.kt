@@ -6,6 +6,7 @@ import com.sjstudioz.parkingpin.data.DetectionStateStore
 import com.sjstudioz.parkingpin.domain.registration.ReconcileAction
 import com.sjstudioz.parkingpin.domain.registration.RegistrationReconciler
 import com.sjstudioz.parkingpin.domain.registration.TransitionRegistrationSpec
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,6 +36,13 @@ class DetectionRegistrationCoordinator(
     private val store: DetectionStateStore,
     private val registrar: TransitionRegistrar,
     private val clock: Clock,
+    /**
+     * Ends everything detection had running when the user switches it off — the location
+     * capture, a drive, a departure, a stop-only window (docs/05 §11 / §19), which the
+     * transition registration alone does not reach. [ParkingDetectionRuntime.handleSmartDetectionDisabled]
+     * in the app; null in the tests that pin the registration alone.
+     */
+    private val optOut: (suspend (atMillis: Long) -> Unit)? = null,
 ) {
 
     private val mutex = Mutex()
@@ -50,12 +58,48 @@ class DetectionRegistrationCoordinator(
      * Use after reboot or app update: the system-side subscription is gone even though
      * our record survives, so the record must not be trusted as proof of registration.
      */
-    suspend fun reconcileAfterSystemReset(): RegistrationStatus = mutex.withLock {
-        store.clearRegistrationRecord()
-        reconcileLocked()
+    suspend fun reconcileAfterSystemReset(): RegistrationStatus {
+        val status = mutex.withLock {
+            store.clearRegistrationRecord()
+            reconcileLocked()
+        }
+        endWhatAnInterruptedOptOutLeft()
+        return status
     }
 
-    suspend fun reconcile(): RegistrationStatus = mutex.withLock { reconcileLocked() }
+    suspend fun reconcile(): RegistrationStatus {
+        val status = mutex.withLock { reconcileLocked() }
+        endWhatAnInterruptedOptOutLeft()
+        return status
+    }
+
+    /**
+     * docs/05 §3a "Turning Smart Detection off": a relaunch while opted out ends whatever a
+     * process that died mid-opt-out left behind — the flag written, the opt-out never run — or
+     * every later sensor batch is gated and the stale session waits for the day detection is
+     * switched back on. Every process start and every system reset reconciles, so this is
+     * where the relaunch is seen. The opt-out is idempotent (the runtime writes nothing when
+     * the stored state is already what it leaves), so running it on every start costs nothing.
+     */
+    private suspend fun endWhatAnInterruptedOptOutLeft() {
+        if (!store.readDesiredEnabledOnce()) runOptOut()
+    }
+
+    /**
+     * The opt-out, never allowed to fail its caller. The flag is already off, so the toggle
+     * has done what the user asked; a DataStore or capture failure here is logged, and the
+     * next relaunch sweeps again ([endWhatAnInterruptedOptOutLeft]).
+     */
+    private suspend fun runOptOut() {
+        val handler = optOut ?: return
+        try {
+            handler(clock.nowEpochMillis())
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            Log.w(TAG, "opt-out did not complete: ${failure.javaClass.simpleName}")
+        }
+    }
 
     private suspend fun reconcileLocked(): RegistrationStatus {
         val desiredEnabled = store.readDesiredEnabledOnce()
@@ -101,9 +145,21 @@ class DetectionRegistrationCoordinator(
         }.also { mutableStatus.value = it }
     }
 
-    suspend fun setDetectionEnabled(enabled: Boolean): RegistrationStatus = mutex.withLock {
-        store.setDesiredEnabled(enabled)
-        reconcileLocked()
+    /**
+     * Records the user's choice and reconciles the registration. Switching off then ends the
+     * engine session and the capture, after the flag is written so no sensor batch in flight
+     * can reopen them, and outside this lock because the runtime and the capture hold their
+     * own. A failure there does not undo the opt-out or fail the toggle: the flag is already
+     * off, every later batch releases whatever capture it finds, and the next relaunch ends the
+     * session ([endWhatAnInterruptedOptOutLeft]).
+     */
+    suspend fun setDetectionEnabled(enabled: Boolean): RegistrationStatus {
+        val status = mutex.withLock {
+            store.setDesiredEnabled(enabled)
+            reconcileLocked()
+        }
+        if (!enabled) runOptOut()
+        return status
     }
 
     private companion object {

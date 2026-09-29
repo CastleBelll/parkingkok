@@ -1,0 +1,423 @@
+{
+ "name": "field_s16_parked",
+ "initialState": "IDLE",
+ "events": [
+  {
+   "type": "stationary_enter",
+   "t": 0,
+   "confidence": "high"
+  },
+  {
+   "type": "walking_enter",
+   "t": 1519,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_exit",
+   "t": 1519,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_enter",
+   "t": 1551,
+   "confidence": "high"
+  },
+  {
+   "type": "walking_enter",
+   "t": 1557,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_exit",
+   "t": 1557,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_enter",
+   "t": 1771,
+   "confidence": "high"
+  },
+  {
+   "type": "walking_enter",
+   "t": 1776,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_exit",
+   "t": 1776,
+   "confidence": "high"
+  },
+  {
+   "type": "vehicle_enter",
+   "t": 1784,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_enter",
+   "t": 1784,
+   "confidence": "high"
+  },
+  {
+   "type": "stationary_exit",
+   "t": 1789,
+   "confidence": "high"
+  },
+  {
+   "type": "location",
+   "t": 2300,
+   "accuracy": 49.9855287511447
+  },
+  {
+   "type": "location",
+   "t": 2600,
+   "accuracy": 8.000005817362407
+  },
+  {
+   "type": "stationary_enter",
+   "t": 2600,
+   "confidence": "high"
+  },
+  {
+   "type": "location",
+   "t": 2900,
+   "accuracy": 7.999998830806878
+  },
+  {
+   "type": "stationary_exit",
+   "t": 2900,
+   "confidence": "high"
+  },
+  {
+   "type": "location",
+   "t": 3214,
+   "accuracy": 49.92168624437453
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 3214,
+   "fromBucket": "good",
+   "toBucket": "poor"
+  },
+  {
+   "type": "location",
+   "t": 3387,
+   "accuracy": 43.10795486644207
+  },
+  {
+   "type": "location",
+   "t": 3406,
+   "accuracy": 52.320445118143034,
+   "distanceFromPreviousM": 119.61583840604798
+  },
+  {
+   "type": "location",
+   "t": 3423,
+   "accuracy": 48.79130595014624,
+   "distanceFromPreviousM": 158.10765137704132
+  },
+  {
+   "type": "location",
+   "t": 3443,
+   "accuracy": 51.60321841582869,
+   "distanceFromPreviousM": 168.07810906305417
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 3443,
+   "fromBucket": "fair",
+   "toBucket": "poor"
+  },
+  {
+   "type": "location",
+   "t": 3459,
+   "accuracy": 30.465561581572974,
+   "distanceFromPreviousM": 12.827922051757998
+  },
+  {
+   "type": "location",
+   "t": 3465,
+   "accuracy": 52.52721722872121,
+   "distanceFromPreviousM": 36.91515119566487
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 3465,
+   "fromBucket": "fair",
+   "toBucket": "poor"
+  },
+  {
+   "type": "location",
+   "t": 3482,
+   "accuracy": 27.256464191961133,
+   "distanceFromPreviousM": 96.85291676491516
+  },
+  {
+   "type": "location",
+   "t": 3497,
+   "accuracy": 26.292627879889473,
+   "distanceFromPreviousM": 69.86938199158851
+  },
+  {
+   "type": "location",
+   "t": 3512,
+   "accuracy": 13.023259013010046,
+   "speed": 1.2441370487213135,
+   "distanceFromPreviousM": 42.65515805723476
+  },
+  {
+   "type": "location",
+   "t": 3527,
+   "accuracy": 14.24595459057527,
+   "speed": 0.4828334152698503,
+   "distanceFromPreviousM": 20.107251522518567
+  },
+  {
+   "type": "location",
+   "t": 3538,
+   "accuracy": 20.47180766746713,
+   "distanceFromPreviousM": 15.658529280782204
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 3538,
+   "fromBucket": "good",
+   "toBucket": "fair"
+  },
+  {
+   "type": "location",
+   "t": 3545,
+   "accuracy": 54.195014,
+   "distanceFromPreviousM": 17.799290246276556
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 3545,
+   "fromBucket": "fair",
+   "toBucket": "poor"
+  },
+  {
+   "type": "location",
+   "t": 3554,
+   "accuracy": 41.832725719341965,
+   "speed": 0,
+   "distanceFromPreviousM": 55.41793098992619
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 3554,
+   "fromBucket": "fair",
+   "toBucket": "poor"
+  },
+  {
+   "type": "location",
+   "t": 3569,
+   "accuracy": 14.589292950990375,
+   "speed": 1.5082526206970215,
+   "distanceFromPreviousM": 58.42506794859125
+  },
+  {
+   "type": "location",
+   "t": 3580,
+   "accuracy": 40,
+   "distanceFromPreviousM": 20.948784954945044
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 3580,
+   "fromBucket": "good",
+   "toBucket": "poor"
+  },
+  {
+   "type": "location",
+   "t": 3586,
+   "accuracy": 25.13365958298328,
+   "speed": 0.36526116728782654,
+   "distanceFromPreviousM": 20.253990888938258
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 3586,
+   "fromBucket": "good",
+   "toBucket": "fair"
+  },
+  {
+   "type": "location",
+   "t": 3587,
+   "accuracy": 50.598265211759774,
+   "speed": 0.3612261116504669,
+   "distanceFromPreviousM": 1.6903870681401123
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 3587,
+   "fromBucket": "fair",
+   "toBucket": "poor"
+  },
+  {
+   "type": "location",
+   "t": 3602,
+   "accuracy": 19.540809291086383,
+   "speed": 0.2952736020088196,
+   "distanceFromPreviousM": 21.097187432376977
+  },
+  {
+   "type": "location",
+   "t": 3620,
+   "accuracy": 22.719192653598192,
+   "speed": 1.283495545387268,
+   "distanceFromPreviousM": 9.6164303819026
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 3620,
+   "fromBucket": "good",
+   "toBucket": "fair"
+  },
+  {
+   "type": "location",
+   "t": 3635,
+   "accuracy": 19.48841134038815,
+   "speed": 1.4550861120223617,
+   "distanceFromPreviousM": 31.086602443652616
+  },
+  {
+   "type": "location",
+   "t": 3652,
+   "accuracy": 40,
+   "distanceFromPreviousM": 29.608173806184013
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 3652,
+   "fromBucket": "good",
+   "toBucket": "poor"
+  },
+  {
+   "type": "location",
+   "t": 3670,
+   "accuracy": 29.307534349135477,
+   "distanceFromPreviousM": 19.23634218486206
+  },
+  {
+   "type": "location",
+   "t": 3672,
+   "accuracy": 42.395013999999996,
+   "distanceFromPreviousM": 10.245517994575584
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 3672,
+   "fromBucket": "fair",
+   "toBucket": "poor"
+  },
+  {
+   "type": "location",
+   "t": 3682,
+   "accuracy": 36.99203169406502,
+   "distanceFromPreviousM": 13.838538908931763
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 3682,
+   "fromBucket": "fair",
+   "toBucket": "poor"
+  },
+  {
+   "type": "location",
+   "t": 3696,
+   "accuracy": 46.00052384710269,
+   "distanceFromPreviousM": 10.835751125251944
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 3696,
+   "fromBucket": "fair",
+   "toBucket": "poor"
+  },
+  {
+   "type": "location",
+   "t": 3716,
+   "accuracy": 30.329729794644457,
+   "distanceFromPreviousM": 11.420448686766147
+  },
+  {
+   "type": "location",
+   "t": 3723,
+   "accuracy": 46.252119252555104,
+   "distanceFromPreviousM": 2.0579407835455084
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 3723,
+   "fromBucket": "fair",
+   "toBucket": "poor"
+  },
+  {
+   "type": "location",
+   "t": 3738,
+   "accuracy": 16.879930416266262,
+   "speed": 1.2921887636184692,
+   "distanceFromPreviousM": 39.91579155412225
+  },
+  {
+   "type": "location",
+   "t": 3752,
+   "accuracy": 20.095014,
+   "distanceFromPreviousM": 25.264349761334667
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 3752,
+   "fromBucket": "good",
+   "toBucket": "fair"
+  },
+  {
+   "type": "location",
+   "t": 3763,
+   "accuracy": 93.49501400000001,
+   "distanceFromPreviousM": 15.627534919855972
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 3763,
+   "fromBucket": "fair",
+   "toBucket": "poor"
+  },
+  {
+   "type": "location",
+   "t": 3781,
+   "accuracy": 16.350264587427585,
+   "distanceFromPreviousM": 26.787545515530336
+  },
+  {
+   "type": "location",
+   "t": 3798,
+   "accuracy": 16.94653667733247,
+   "distanceFromPreviousM": 4.558843056040789
+  },
+  {
+   "type": "location",
+   "t": 3811,
+   "accuracy": 29.8899380842958,
+   "distanceFromPreviousM": 14.069416172304248
+  },
+  {
+   "type": "location_quality_degraded",
+   "t": 3811,
+   "fromBucket": "good",
+   "toBucket": "fair"
+  },
+  {
+   "type": "location",
+   "t": 3828,
+   "accuracy": 31.86634106491844,
+   "distanceFromPreviousM": 14.188146677571257
+  }
+ ],
+ "expected": {
+  "candidate": true,
+  "finalState": "CANDIDATE_PENDING",
+  "confidence": "low",
+  "requiredReasons": ["location_quality_degraded", "location_stopped", "recent_vehicle_activity", "reliable_location_captured", "vehicle_distance_met", "vehicle_duration_met"]
+ }
+}

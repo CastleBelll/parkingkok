@@ -7,6 +7,11 @@ import Foundation
 struct DetectionEngineSnapshot: Sendable, Equatable {
     var checkpoint: DetectionCheckpoint
     var driving: DrivingEvidence?
+    /// The finished drive a `PARKING_TRANSITION` is still recording fixes into. Separate
+    /// from `driving`, which is non-nil only while a session is *open* — a drive, or §11's
+    /// get-in or departure: the adapter's silence bound and field-test hooks ask that
+    /// question, and a transition is not an open session.
+    var transitionDrive: DrivingEvidence?
     var parkingTransitionEnteredAt: Date?
     var isVehicleActive: Bool
     var connectedCarLinks: Set<CarLinkKind>
@@ -16,6 +21,11 @@ struct DetectionEngineSnapshot: Sendable, Equatable {
     var reliableLocationUpdateCount: Int
     var reliableLocationRejectCount: Int
     var lastReliableLocationRejection: ReliableLocationRejection?
+    /// Whether the bounded capture should be running. docs/05 §3a / §19 (2026-09-27): it
+    /// runs while a drive is open **and** while `PARKING_TRANSITION` decides, because two
+    /// of that state's three exits are location rows. The adapter releases Core Location
+    /// on this, not on `driving`, or no fix could ever reach those rows on a device.
+    var isLocationCaptureWanted: Bool
 }
 
 /// The §3a transition table, and nothing else.
@@ -39,10 +49,33 @@ struct DetectionEngineSnapshot: Sendable, Equatable {
 /// should say.
 actor ParkingDetectionEngine {
     private var checkpoint: DetectionCheckpoint
-    /// Non-nil exactly while a bounded session is open — `DRIVING_CANDIDATE` or `DRIVING`.
+    /// The open session: the drive of `DRIVING_CANDIDATE` and `DRIVING`, and the get-in or
+    /// departure §11 measures in `PARKED` and `DEPARTURE_CANDIDATE` (`nil` in `PARKED` with
+    /// no get-in). `nil` in `IDLE`, `PARKING_TRANSITION` and `CANDIDATE_PENDING`, whose drives
+    /// live in `transition` and `candidateDrive`.
     private var driving: DrivingEvidence?
+    /// docs/05 §11 "A lost capture decides nothing" (2026-09-28): the open session in
+    /// `driving` has lost its bounded capture and keeps going without one. Carried into the
+    /// transition that session ends in (`isCapturing: false`), so no stop-only window is
+    /// opened on a capture that is not running, and persisted with the session record
+    /// (`DetectionCheckpoint.departure`, in every state that holds a session) so a relaunch
+    /// does not reopen it. Cleared whenever a session opens or a capture starts.
+    private var isDrivingCaptureLost = false
     /// Non-nil exactly while the state is `PARKING_TRANSITION`.
     private var transition: ParkingTransition?
+    /// The drive a pending candidate came from, kept only while `CANDIDATE_PENDING` so a
+    /// car-link reconnect (§3a, the fuel stop) resumes the *same* trip — its start, its
+    /// distance — rather than a new one. Cleared on leaving the state any other way.
+    private var candidateDrive: DrivingEvidence?
+    /// docs/05 §3a "A stop-only candidate can still be a long light" (2026-09-27). Non-nil
+    /// while the pending candidate came from a transition that nothing but absence ended —
+    /// entered by `movementIdle`, confirmed by a stop, no exit, no walk — and the drive's
+    /// `transitionWindow` has not yet run out. While it stands `candidateDrive` keeps
+    /// recording, and reported movement or `vehicle_enter` takes the candidate back.
+    private var candidateResume: CandidateResume?
+    /// What the fix this event carried did to the drive, for `applyEdge`. Set by `ingest`,
+    /// consumed by the edge after the windows have been judged, cleared per event.
+    private var lastFixVerdict: FixVerdict?
     /// The vehicle-activity *level*. Set by `vehicleEnter`, cleared by `vehicleExit` — see
     /// `DetectionEvent` for why this is a level and not a decaying sample.
     private var isVehicleActive = false
@@ -81,10 +114,94 @@ actor ParkingDetectionEngine {
     private struct ParkingTransition {
         let enteredAt: Date
         let entryReason: DrivingSessionEndReason
-        /// The finished drive, kept so the candidate can still say how long and how far it
-        /// ran and whether movement had stopped by the end.
-        let drive: DrivingEvidence?
+        /// The finished drive, **still recording**. docs/05 §3a: a fix inside the window
+        /// either confirms the parking (a location stop) or resumes the drive (movement
+        /// returns), and both need the drive's anchors; a resume hands this back as
+        /// `driving`, so the trip keeps its start, distance and confirmation.
+        var drive: DrivingEvidence
+        /// §8b: duration and distance are measured at the vehicle end — this state's entry
+        /// — and frozen there, so a walk to the lift adds neither. `nil` duration: unknown,
+        /// a transition rebuilt from a checkpoint.
+        let driveDurationAtEnd: TimeInterval?
+        let driveDistanceAtEnd: Double
+        /// §5's inheritance bound: the travel session's start. `nil` for a rebuilt
+        /// transition, where only the age bound applies.
+        let sessionStartedAt: Date?
+        /// The flags this transition earns as signals arrive — §3a "codes accumulate as
+        /// evidence arrives". Discarded with the transition when the drive resumes: that
+        /// stop was a red light, and its evidence belonged to it.
         var evidence: ParkingEvidence
+        /// Whether the bounded capture is still running for this transition.
+        var isCapturing: Bool
+
+        init(
+            enteredAt: Date,
+            entryReason: DrivingSessionEndReason,
+            drive: DrivingEvidence,
+            driveDurationAtEnd: TimeInterval?,
+            driveDistanceAtEnd: Double? = nil,
+            sessionStartedAt: Date?,
+            vehicleExitDetected: Bool,
+            isCapturing: Bool
+        ) {
+            self.enteredAt = enteredAt
+            self.entryReason = entryReason
+            self.drive = drive
+            self.driveDurationAtEnd = driveDurationAtEnd
+            // A rebuilt transition has a fresh drive with nothing in it; the distance the
+            // real one covered survives only as the checkpoint's `travelDistanceEstimate`.
+            self.driveDistanceAtEnd = driveDistanceAtEnd ?? drive.distanceMeters
+            self.sessionStartedAt = sessionStartedAt
+            evidence = ParkingEvidence(
+                hasMeaningfulVehicleSession: true,
+                vehicleEnded: true,
+                vehicleExitDetected: vehicleExitDetected
+            )
+            self.isCapturing = isCapturing
+        }
+
+        /// docs/05 §8b `vehicle_exit_detected`: which entries *are* an exit. The iOS
+        /// adapter derives its exit from a walk (`walkingDetected`) or from Core Motion
+        /// going silent (`vehicleEvidenceExpired`) — the normalized `vehicle_exit` Android
+        /// is handed. `movementIdle` is an inference from absence and is not.
+        static func isExplicitExit(_ reason: DrivingSessionEndReason) -> Bool {
+            switch reason {
+            case .vehicleExit, .walkingDetected, .vehicleEvidenceExpired, .carLinkDisconnected:
+                true
+            case .movementIdle, .maximumDurationReached, .authorizationLost, .captureFailed,
+                 .smartDetectionDisabled, .fieldTestStopped:
+                false
+            }
+        }
+    }
+
+    /// The window in which a stop-only candidate can still turn out to be a long light.
+    ///
+    /// Exists exactly while the bounded capture the transition kept is running (§3a "The
+    /// window lives exactly as long as its capture"): it is never opened without one, and
+    /// every door that stops the capture closes it.
+    private struct CandidateResume {
+        /// The drive's end — the transition's entry. A fix older than this says nothing
+        /// about whether the car moved on.
+        let driveEndedAt: Date
+        /// `driveEndedAt + transitionWindow`: the deadline the transition itself had.
+        let deadline: Date
+        /// Fixes inside the window that reported moving speed. §7's "one event alone never
+        /// confirms": a single Doppler spike under a slab must not withdraw a parking.
+        var reportedMovingFixes = 0
+    }
+
+    /// What one accepted fix did to the drive it was folded into.
+    private struct FixVerdict {
+        let timestamp: Date
+        /// It counted as movement under §7, by either route.
+        let moved: Bool
+        /// It *reported* a speed at or above `movingSpeedThreshold`. The only movement that
+        /// may take a candidate back (§3a): the distance fallback reads the jitter around a
+        /// parked car as travel.
+        let reportedMoving: Bool
+        /// It reported a speed below `movingSpeedThreshold` — §3a's "location stop".
+        let stopped: Bool
     }
 
     // MARK: - Lifecycle
@@ -93,13 +210,16 @@ actor ParkingDetectionEngine {
         DetectionEngineSnapshot(
             checkpoint: checkpoint,
             driving: driving,
+            transitionDrive: transition?.drive,
             parkingTransitionEnteredAt: transition?.enteredAt,
             isVehicleActive: isVehicleActive,
             connectedCarLinks: connectedCarLinks,
             pendingCandidateId: checkpoint.candidateId,
             reliableLocationUpdateCount: reliableLocationUpdateCount,
             reliableLocationRejectCount: reliableLocationRejectCount,
-            lastReliableLocationRejection: lastReliableLocationRejection
+            lastReliableLocationRejection: lastReliableLocationRejection,
+            isLocationCaptureWanted: (driving != nil && !isDrivingCaptureLost)
+                || transition?.isCapturing == true || candidateResume != nil
         )
     }
 
@@ -122,6 +242,7 @@ actor ParkingDetectionEngine {
     ) -> [DetectionEffect] {
         checkpoint = restored ?? DetectionCheckpoint.initial(at: now)
         self.pendingCandidate = pendingCandidate
+        isDrivingCaptureLost = false
         hasProducedCandidateInSession = checkpoint.state == .candidatePending
 
         var effects: [DetectionEffect] = []
@@ -144,15 +265,23 @@ actor ParkingDetectionEngine {
             effects += restoreParkingTransition(now: now)
         case .candidatePending:
             isVehicleActive = false
-        case .idle, .parked, .departureCandidate:
+        case .departureCandidate:
+            effects += restoreDeparture(now: now)
+        case .parked:
+            effects += restoreGetIn(now: now)
+        case .idle:
             break
         }
         effects += tick(now: now)
         return effects
     }
 
+    /// A drive with a session record (docs/05 §11 "A lost capture decides nothing": one that
+    /// lost its capture) is put back exactly as it was and reopens none. Any other drive is
+    /// rebuilt from `stateEnteredAt` and reopens its capture to re-earn its anchors.
     private func restoreDrivingSession(now: Date) -> [DetectionEffect] {
-        let resumed = DrivingEvidence(
+        let isRecorded = restoreDepartureEvidence()
+        let resumed = driving ?? DrivingEvidence(
             startedAt: checkpoint.stateEnteredAt,
             lastVehicleEvidenceAt: checkpoint.lastAutomotiveAt
         )
@@ -160,38 +289,131 @@ actor ParkingDetectionEngine {
         // ordinary expiry rule decides, so there is one definition of "too old".
         if let expiry = DrivingSessionTimeoutPolicy.expiryReason(for: resumed, now: now) {
             driving = nil
+            isDrivingCaptureLost = false
             isVehicleActive = false
+            vehicleActiveSince = nil
             return [.sessionEnded(reason: expiry, at: now), .stopLocationCapture] + moveTo(.idle, now: now)
         }
         driving = resumed
-        isVehicleActive = true
-        vehicleActiveSince = checkpoint.lastAutomotiveAt ?? checkpoint.stateEnteredAt
+        if !isRecorded {
+            isVehicleActive = true
+            vehicleActiveSince = checkpoint.lastAutomotiveAt ?? checkpoint.stateEnteredAt
+        }
         if checkpoint.state == .driving {
             driving?.markConfirmed(at: checkpoint.stateEnteredAt)
         }
-        return [.startBoundedLocationCapture]
+        return reopenedCapture()
+    }
+
+    /// docs/05 §14 "A restored departure keeps its evidence" (2026-09-28).
+    ///
+    /// Android's runtime reloads its whole engine state for every batch, so a departure — or
+    /// the get-in session `PARKED` measures §11's bars on — reaches the same next event with
+    /// the same start, distance, anchors, moving samples and vehicle evidence. iOS persists
+    /// exactly that (`DetectionCheckpoint.departure`) and puts it back, so §7's guard and
+    /// §11's lapse read what they would have read without the relaunch.
+    ///
+    /// A `DEPARTURE_CANDIDATE` checkpoint without it (schema 1) is a departure nothing can
+    /// judge: it returns to `PARKED`, ending nothing. §11: leaving a record open is
+    /// recoverable, ending one wrongly is not.
+    private func restoreDeparture(now: Date) -> [DetectionEffect] {
+        guard restoreDepartureEvidence() else { return moveTo(.parked, now: now) }
+        // A departure that already lapsed goes back to `PARKED` at its lapse, as the live
+        // one would, without opening a capture it would close in the same breath.
+        let lapsed = departureWindows(now: now)
+        return lapsed.isEmpty ? reopenedCapture() : lapsed
+    }
+
+    /// `PARKED` with a get-in session open: it has no window of its own (§11's bars are an
+    /// edge), so the session and its capture simply resume — unless the session would end the
+    /// instant it reopened. The same expiry rule `restoreDrivingSession` applies decides; a
+    /// stale get-in is dropped and the parking stays (§11: an adapter-decided end never
+    /// leaves `PARKED`).
+    private func restoreGetIn(now: Date) -> [DetectionEffect] {
+        guard restoreDepartureEvidence(), let getIn = driving else { return [] }
+        guard DrivingSessionTimeoutPolicy.expiryReason(for: getIn, now: now) == nil else {
+            return endGetIn()
+        }
+        return reopenedCapture()
+    }
+
+    /// The capture a restored get-in or departure had, reopened — unless it had already lost
+    /// it (docs/05 §11 "A lost capture decides nothing"): a process death does not give a
+    /// session its capture back, which is also what Android does, where a lost capture stays
+    /// lost across its process deaths.
+    private func reopenedCapture() -> [DetectionEffect] {
+        isDrivingCaptureLost ? [] : [.startBoundedLocationCapture]
+    }
+
+    private func restoreDepartureEvidence() -> Bool {
+        guard let record = checkpoint.departure else { return false }
+        driving = record.drive
+        vehicleActiveSince = record.vehicleActiveSince
+        isVehicleActive = record.vehicleActiveSince != nil
+        isDrivingCaptureLost = record.isCaptureLost
+        return true
+    }
+
+    /// What `DetectionCheckpoint.departure` holds for the current state: the open session in
+    /// `PARKED` and `DEPARTURE_CANDIDATE`; in `DRIVING_CANDIDATE` and `DRIVING` only while the
+    /// drive has lost its capture (docs/05 §11 "A lost capture decides nothing", §14) — a drive
+    /// with no capture can re-earn none of its evidence after a relaunch, so it has to keep
+    /// it; in `PARKING_TRANSITION` the transition's drive, only while the transition has no
+    /// capture (§11 "A lost capture stays lost for its session"); nothing anywhere else.
+    private var departureRecord: DepartureCheckpoint? {
+        if checkpoint.state == .parkingTransition {
+            guard let transition, !transition.isCapturing else { return nil }
+            return DepartureCheckpoint(drive: transition.drive, vehicleActiveSince: vehicleActiveSince, isCaptureLost: true)
+        }
+        guard let driving else { return nil }
+        switch checkpoint.state {
+        case .parked, .departureCandidate:
+            break
+        case .drivingCandidate, .driving:
+            guard isDrivingCaptureLost else { return nil }
+        case .idle, .parkingTransition, .candidatePending:
+            return nil
+        }
+        return DepartureCheckpoint(
+            drive: driving,
+            vehicleActiveSince: vehicleActiveSince,
+            isCaptureLost: isDrivingCaptureLost
+        )
     }
 
     private func restoreParkingTransition(now: Date) -> [DetectionEffect] {
         guard !ParkingTransitionPolicy.hasElapsed(enteredAt: checkpoint.stateEnteredAt, now: now) else {
             return moveTo(.idle, now: now)
         }
-        // The evidence is thinner than the original — `driveDuration` is not a checkpoint
-        // field and is gone — and it says so by leaving the value `nil` rather than
-        // guessing one. An absent duration costs a reason code and an analytics bucket; a
-        // fabricated one would cost the meaning of both.
+        // docs/05 §11 "A lost capture stays lost for its session": a transition that had no
+        // capture is recorded with its drive (`departureRecord`) and reopens none — a
+        // relaunch does not give a session its capture back, on either platform.
+        let lostCapture = checkpoint.departure.flatMap { $0.isCaptureLost ? $0.drive : nil }
+        // The evidence is thinner than the original — the drive's duration, its anchors
+        // and how it ended are not checkpoint fields — and it says so rather than guessing
+        // (the distance *is* a field, written at the entry, and is kept):
+        // the duration is `nil` (unknown, which §8's short-trip penalty does not punish),
+        // and no exit is credited, because nothing here knows one was detected. A drive is
+        // still recreated, so a fix inside the window can confirm or resume it (§3a). A
+        // transition with no capture can re-earn nothing, so it keeps its recorded drive.
+        var drive = lostCapture ?? DrivingEvidence(
+            startedAt: checkpoint.stateEnteredAt,
+            lastVehicleEvidenceAt: checkpoint.lastAutomotiveAt
+        )
+        drive.markConfirmed(at: checkpoint.stateEnteredAt)
         transition = ParkingTransition(
             enteredAt: checkpoint.stateEnteredAt,
             entryReason: .vehicleEvidenceExpired,
-            drive: nil,
-            evidence: ParkingEvidence(
-                hasMeaningfulVehicleSession: true,
-                vehicleEnded: true,
-                reliableLocationCaptured: checkpoint.lastReliableLocation != nil,
-                driveDistanceMeters: checkpoint.travelDistanceEstimate
-            )
+            drive: drive,
+            driveDurationAtEnd: nil,
+            driveDistanceAtEnd: checkpoint.travelDistanceEstimate,
+            sessionStartedAt: nil,
+            vehicleExitDetected: false,
+            isCapturing: lostCapture == nil
         )
-        return []
+        // docs/05 §3a / §19: the capture runs while the transition decides, and nothing
+        // else will reopen it for a process that died mid-window.
+        return lostCapture == nil ? [.startBoundedLocationCapture] : []
     }
 
     // MARK: - The event loop
@@ -214,10 +436,26 @@ actor ParkingDetectionEngine {
     /// old and the windows still have to be judged from the present.
     func handle(_ event: DetectionEvent, now observedAt: Date? = nil) -> [DetectionEffect] {
         let now = observedAt ?? event.timestamp
+        // §3a's `any → PARKED` row (§11c) is answered before any evidence is folded or any
+        // window judged: the user has said where the car is, and nothing the engine was
+        // inferring — including a window that happened to close at this instant — outranks
+        // that. Android has always answered it first; iOS used to let a lapsing window
+        // report `candidateRuleUnmet` on the way.
+        if case .userSavedParking = event {
+            return adoptUserSavedParking(now: now)
+        }
+        lastFixVerdict = nil
         var effects = ingest(event, now: now)
         effects += tick(now: now)
         effects += applyEdge(event, now: now)
         effects += tick(now: now)
+        // docs/05 §14: the departure's evidence is written whenever it changes, not only on
+        // a state change — Android writes its engine state after every batch, and a fix or a
+        // link edge that a process death then discarded would decide the departure
+        // differently on each platform.
+        if departureRecord != checkpoint.departure {
+            effects.append(persistedCheckpoint())
+        }
         return effects
     }
 
@@ -225,12 +463,16 @@ actor ParkingDetectionEngine {
     private func ingest(_ event: DetectionEvent, now: Date) -> [DetectionEffect] {
         switch event {
         case let .location(fix):
-            return recordDrivingFix(fix, now: now)
-        case let .locationQualityDegraded(_, _, to):
-            // §8 "GPS quality degraded near end", §13's underground pattern. Supporting
+            return recordFix(fix, now: now)
+        case let .locationQualityDegraded(at, _, to):
+            // §8b "location_quality_degraded", §13's underground pattern. Recorded on the
+            // drive with its time — in `DRIVING` too, where iOS used to drop it — and
+            // judged against the drive's end when a candidate is scored. Supporting
             // evidence only: §6 will not let it satisfy the candidate rule alone.
-            if to == nil || to == .poor {
-                transition?.evidence.gpsQualityDegraded = true
+            if driving != nil {
+                driving?.noteQualityDegraded(at: at, to: to)
+            } else {
+                transition?.drive.noteQualityDegraded(at: at, to: to)
             }
             return []
         case .vehicleEnter, .vehicleExit, .walkingEnter, .stationaryEnter, .stationaryExit,
@@ -243,6 +485,58 @@ actor ParkingDetectionEngine {
     /// The transitions this event triggers by itself (the rows of §3a whose condition is
     /// an event rather than a window).
     private func applyEdge(_ event: DetectionEvent, now: Date) -> [DetectionEffect] {
+        let stateAtEdge = checkpoint.state
+        let effects = applyEventRow(event, now: now)
+        return effects + departureEdge(event, stateAtEdge: stateAtEdge, now: now)
+    }
+
+    /// docs/05 §11 "Departure rows are edges" (2026-09-27): `PARKED → DEPARTURE_CANDIDATE`
+    /// and `DEPARTURE_CANDIDATE → DRIVING` are asked once per event, against the state the
+    /// event found — Android's `fromParked` / `fromDepartureCandidate`. So the event that
+    /// opens a departure never also confirms it: the guard is first asked by the next event.
+    /// iOS used to ask both from the window cascade, confirming on the opening event, so the
+    /// `DEPARTURE_CANDIDATE` row landed on a different event on each platform.
+    ///
+    /// Only when the event's own row left the state where it found it: a `vehicle_exit` or a
+    /// car link has already answered for `PARKED`, and `handleVehicleExit` for
+    /// `DEPARTURE_CANDIDATE`.
+    private func departureEdge(_ event: DetectionEvent, stateAtEdge: DetectionState, now: Date) -> [DetectionEffect] {
+        guard checkpoint.state == stateAtEdge, let evidence = driving else { return [] }
+        switch stateAtEdge {
+        case .parked:
+            if case .vehicleExit = event { return [] }
+            if case .carLinkConnected = event { return [] }
+            guard departureBarsCleared(evidence, now: now) else { return [] }
+            return moveTo(.departureCandidate, now: now)
+        case .departureCandidate:
+            if case .vehicleExit = event { return [] }
+            return evidence.meetsDrivingConfirmation(now: now) ? confirmDeparture(on: event, now: now) : []
+        case .idle, .drivingCandidate, .driving, .parkingTransition, .candidatePending:
+            return []
+        }
+    }
+
+    /// docs/05 §11 "An event that confirms a departure is also read in `DRIVING`"
+    /// (2026-09-28): Android's `fromDepartureCandidate → fromDriving`, the chaining
+    /// `DRIVING_CANDIDATE` already does for the exit that promotes it. `vehicle_exit` and a
+    /// link disconnect are the only events with a `DRIVING` row of their own (§3a); every
+    /// other confirming event confirms and nothing else. Swallowed, the exit of a short hop
+    /// into an underground garage — the fixes stop on the ramp, and the exit is the first
+    /// event after §7's guard came true by elapsed time — lost the next parking.
+    private func confirmDeparture(on event: DetectionEvent, now: Date) -> [DetectionEffect] {
+        let confirmed = confirmDeparture(now: now)
+        switch event {
+        case .vehicleExit:
+            return confirmed + endDrivingSession(reason: .vehicleExit, now: now)
+        case let .carLinkDisconnected(_, kind):
+            return confirmed + handleCarLinkDisconnected(kind: kind, now: now)
+        default:
+            return confirmed
+        }
+    }
+
+    /// The row this event triggers by itself in the state it found.
+    private func applyEventRow(_ event: DetectionEvent, now: Date) -> [DetectionEffect] {
         switch event {
         case let .vehicleEnter(at, _):
             return handleVehicleEnter(at: at, now: now)
@@ -261,11 +555,14 @@ actor ParkingDetectionEngine {
         case .userRejectedParking:
             return resolveCandidate(confirmed: false, now: now)
         case .userSavedParking:
-            return adoptUserSavedParking(now: now)
+            // Answered in `handle` before anything else; never reaches here.
+            return []
+        case .location:
+            return applyFixEdge(now: now)
         // §3a has no row for these: `stationary_exit` inside a drive is a car leaving a
-        // light, a fix is evidence, a degradation is supporting evidence, and a tick is
-        // only an invitation to re-examine the windows.
-        case .stationaryExit, .location, .locationQualityDegraded, .timerTick:
+        // light, a degradation is supporting evidence, and a tick is only an invitation to
+        // re-examine the windows.
+        case .stationaryExit, .locationQualityDegraded, .timerTick:
             return []
         }
     }
@@ -277,7 +574,7 @@ actor ParkingDetectionEngine {
     /// let its transition window close is three rows in one tick. The iteration cap is a
     /// bug-containment device, not a rule — every branch below moves the state.
     private func tick(now: Date) -> [DetectionEffect] {
-        var effects: [DetectionEffect] = []
+        var effects = expireLeftBehindCandidate(now: now)
         for _ in 0 ..< Self.maximumTickCascade {
             let step = tickOnce(now: now)
             if step.isEmpty { break }
@@ -288,6 +585,32 @@ actor ParkingDetectionEngine {
 
     /// Enough to walk `DRIVING_CANDIDATE → DRIVING → PARKING_TRANSITION → IDLE` and stop.
     private static let maximumTickCascade = 6
+
+    /// docs/05 §10 (2026-09-27): the 45 minutes bound the candidate whatever the state.
+    ///
+    /// A candidate left behind by `CANDIDATE_PENDING → DRIVING_CANDIDATE` stays answerable
+    /// (§3a), and used to stay for ever if the new drive never produced one of its own:
+    /// only `CANDIDATE_PENDING` looked at the clock. Withdrawn here without moving the
+    /// state — the drive under way is not the candidate's business.
+    private func expireLeftBehindCandidate(now: Date) -> [DetectionEffect] {
+        guard checkpoint.state != .candidatePending,
+              let candidate = pendingCandidate,
+              candidate.isExpired(now: now)
+        else { return [] }
+        pendingCandidate = nil
+        return [.withdrawCandidate(id: candidate.id)]
+    }
+
+    /// docs/05 §3a "Window rows are stamped at their deadline" (2026-09-27).
+    ///
+    /// A window-driven row happens when its window closed, not when some later event
+    /// noticed. Stamped at observation, the next window started late by however long the
+    /// device happened to be quiet, so the same trace replayed differently with and without
+    /// an unrelated tick — the non-determinism §3a's timeout section exists to rule out.
+    /// Never earlier than the current state's own entry, never later than now.
+    private func stamp(deadline: Date, now: Date) -> Date {
+        min(now, max(deadline, checkpoint.stateEnteredAt))
+    }
 
     private func tickOnce(now: Date) -> [DetectionEffect] {
         // §3a "DECIDED 2026-09-20: a connected car link suppresses `movementIdleWindow`".
@@ -318,10 +641,12 @@ actor ParkingDetectionEngine {
                >= DrivingConfirmationPolicy.minimumVehicleDuration {
                 return promoteToDriving(now: now)
             }
-            if now.timeIntervalSince(checkpoint.stateEnteredAt) >= DrivingConfirmationPolicy.drivingCandidateWindow {
+            let lapse = checkpoint.stateEnteredAt.addingTimeInterval(DrivingConfirmationPolicy.drivingCandidateWindow)
+            if now >= lapse {
                 driving = nil
-                return [.sessionEnded(reason: .vehicleEvidenceExpired, at: now), .stopLocationCapture]
-                    + moveTo(.idle, now: now)
+                let at = stamp(deadline: lapse, now: now)
+                return [.sessionEnded(reason: .vehicleEvidenceExpired, at: at), .stopLocationCapture]
+                    + moveTo(.idle, now: at)
             }
             return []
 
@@ -332,7 +657,8 @@ actor ParkingDetectionEngine {
             // The link outranks an inference from absence, but only this one: the 2-hour
             // ceiling is a bound on the session itself and holds either way.
             if carLinkHolds, reason == .movementIdle { return [] }
-            return endDrivingSession(reason: reason, now: now)
+            let endedAt = stamp(deadline: Self.deadline(of: reason, for: evidence) ?? now, now: now)
+            return endDrivingSession(reason: reason, now: endedAt)
 
         case .parkingTransition:
             guard let transition,
@@ -341,47 +667,81 @@ actor ParkingDetectionEngine {
             // §3a `PARKING_TRANSITION → IDLE`. Silent by contract: nothing was persisted on
             // the way in beyond the checkpoint and nothing was shown, so there is nothing
             // to take back.
-            self.transition = nil
-            return [.candidateRuleUnmet] + moveTo(.idle, now: now)
+            let lapse = stamp(
+                deadline: transition.enteredAt.addingTimeInterval(ParkingTransitionPolicy.transitionWindow),
+                now: now
+            )
+            return closeTransition() + [.candidateRuleUnmet] + moveTo(.idle, now: lapse)
 
         case .candidatePending:
+            // The resume window closing moves nothing — the candidate stands — but it is
+            // judged first and does not end the pass, so an expiry due on the same late
+            // wake is still seen.
+            return lapseCandidateResume(now: now) + candidatePendingWindows(now: now)
+
+        case .departureCandidate:
+            return departureWindows(now: now)
+
+        // §11's bars are an edge, not a window (docs/05 §11 "Departure rows are edges"):
+        // see `departureEdge`.
+        case .parked, .idle:
+            return []
+        }
+    }
+
+    /// §10's 45 minutes, for the state that holds the candidate.
+    private func candidatePendingWindows(now: Date) -> [DetectionEffect] {
             guard let candidate = pendingCandidate else {
                 // The checkpoint says a candidate is pending and its file is gone. §10's
                 // 45 minutes still bound the state, and leaving it here forever would
                 // make every later drive invisible — so the bound is applied to the state
                 // rather than to a candidate nobody can read.
-                guard now.timeIntervalSince(checkpoint.stateEnteredAt) >= ParkingCandidatePolicy.expiry
-                else { return [] }
-                return moveTo(.idle, now: now)
+                let expiry = checkpoint.stateEnteredAt.addingTimeInterval(ParkingCandidatePolicy.expiry)
+                guard now >= expiry else { return [] }
+                return moveTo(.idle, now: stamp(deadline: expiry, now: now))
             }
             guard candidate.isExpired(now: now) else { return [] }
             // docs/05 §10: no record is created and nothing is reported — docs/17 §2 has
             // no event for a guess that went unanswered.
-            return retirePendingCandidate(now: now)
+            return retirePendingCandidate(now: stamp(deadline: candidate.expiresAt, now: now))
+    }
 
-        case .departureCandidate:
+    /// docs/05 §3a "A stop-only candidate can still be a long light": the drive's own
+    /// `transitionWindow` ran out with the car still standing, so the capture kept for it
+    /// is released. Not a state change — the candidate is exactly as valid as before.
+    private func lapseCandidateResume(now: Date) -> [DetectionEffect] {
+        guard let hold = candidateResume, now >= hold.deadline else { return [] }
+        return closeCandidateResume()
+    }
+
+    /// §11's one window-driven departure row: the lapse. Confirmation is an edge
+    /// (`departureEdge`), as on Android.
+    private func departureWindows(now: Date) -> [DetectionEffect] {
             guard let evidence = driving else { return moveTo(.parked, now: now) }
-            // §11 "departure confirmed" is §7's guard in full — the one bar this project
-            // has for a meaningful driving session, movement clause included. Leaving a
-            // parking record open is recoverable; ending one the user is still sitting in
-            // is not, which is why departure is the one place the stricter guard is right.
-            if evidence.meetsDrivingConfirmation(now: now) {
-                return confirmDeparture(now: now)
-            }
             // Vehicle evidence went quiet without ever becoming a drive: the phone woke up
             // in a parked car. Back to `PARKED`, silently, having ended nothing.
-            guard now.timeIntervalSince(evidence.lastVehicleEvidenceAt ?? evidence.startedAt)
-                >= DrivingConfirmationPolicy.drivingCandidateWindow
-            else { return [] }
+            //
+            // Strictly *past* the window (docs/05 §11, 2026-09-27): §7's guard still counts
+            // evidence exactly `vehicleEvidenceMaxAge` old as recent, so at that instant the
+            // departure may still confirm — on this event's edge, which runs after this
+            // window — and the lapse must not pre-empt it.
+            let lapse = (evidence.lastVehicleEvidenceAt ?? evidence.startedAt)
+                .addingTimeInterval(DrivingConfirmationPolicy.drivingCandidateWindow)
+            guard now > lapse else { return [] }
             driving = nil
-            return [.stopLocationCapture] + moveTo(.parked, now: now)
+            return [.stopLocationCapture] + moveTo(.parked, now: stamp(deadline: lapse, now: now))
+    }
 
-        case .parked:
-            guard let evidence = driving, departureBarsCleared(evidence, now: now) else { return [] }
-            return moveTo(.departureCandidate, now: now)
-
-        case .idle:
-            return []
+    /// When a `DRIVING` bound's window closed. `nil` for a reason with no deadline of its own.
+    private static func deadline(of reason: DrivingSessionEndReason, for evidence: DrivingEvidence) -> Date? {
+        switch reason {
+        case .maximumDurationReached:
+            evidence.startedAt.addingTimeInterval(DrivingSessionTimeoutPolicy.maximumDuration)
+        case .movementIdle:
+            evidence.lastMovingSampleAt?.addingTimeInterval(ParkingTransitionPolicy.movementIdleWindow)
+        case .walkingDetected, .vehicleExit, .carLinkDisconnected, .vehicleEvidenceExpired,
+             .authorizationLost, .captureFailed, .smartDetectionDisabled, .fieldTestStopped:
+            nil
         }
     }
 
@@ -436,8 +796,7 @@ actor ParkingDetectionEngine {
             // `DRIVING` and not `DRIVING_CANDIDATE` — this session was already confirmed
             // before it stopped, and making it re-earn confirmation would let a car in
             // stop-start traffic never reach a parking transition at all.
-            transition = nil
-            return resumeDrivingFromTransition(vehicleEvidenceAt: date, now: now)
+            return resumeDrivingFromTransition(vehicleEvidenceAt: date, reanchorIdleAt: now, now: now)
         case .candidatePending:
             // §3a "Leaving a pending candidate behind": a new journey starts while a
             // prompt is still unanswered. Without this the engine sat here for up to
@@ -448,6 +807,13 @@ actor ParkingDetectionEngine {
             // it would delete the answer to a question the user is still holding. It is
             // superseded where §10a puts it: when this new session actually produces a
             // candidate of its own.
+            //
+            // Except inside a stop-only candidate's resume window (§3a, 2026-09-27): there
+            // the vehicle never ended, and its evidence returning is the long light ending —
+            // the same row `PARKING_TRANSITION` has.
+            if candidateResume != nil {
+                return resumeFromStopOnlyCandidate(vehicleEvidenceAt: date, now: now)
+            }
             return openDrivingCandidate(vehicleEvidenceAt: date, now: now)
         case .parked:
             // §11: getting back in. The session opens here so the bars have something to
@@ -455,6 +821,7 @@ actor ParkingDetectionEngine {
             // where a phone that merely woke up in a parked car has to stay.
             if driving == nil {
                 driving = DrivingEvidence(startedAt: date, lastVehicleEvidenceAt: date)
+                isDrivingCaptureLost = false
                 checkpoint.travelDistanceEstimate = 0
                 return [.startBoundedLocationCapture, persistedCheckpoint()]
             }
@@ -488,6 +855,11 @@ actor ParkingDetectionEngine {
         case .driving:
             return endDrivingSession(reason: .vehicleExit, now: now)
         case .departureCandidate:
+            // Android's `fromDepartureCandidate` asks §7's guard before the exit: a drive
+            // that already met it has departed, and the exit is where that drive ends.
+            if let evidence = driving, evidence.meetsDrivingConfirmation(now: now) {
+                return confirmDeparture(on: .vehicleExit(at: now), now: now)
+            }
             return abandonDeparture(now: now)
         case .parked:
             // Got in, got out again. §11 never moved, so there is nothing to undo beyond
@@ -495,7 +867,17 @@ actor ParkingDetectionEngine {
             guard driving != nil else { return [] }
             driving = nil
             return [.stopLocationCapture, persistedCheckpoint()]
-        case .idle, .parkingTransition, .candidatePending:
+        case .parkingTransition:
+            // docs/05 §8b: an explicit exit that arrives while a `movementIdle` transition
+            // is open is still this drive's exit, and earns `vehicle_exit_detected`. It is
+            // not a confirming signal — §3a names walking, stationary and a location stop.
+            transition?.evidence.vehicleExitDetected = true
+            return []
+        case .candidatePending:
+            // An explicit exit is the vehicle ending after all: movement after it is
+            // somebody else's journey, not this drive resuming (§3a).
+            return closeCandidateResume()
+        case .idle:
             return []
         }
     }
@@ -507,6 +889,12 @@ actor ParkingDetectionEngine {
     /// recorded before the drive ended is not evidence that this drive ended in a parking,
     /// and taking it would let the signal that caused the transition also end it.
     private func noteConfirmationSignal(walking: Bool, now: Date) -> [DetectionEffect] {
+        if walking, checkpoint.state == .candidatePending {
+            // §3a rule 4 (round 3): the person has left the car, so vehicle evidence after
+            // this is a bus or a lift, not the jam moving on. The candidate stands. Stillness
+            // does not close it — the Transition API reports STILL inside a car at a light.
+            return closeCandidateResume()
+        }
         guard var current = transition, checkpoint.state == .parkingTransition else { return [] }
         if walking {
             current.evidence.walkingAfterVehicle = true
@@ -532,8 +920,16 @@ actor ParkingDetectionEngine {
         case .candidatePending:
             // The fuel stop (§17 fixture 3): disconnect, pump, get back in. The candidate
             // is retired and its notification withdrawn before it is worth anything, and
-            // the trip can still produce the real parking later.
-            return retirePendingCandidate(now: now) + resumeDrivingFromCandidate(now: now)
+            // the trip can still produce the real parking later — as the same trip, so
+            // its drive is read before the retirement clears it.
+            let drive = candidateDrive
+            let captureRunning = candidateResume != nil
+            return retirePendingCandidate(now: now)
+                + resumeDrivingFromCandidate(drive, captureRunning: captureRunning, now: now)
+        case .parkingTransition:
+            // docs/05 §3a car-link table (2026-09-27): the phone rejoining the car inside
+            // the window is the red light ending, stated by the strongest signal there is.
+            return resumeDrivingFromTransition(vehicleEvidenceAt: nil, reanchorIdleAt: now, now: now)
         case .parked:
             // §11b, and the mirror of the disconnect row below: the phone rejoining the car
             // is the strongest departure signal there is, and waiting for 500 m of GPS to
@@ -544,7 +940,12 @@ actor ParkingDetectionEngine {
             // with the radio on costs the record nothing — the evidence goes stale and the
             // machine returns to `PARKED`.
             return openDepartureFromCarLink(now: now)
-        case .drivingCandidate, .driving, .parkingTransition, .departureCandidate:
+        case .departureCandidate:
+            // §11b: the link is vehicle evidence for the departure's lapse, as on Android,
+            // whose fold extends the session on every connect.
+            driving?.noteVehicleEvidence(at: now)
+            return []
+        case .drivingCandidate, .driving:
             return []
         }
     }
@@ -553,11 +954,15 @@ actor ParkingDetectionEngine {
     ///
     /// The session is the one the fold's `vehicle_enter` would have opened; there may be
     /// none yet, in which case the link itself is the first vehicle evidence this departure
-    /// has and the evidence starts here.
+    /// has and the evidence starts here. Either way the evidence is fresh as of the connect
+    /// (§11b "goes stale `recentVehicleWindow` after the connect"): a reused session kept its
+    /// `vehicle_enter`'s time, and a departure opened past that window lapsed on the same event.
     private func openDepartureFromCarLink(now: Date) -> [DetectionEffect] {
         if driving == nil {
             driving = DrivingEvidence(startedAt: now, lastVehicleEvidenceAt: now)
+            isDrivingCaptureLost = false
         }
+        driving?.noteVehicleEvidence(at: now)
         return moveTo(.departureCandidate, now: now)
     }
 
@@ -569,24 +974,68 @@ actor ParkingDetectionEngine {
     /// us the engine stopped and the phone left the car.
     private func handleCarLinkDisconnected(kind: CarLinkKind, now: Date) -> [DetectionEffect] {
         connectedCarLinks.remove(kind)
-        guard checkpoint.state == .driving else { return [] }
+        switch checkpoint.state {
+        case .driving:
+            return openCandidateOnDisconnect(now: now)
+        case .drivingCandidate:
+            // docs/05 §3a car-link table (2026-09-27): the driver got in and changed their
+            // mind. Same outcome as `vehicle_exit` in this state — §12's short-trip guard,
+            // nothing produced.
+            isVehicleActive = false
+            vehicleActiveSince = nil
+            driving = nil
+            return [.sessionEnded(reason: .carLinkDisconnected, at: now), .stopLocationCapture]
+                + moveTo(.idle, now: now)
+        case .parkingTransition:
+            // docs/05 §3a car-link table (2026-09-27): the disconnect is §6's fourth
+            // confirming signal, and — as in `DRIVING` — it is also the vehicle's end.
+            guard var current = transition else { return [] }
+            current.evidence.carProjectionDisconnected = true
+            current.evidence.vehicleExitDetected = true
+            transition = current
+            return createCandidate(from: current, now: now)
+        case .parked, .departureCandidate:
+            // §11b: the disconnect ends the vehicle activity §11's bars measure and is still
+            // vehicle evidence for the departure's lapse — Android's `endVehicleActivity`.
+            // `departureEdge` then asks §7's guard, and a met guard reads this disconnect in
+            // `DRIVING` too.
+            isVehicleActive = false
+            vehicleActiveSince = nil
+            driving?.noteVehicleEvidence(at: now)
+            return []
+        case .idle, .candidatePending:
+            return []
+        }
+    }
+
+    /// §3a "The car link", row 2: `DRIVING → CANDIDATE_PENDING`, skipping
+    /// `PARKING_TRANSITION`.
+    ///
+    /// Waiting for a walk would lose exactly the case §3a was corrected for — an
+    /// underground car park where no walk is ever detected — and the link has already told
+    /// us the engine stopped and the phone left the car.
+    private func openCandidateOnDisconnect(now: Date) -> [DetectionEffect] {
         // The link is a vehicle signal, so its loss ends the vehicle session as surely as
         // a Core Motion exit does.
         isVehicleActive = false
         vehicleActiveSince = nil
 
-        let drive = driving
+        let drive = driving ?? DrivingEvidence(startedAt: checkpoint.stateEnteredAt)
         driving = nil
         var effects: [DetectionEffect] = [
             .sessionEnded(reason: .carLinkDisconnected, at: now),
             .stopLocationCapture
         ]
-        let direct = ParkingTransition(
+        var direct = ParkingTransition(
             enteredAt: now,
             entryReason: .carLinkDisconnected,
             drive: drive,
-            evidence: parkingEvidence(for: drive, carLinkDisconnected: true, now: now)
+            driveDurationAtEnd: drive.duration(now: now),
+            sessionStartedAt: drive.startedAt,
+            vehicleExitDetected: true,
+            isCapturing: false
         )
+        direct.evidence.carProjectionDisconnected = true
         transition = direct
         effects += createCandidate(from: direct, now: now)
         // §12 already allowed this trip one candidate, so the rule refused a second. The
@@ -600,10 +1049,12 @@ actor ParkingDetectionEngine {
 
     private func resolveCandidate(confirmed: Bool, now: Date) -> [DetectionEffect] {
         guard checkpoint.state == .candidatePending else { return [] }
+        let released = closeCandidateResume()
+        candidateDrive = nil
         pendingCandidate = nil
         checkpoint.candidateId = nil
         hasProducedCandidateInSession = false
-        return moveTo(confirmed ? .parked : .idle, now: now)
+        return released + moveTo(confirmed ? .parked : .idle, now: now)
     }
 
     /// §3a `*any* → PARKED` (§11c): the user saved a parking themselves.
@@ -624,13 +1075,17 @@ actor ParkingDetectionEngine {
             pendingCandidate = nil
             effects.append(.withdrawCandidate(id: candidate.id))
         }
-        // A bounded session is open exactly while `driving` is set — including the one
-        // `PARKED` opens on `vehicle_enter` to measure §11's bars.
-        if driving != nil {
+        // A bounded capture runs exactly while `driving` is set — including the one
+        // `PARKED` opens on `vehicle_enter` to measure §11's bars — or while a transition
+        // is still deciding.
+        if driving != nil || transition?.isCapturing == true || candidateResume != nil {
             effects.append(.stopLocationCapture)
         }
         driving = nil
+        isDrivingCaptureLost = false
         transition = nil
+        candidateDrive = nil
+        candidateResume = nil
         // Vehicle activity is over: the next `vehicle_enter` opens a departure's evidence,
         // which §11's bars and §7's guard then have to earn from scratch.
         isVehicleActive = false
@@ -645,6 +1100,7 @@ actor ParkingDetectionEngine {
         transition = nil
         hasProducedCandidateInSession = false
         driving = DrivingEvidence(startedAt: now, lastVehicleEvidenceAt: vehicleEvidenceAt)
+        isDrivingCaptureLost = false
         checkpoint.lastAutomotiveAt = vehicleEvidenceAt ?? checkpoint.lastAutomotiveAt
         checkpoint.travelDistanceEstimate = 0
         return moveTo(.drivingCandidate, now: now) + [.startBoundedLocationCapture]
@@ -671,34 +1127,167 @@ actor ParkingDetectionEngine {
     /// silent. Those describe the app losing the drive rather than the drive ending, and
     /// `entersParkingTransition` keeps them out of the candidate path.
     func endDrivingSession(reason: DrivingSessionEndReason, now: Date) -> [DetectionEffect] {
+        if reason == .smartDetectionDisabled {
+            // docs/05 §3a "Turning Smart Detection off": no link edge reaches the engine while
+            // detection is off, so a latch kept here could outlive the link it stands for and
+            // hold `movementIdleWindow` off the next drive.
+            connectedCarLinks.removeAll()
+        }
+        if checkpoint.state == .parkingTransition {
+            return endInsideTransition(reason: reason, now: now)
+        }
+        if checkpoint.state == .candidatePending {
+            // Every adapter-decided end — a derived exit, a lost capture, the opt-out —
+            // closes a stop-only candidate's resume window. The candidate itself stays.
+            if reason == .smartDetectionDisabled {
+                // docs/05 §3a "Turning Smart Detection off": vehicle activity ends with the
+                // opt-in, so evidence after it opens a new journey.
+                isVehicleActive = false
+                vehicleActiveSince = nil
+            }
+            return closeCandidateResume()
+        }
+        if reason == .authorizationLost || reason == .captureFailed {
+            // docs/05 §11 "A lost capture decides nothing": in every state that holds a session
+            // — get-in, departure or drive — only the capture stops.
+            return releaseSessionCapture()
+        }
+        if checkpoint.state == .parked || checkpoint.state == .departureCandidate {
+            return checkpoint.state == .parked ? endGetIn() : endInsideDeparture(reason: reason, now: now)
+        }
         guard driving != nil || checkpoint.state == .drivingCandidate || checkpoint.state == .driving else {
             return []
         }
         let drive = driving
         let wasConfirmed = drive?.isConfirmed ?? (checkpoint.state == .driving)
         driving = nil
-        if reason != .vehicleExit {
+        // `movementIdle` is not an exit (docs/05 §8b): the vehicle *level* is still on, so a
+        // later walk can still be derived as this drive's exit, and a later `vehicle_enter`
+        // is the red light ending rather than a new trip.
+        if reason != .vehicleExit, reason != .movementIdle {
             isVehicleActive = false
             vehicleActiveSince = nil
         }
 
-        var effects: [DetectionEffect] = [
-            .sessionEnded(reason: reason, at: now),
-            .stopLocationCapture
-        ]
+        var effects: [DetectionEffect] = [.sessionEnded(reason: reason, at: now)]
         checkpoint.travelDistanceEstimate = drive?.distanceMeters ?? checkpoint.travelDistanceEstimate
 
         guard entersParkingTransition(reason: reason, wasConfirmed: wasConfirmed) else {
-            return effects + moveTo(.idle, now: now)
+            isVehicleActive = false
+            vehicleActiveSince = nil
+            return effects + [.stopLocationCapture] + moveTo(.idle, now: now)
         }
+        // docs/05 §3a / §19 (2026-09-27): the capture is **not** stopped here. Two of this
+        // state's three exits are location rows — a location stop confirms, returning
+        // movement resumes — and with the capture stopped at the entry neither could ever
+        // fire on a device. It stops when the transition decides.
+        let finished = drive ?? DrivingEvidence(
+            startedAt: checkpoint.stateEnteredAt,
+            lastVehicleEvidenceAt: checkpoint.lastAutomotiveAt
+        )
         transition = ParkingTransition(
             enteredAt: now,
             entryReason: reason,
-            drive: drive,
-            evidence: parkingEvidence(for: drive, carLinkDisconnected: false, now: now)
+            drive: finished,
+            driveDurationAtEnd: drive.map { $0.duration(now: now) },
+            sessionStartedAt: drive?.startedAt,
+            vehicleExitDetected: ParkingTransition.isExplicitExit(reason),
+            // A drive that lost its capture ends in a transition without one (docs/05 §11
+            // "A lost capture decides nothing"); every other drive's capture is still running.
+            isCapturing: !isDrivingCaptureLost
         )
+        isDrivingCaptureLost = false
         effects += moveTo(.parkingTransition, now: now)
         return effects
+    }
+
+    /// docs/05 §11 "A lost capture decides nothing" (2026-09-28): a lost authorization or a
+    /// failed capture in `PARKED`, `DEPARTURE_CANDIDATE`, `DRIVING_CANDIDATE` or `DRIVING`
+    /// only stops the capture. The session, the state and the vehicle level stay, so the next
+    /// edge or tick decides — as on Android, where a lost capture never reaches the engine,
+    /// and as `endInsideTransition` does.
+    ///
+    /// The session records that its capture is gone (`isDrivingCaptureLost`, persisted with the
+    /// session record): a departure it then confirms drives on without one, so the
+    /// transition that drive ends in has no capture and a stop-only candidate there opens no
+    /// resume window — as on Android, where no capture is running and the runtime closes it.
+    private func releaseSessionCapture() -> [DetectionEffect] {
+        guard driving != nil, !isDrivingCaptureLost else { return [] }
+        isDrivingCaptureLost = true
+        return [.stopLocationCapture, persistedCheckpoint()]
+    }
+
+    /// docs/05 §11 "An adapter-decided end never leaves the parking behind" (2026-09-28).
+    ///
+    /// `PARKED` with a get-in open: the end is the `vehicle_exit` row — got in, got out
+    /// again. The session and its capture go; the parking stays.
+    private func endGetIn() -> [DetectionEffect] {
+        isVehicleActive = false
+        vehicleActiveSince = nil
+        guard driving != nil else { return [] }
+        driving = nil
+        return [.stopLocationCapture, persistedCheckpoint()]
+    }
+
+    /// `DEPARTURE_CANDIDATE`: a derived exit or the silence bound is read as the
+    /// `vehicle_exit` it stands for (`handleVehicleExit`). §7's guard met: the car did leave,
+    /// so the departure is confirmed and this end then ends that drive, as it would any
+    /// `DRIVING` session.
+    /// Otherwise the departure is abandoned and nothing is ended. The opt-out decides
+    /// nothing either way: turning detection off must not close a parking.
+    private func endInsideDeparture(reason: DrivingSessionEndReason, now: Date) -> [DetectionEffect] {
+        let isOptOut = reason == .smartDetectionDisabled || reason == .fieldTestStopped
+        guard !isOptOut, let evidence = driving, evidence.meetsDrivingConfirmation(now: now) else {
+            isVehicleActive = false
+            vehicleActiveSince = nil
+            return abandonDeparture(now: now)
+        }
+        return confirmDeparture(now: now) + endDrivingSession(reason: reason, now: now)
+    }
+
+    /// An adapter-decided end that lands while `PARKING_TRANSITION` is already deciding.
+    ///
+    /// The drive is over, so none of these ends it again. What each one *means* still
+    /// applies: a derived exit is this drive's exit (§8b), a lost capture stops the capture
+    /// but leaves motion free to confirm, and the opt-out drops the inference outright.
+    private func endInsideTransition(reason: DrivingSessionEndReason, now: Date) -> [DetectionEffect] {
+        guard var current = transition else { return [] }
+        switch reason {
+        case .walkingDetected, .vehicleEvidenceExpired, .vehicleExit:
+            isVehicleActive = false
+            vehicleActiveSince = nil
+            current.evidence.vehicleExitDetected = true
+            transition = current
+            return []
+        case .authorizationLost, .captureFailed:
+            guard current.isCapturing else { return [] }
+            current.isCapturing = false
+            transition = current
+            // Recorded (`departureRecord`) so a relaunch keeps the loss (§11).
+            return [.stopLocationCapture, persistedCheckpoint()]
+        case .smartDetectionDisabled, .fieldTestStopped, .maximumDurationReached:
+            return [.sessionEnded(reason: reason, at: now)] + closeTransition() + moveTo(.idle, now: now)
+        case .movementIdle, .carLinkDisconnected:
+            return []
+        }
+    }
+
+    /// Leaves `PARKING_TRANSITION` by any door except a resume: the capture it kept is
+    /// released and the vehicle level ends with the trip. The caller moves the state.
+    private func closeTransition(keepingCapture: Bool = false) -> [DetectionEffect] {
+        let wasCapturing = transition?.isCapturing == true
+        transition = nil
+        isVehicleActive = false
+        vehicleActiveSince = nil
+        return wasCapturing && !keepingCapture ? [.stopLocationCapture] : []
+    }
+
+    /// Ends a stop-only candidate's resume window, releasing the capture it kept. The
+    /// candidate is untouched.
+    private func closeCandidateResume() -> [DetectionEffect] {
+        guard candidateResume != nil else { return [] }
+        candidateResume = nil
+        return [.stopLocationCapture]
     }
 
     /// §3a. Only a **confirmed** `DRIVING` session goes on to decide whether it parked;
@@ -717,31 +1306,177 @@ actor ParkingDetectionEngine {
         }
     }
 
-    private func resumeDrivingFromTransition(vehicleEvidenceAt: Date, now: Date) -> [DetectionEffect] {
+    /// §3a `PARKING_TRANSITION → DRIVING`, by returning movement, vehicle evidence or the
+    /// car link.
+    ///
+    /// docs/05 §3a "Resuming keeps the drive" (2026-09-27): the drive that stopped at the
+    /// light is the drive that continues. It keeps its start — so the 2-hour ceiling, the
+    /// §8 duration and §5's inheritance bound all measure the trip — its distance, and its
+    /// confirmation. iOS used to open a fresh drive here, which reset all three at every
+    /// long light.
+    ///
+    /// `reanchorIdleAt` gives a resume on vehicle or link evidence a full
+    /// `movementIdleWindow`; a resume on a moving fix is anchored by that fix already.
+    private func resumeDrivingFromTransition(
+        vehicleEvidenceAt: Date?,
+        reanchorIdleAt: Date?,
+        now: Date
+    ) -> [DetectionEffect] {
+        guard let current = transition else { return [] }
         transition = nil
-        var evidence = DrivingEvidence(startedAt: now, lastVehicleEvidenceAt: vehicleEvidenceAt)
-        evidence.markConfirmed(at: now)
-        driving = evidence
-        return moveTo(.driving, now: now) + [.startBoundedLocationCapture, .drivingConfirmed(at: now)]
+        var drive = current.drive
+        if let vehicleEvidenceAt {
+            drive.noteVehicleEvidence(at: vehicleEvidenceAt)
+        }
+        if let reanchorIdleAt {
+            drive.reanchorMovementIdle(at: reanchorIdleAt)
+        }
+        drive.markConfirmed(at: now)
+        driving = drive
+        // docs/05 §11 "A lost capture stays lost for its session": the resumed drive is the
+        // session that lost it, so it goes on without one — Android's follow and motion policy
+        // open no capture for a session the engine was already following.
+        isDrivingCaptureLost = !current.isCapturing
+        return moveTo(.driving, now: now)
     }
 
-    private func resumeDrivingFromCandidate(now: Date) -> [DetectionEffect] {
-        var evidence = DrivingEvidence(startedAt: now, lastVehicleEvidenceAt: now)
+    private func resumeDrivingFromCandidate(
+        _ drive: DrivingEvidence?,
+        captureRunning: Bool,
+        now: Date
+    ) -> [DetectionEffect] {
+        var evidence = drive ?? DrivingEvidence(startedAt: now, lastVehicleEvidenceAt: now)
+        evidence.noteVehicleEvidence(at: now)
+        evidence.reanchorMovementIdle(at: now)
         evidence.markConfirmed(at: now)
         driving = evidence
+        isDrivingCaptureLost = false
         isVehicleActive = true
         vehicleActiveSince = now
-        return moveTo(.driving, now: now) + [.startBoundedLocationCapture, .drivingConfirmed(at: now)]
+        let capture: [DetectionEffect] = captureRunning ? [] : [.startBoundedLocationCapture]
+        return moveTo(.driving, now: now) + capture + [.drivingConfirmed(at: now)]
+    }
+
+    /// docs/05 §3a "A stop-only candidate can still be a long light" (2026-09-27):
+    /// `CANDIDATE_PENDING → DRIVING`, the stop-only twin of `PARKING_TRANSITION → DRIVING`.
+    ///
+    /// The candidate is withdrawn the way §10 withdraws an expired one — no record, no
+    /// report — and the drive it came from continues as the same travel session, exactly as
+    /// a resume from the transition keeps it. One checkpoint write, straight to `DRIVING`:
+    /// the trip never passed through `IDLE`.
+    ///
+    /// On vehicle evidence the idle clock is re-anchored at the resume, as in the
+    /// transition; a resume on a moving fix is anchored by that fix, already folded.
+    private func resumeFromStopOnlyCandidate(vehicleEvidenceAt: Date?, now: Date) -> [DetectionEffect] {
+        guard candidateResume != nil, var drive = candidateDrive else { return [] }
+        var effects: [DetectionEffect] = []
+        if let candidate = pendingCandidate {
+            effects.append(.withdrawCandidate(id: candidate.id))
+        }
+        pendingCandidate = nil
+        candidateResume = nil
+        hasProducedCandidateInSession = false
+        if let vehicleEvidenceAt {
+            drive.noteVehicleEvidence(at: vehicleEvidenceAt)
+            drive.reanchorMovementIdle(at: now)
+        }
+        drive.markConfirmed(at: now)
+        driving = drive
+        isDrivingCaptureLost = false
+        isVehicleActive = true
+        vehicleActiveSince = vehicleActiveSince ?? now
+        // The window holds the capture it kept (§3a), so the resumed drive already has one.
+        return effects + moveTo(.driving, now: now)
     }
 
     // MARK: - Fixes
 
-    private func recordDrivingFix(_ fix: LocationFix, now: Date) -> [DetectionEffect] {
-        guard var evidence = driving else { return [] }
-        let accepted = evidence.record(fix: fix)
-        driving = evidence
-        guard accepted else { return [] }
+    /// Folds a fix into whichever drive is recording: the open one, or the one a
+    /// `PARKING_TRANSITION` is still deciding about (§3a). Fixes outside both are ignored.
+    ///
+    /// §6's selection runs only on fixes a drive accepted — never on an outlier — and a fix
+    /// inside the transition may update the spot: a car standing in a bay is exactly the
+    /// point the user will look for.
+    private func recordFix(_ fix: LocationFix, now: Date) -> [DetectionEffect] {
+        let verdict: FixVerdict?
+        if var evidence = driving {
+            verdict = Self.fold(fix, into: &evidence)
+            driving = evidence
+        } else if var current = transition {
+            verdict = Self.fold(fix, into: &current.drive)
+            transition = current
+        } else if candidateResume != nil, var resumable = candidateDrive {
+            // §3a: the stop-only candidate's drive is still recording, so a resume keeps
+            // its anchors and its distance. The reliable location is *not* updated: the
+            // candidate's spot is the car, and the person walking away from it must not
+            // drag the point a later candidate of this trip would inherit.
+            lastFixVerdict = Self.fold(fix, into: &resumable)
+            candidateDrive = resumable
+            return []
+        } else {
+            return []
+        }
+        lastFixVerdict = verdict
+        guard verdict != nil else { return [] }
         return updateReliableLocation(with: fix, now: now)
+    }
+
+    private static func fold(_ fix: LocationFix, into evidence: inout DrivingEvidence) -> FixVerdict? {
+        let movingBefore = evidence.movingSampleCount
+        guard evidence.record(fix: fix) else { return nil }
+        let moved = evidence.movingSampleCount > movingBefore
+        let reportsStop = fix.speed.map { $0 < DrivingConfirmationPolicy.movingSpeedThreshold } ?? false
+        let reportsMoving = fix.speed.map { $0 >= DrivingConfirmationPolicy.movingSpeedThreshold } ?? false
+        return FixVerdict(
+            timestamp: fix.timestamp,
+            moved: moved,
+            reportedMoving: reportsMoving,
+            stopped: !moved && reportsStop
+        )
+    }
+
+    /// The two location rows of §3a's `PARKING_TRANSITION`, judged after the windows so a
+    /// fix that lands past `transitionWindow` finds `IDLE` and decides nothing.
+    ///
+    /// * **Movement returns** — the fix cleared §7's movement bar, by speed or by the
+    ///   distance fallback: the red light is over.
+    /// * **Location stop** — the fix reported a speed below `movingSpeedThreshold`, at or
+    ///   after the transition's entry (the rule every confirming signal shares). A fix
+    ///   with no speed says nothing: underground there is no Doppler, and silence is not
+    ///   stillness (§7).
+    ///
+    /// The two cannot both hold for one fix, so their order is immaterial.
+    private func applyFixEdge(now: Date) -> [DetectionEffect] {
+        if checkpoint.state == .candidatePending {
+            return applyFixEdgeToStopOnlyCandidate(now: now)
+        }
+        guard checkpoint.state == .parkingTransition,
+              var current = transition,
+              let verdict = lastFixVerdict,
+              verdict.timestamp >= current.enteredAt
+        else { return [] }
+        if verdict.moved {
+            return resumeDrivingFromTransition(vehicleEvidenceAt: nil, reanchorIdleAt: nil, now: now)
+        }
+        guard verdict.stopped else { return [] }
+        current.evidence.locationStopConfirmed = true
+        transition = current
+        return createCandidate(from: current, now: now)
+    }
+
+    /// §3a "A stop-only candidate can still be a long light": the second fix that *reported*
+    /// moving speed, at or after the drive's end, inside the resume window. Judged after
+    /// the windows, like the transition's rows, so a fix past the deadline decides nothing.
+    private func applyFixEdgeToStopOnlyCandidate(now: Date) -> [DetectionEffect] {
+        guard var hold = candidateResume,
+              let verdict = lastFixVerdict,
+              verdict.reportedMoving,
+              verdict.timestamp >= hold.driveEndedAt
+        else { return [] }
+        hold.reportedMovingFixes += 1
+        candidateResume = hold
+        guard hold.reportedMovingFixes >= MovementEvidencePolicy.minimumMovingSamples else { return [] }
+        return resumeFromStopOnlyCandidate(vehicleEvidenceAt: nil, now: now)
     }
 
     private func updateReliableLocation(with fix: LocationFix, now: Date) -> [DetectionEffect] {
@@ -801,33 +1536,29 @@ actor ParkingDetectionEngine {
     /// carried a fix from 12:00, and the confirmation screen would have drawn it on a map
     /// with its accuracy printed beside it. A wrong coordinate is worse than none, and
     /// `위치 없음` is a state that screen already renders properly.
-    private func inheritableLocation(for drive: DrivingEvidence?, now: Date) -> LastReliableLocation? {
+    private func inheritableLocation(sessionStartedAt: Date?, now: Date) -> LastReliableLocation? {
         guard let fix = checkpoint.lastReliableLocation else { return nil }
         guard now.timeIntervalSince(fix.capturedAt) <= ParkingCandidatePolicy.staleLocationWindow
         else { return nil }
-        // No drive on the transition means nothing to bound it against; the age check above
-        // is then the whole guard.
-        guard let drive else { return fix }
-        return fix.capturedAt >= drive.startedAt ? fix : nil
+        // No session start to bound it against — a transition rebuilt from a checkpoint —
+        // and the age check above is the whole guard.
+        guard let sessionStartedAt else { return fix }
+        return fix.capturedAt >= sessionStartedAt ? fix : nil
     }
 
     /// "notification permission is not required for correctness".
     private func createCandidate(from transition: ParkingTransition, now: Date) -> [DetectionEffect] {
-        var evidence = transition.evidence
-        // §8 "location movement stopped", folded in here rather than at entry. It still
-        // earns its weight and its reason code; what it may not do is be the only thing
-        // that ended the transition, or `DRIVING → PARKING_TRANSITION → DRIVING` — the red
-        // light §3a exists to describe — could never happen.
-        evidence.locationStopped = transition.entryReason == .movementIdle
-            || Self.movementHasStopped(in: transition.drive)
-
+        let evidence = scoredEvidence(for: transition)
         guard evidence.confirmationSignals > 0 else { return [] }
 
         // §12 / §3a "One candidate per travel session". The trip has to pass through
-        // `IDLE` first.
-        guard !hasProducedCandidateInSession else { return [] }
+        // `IDLE` first — and a confirming signal the rule refuses *is* that passage, as it
+        // is on Android: staying in the transition would only wait for a window to say so.
+        guard !hasProducedCandidateInSession else {
+            return closeTransition() + moveTo(.idle, now: now)
+        }
 
-        let inherited = inheritableLocation(for: transition.drive, now: now)
+        let inherited = inheritableLocation(sessionStartedAt: transition.sessionStartedAt, now: now)
         let accuracyBucket = inherited
             .flatMap { LocationAccuracyBucket(horizontalAccuracy: $0.horizontalAccuracy) }
         guard let candidate = ParkingCandidatePolicy.evaluate(
@@ -837,12 +1568,18 @@ actor ParkingDetectionEngine {
             lastReliableLocation: inherited,
             accuracyBucket: accuracyBucket
         ) else {
-            self.transition = nil
-            return [.candidateRuleUnmet] + moveTo(.idle, now: now)
+            return closeTransition() + [.candidateRuleUnmet] + moveTo(.idle, now: now)
         }
 
-        self.transition = nil
-        var effects: [DetectionEffect] = []
+        // §3a "A stop-only candidate can still be a long light": when nothing but absence
+        // ended the drive, the capture it kept outlives the transition until the drive's
+        // own window runs out, so the car moving on can still take the candidate back.
+        //
+        // Only while that capture is still running: a transition that lost it opens no
+        // window, so an open window always holds its capture — on Android the window's
+        // existence is that bit (R4-B1).
+        let resumable = transition.isCapturing && Self.isStopOnly(transition, evidence: evidence)
+        var effects = closeTransition(keepingCapture: resumable)
         // §10a: a new travel session's candidate retires the older one first. A stale
         // prompt about a previous trip is worse than no prompt.
         if let outstanding = pendingCandidate {
@@ -854,12 +1591,49 @@ actor ParkingDetectionEngine {
 
         effects.append(.createCandidate(candidate))
         effects += moveTo(.candidatePending, now: now)
+        candidateDrive = transition.drive
+        candidateResume = resumable
+            ? CandidateResume(
+                driveEndedAt: transition.enteredAt,
+                deadline: transition.enteredAt.addingTimeInterval(ParkingTransitionPolicy.transitionWindow)
+            )
+            : nil
         // §9: `low` posts nothing. The candidate above is already written, so the app still
         // shows it when opened.
         if candidate.isNotifiable {
             effects.append(.issueCandidateNotification(candidate))
         }
         return effects
+    }
+
+    /// docs/05 §3a: a candidate that nothing but absence produced — the transition was
+    /// entered by `movementIdle`, and neither an exit (explicit, derived or a link
+    /// disconnect) nor a walk arrived. The vehicle level never ended, so the car moving on
+    /// is this drive continuing. A walk is excluded because it is the strongest evidence
+    /// the person left the car: movement after it is more likely a different vehicle.
+    private static func isStopOnly(_ transition: ParkingTransition, evidence: ParkingEvidence) -> Bool {
+        transition.entryReason == .movementIdle
+            && !evidence.vehicleExitDetected
+            && !evidence.walkingAfterVehicle
+            && !evidence.carProjectionDisconnected
+    }
+
+    /// docs/05 §8b: the transition's accumulated flags, plus the evidence that is judged
+    /// against the drive's end — the moment this transition was entered.
+    ///
+    /// * `location_stopped`: the entry *was* `movementIdle`, or a reported stop came after
+    ///   the last moving sample and no earlier than `nearEndHorizon` before the end. A red
+    ///   light twenty minutes back is not how this drive ended.
+    /// * `location_quality_degraded`: a fall into `poor` in that same horizon, or since.
+    /// * duration and distance: frozen at the end (`ParkingTransition`).
+    private func scoredEvidence(for transition: ParkingTransition) -> ParkingEvidence {
+        var evidence = transition.evidence
+        evidence.locationStopped = transition.entryReason == .movementIdle
+            || transition.drive.stoppedNearEnd(endedAt: transition.enteredAt)
+        evidence.gpsQualityDegraded = transition.drive.degradedNearEnd(endedAt: transition.enteredAt)
+        evidence.driveDuration = transition.driveDurationAtEnd
+        evidence.driveDistanceMeters = transition.driveDistanceAtEnd
+        return evidence
     }
 
     private func retirePendingCandidate(now: Date) -> [DetectionEffect] {
@@ -874,39 +1648,6 @@ actor ParkingDetectionEngine {
         return effects
     }
 
-    /// The §8 evidence a finished drive carries into the transition.
-    private func parkingEvidence(
-        for drive: DrivingEvidence?,
-        carLinkDisconnected: Bool,
-        now: Date
-    ) -> ParkingEvidence {
-        let endingBucket = drive?.lastFix
-            .flatMap { LocationAccuracyBucket(horizontalAccuracy: $0.horizontalAccuracy) }
-        return ParkingEvidence(
-            hasMeaningfulVehicleSession: true,
-            vehicleEnded: true,
-            gpsQualityDegraded: endingBucket == .poor,
-            carProjectionDisconnected: carLinkDisconnected,
-            reliableLocationCaptured: checkpoint.lastReliableLocation != nil,
-            driveDuration: drive.map { $0.duration(now: now) },
-            driveDistanceMeters: drive?.distanceMeters
-        )
-    }
-
-    /// §8's "location movement stopped", read off the drive that just ended.
-    ///
-    /// True when the session saw the device travelling and then stopped seeing it: the
-    /// newest accepted fix did not count as movement. A session that never moved says
-    /// nothing — there is no movement to have stopped — and a session whose last fix was
-    /// still moving stopped for some other reason than the location stream noticing.
-    private static func movementHasStopped(in drive: DrivingEvidence?) -> Bool {
-        guard let drive,
-              let lastMoving = drive.lastMovingSampleAt,
-              let lastFix = drive.lastFix
-        else { return false }
-        return lastFix.timestamp > lastMoving
-    }
-
     // MARK: - Checkpoint
 
     /// docs/05 §14: every state change is a checkpoint write.
@@ -918,6 +1659,8 @@ actor ParkingDetectionEngine {
         }
         if state != .candidatePending {
             checkpoint.candidateId = nil
+            candidateDrive = nil
+            candidateResume = nil
         }
         checkpoint.state = state
         checkpoint.stateEnteredAt = now
@@ -925,6 +1668,7 @@ actor ParkingDetectionEngine {
     }
 
     private func persistedCheckpoint() -> DetectionEffect {
+        checkpoint.departure = departureRecord
         checkpoint.revision += 1
         return .persistCheckpoint(checkpoint)
     }

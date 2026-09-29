@@ -391,7 +391,15 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
     private val registrar = ActivityTransitionRegistrar(appContext)
 
     val registrationCoordinator: DetectionRegistrationCoordinator =
-        DetectionRegistrationCoordinator(detectionStateStore, registrar, clock)
+        DetectionRegistrationCoordinator(
+            store = detectionStateStore,
+            registrar = registrar,
+            clock = clock,
+            // docs/05 §11 / §19: switching Smart Detection off ends the engine session and
+            // stops the capture, not only the transition registration.
+            // Resolved when called, so the runtime declared below is constructed by then.
+            optOut = { atMillis -> parkingDetectionRuntime.handleSmartDetectionDisabled(atMillis) },
+        )
 
     /**
      * Hardware identity only — model and OS build, never anything that identifies a
@@ -443,6 +451,12 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
         analytics = { analyticsRecorder },
         // §11c: a hand save answers the question a running capture was gathering fixes for.
         stopLocationCapture = { locationSessionController.stop() },
+        // docs/05 §3a / §19: the capture runs while PARKING_TRANSITION decides and is
+        // released when the engine leaves it — edges no motion event marks.
+        followLocationCapture = { before, after -> locationSessionController.followEngine(before, after) },
+        captureRunning = { locationSessionController.isCaptureRunning() },
+        // Nothing may open a capture the user switched off: a car link, a late fix or tick.
+        detectionEnabled = { detectionStateStore.readDesiredEnabledOnce() },
     )
 
     val transitionEventIngestor: TransitionEventIngestor = TransitionEventIngestor(

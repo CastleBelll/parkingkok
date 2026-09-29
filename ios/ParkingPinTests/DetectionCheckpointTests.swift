@@ -87,6 +87,80 @@ struct DetectionCheckpointTests {
         )
     }
 
+    @Test("Round-trips a departure's evidence through the file store")
+    func roundTripsDepartureEvidence() throws {
+        // Arrange — docs/05 §14: the evidence §7's guard reads, anchors included.
+        let file = TemporaryCheckpointFile()
+        let store = FileDetectionCheckpointStore(fileURL: file.url)
+        var drive = DrivingEvidence(startedAt: TestTime.offset(0), lastVehicleEvidenceAt: TestTime.offset(0))
+        for (seconds, north) in [(10.0, 0.0), (100.0, 600.0)] {
+            drive.record(fix: LocationFix(
+                timestamp: TestTime.offset(seconds),
+                latitude: 37.5 + north / 111_320,
+                longitude: 127.0,
+                horizontalAccuracy: 8,
+                speed: 12
+            ))
+        }
+        let checkpoint = DetectionCheckpoint(
+            state: .departureCandidate,
+            stateEnteredAt: TestTime.offset(100),
+            departure: DepartureCheckpoint(drive: drive, vehicleActiveSince: TestTime.offset(0)),
+            revision: 3
+        )
+
+        // Act
+        try store.save(checkpoint)
+        let result = store.load()
+
+        // Assert
+        #expect(result == .restored(checkpoint))
+    }
+
+    /// docs/05 §11 "A lost capture decides nothing": a departure record written before
+    /// `isCaptureLost` existed describes a session whose capture was running.
+    @Test("A departure record without isCaptureLost reads as a running capture")
+    func departureRecordWithoutCaptureFlagReadsAsRunning() throws {
+        // Arrange — encode a record, then drop the field the older writer did not have.
+        let record = DepartureCheckpoint(
+            drive: DrivingEvidence(startedAt: TestTime.offset(0), lastVehicleEvidenceAt: TestTime.offset(0)),
+            vehicleActiveSince: TestTime.offset(0),
+            isCaptureLost: true
+        )
+        var object = try #require(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(record)) as? [String: Any]
+        )
+        #expect(object.removeValue(forKey: "isCaptureLost") != nil)
+        let older = try JSONSerialization.data(withJSONObject: object)
+
+        // Act
+        let decoded = try JSONDecoder().decode(DepartureCheckpoint.self, from: older)
+
+        // Assert
+        #expect(!decoded.isCaptureLost)
+        #expect(decoded.drive == record.drive)
+    }
+
+    @Test("Reads a schema 1 checkpoint, which has no departure evidence")
+    func readsSchemaOneCheckpoint() throws {
+        // Arrange — the shape every install wrote before 2026-09-28.
+        let file = TemporaryCheckpointFile()
+        let payload = """
+        {"schemaVersion":1,"checkpoint":{"state":"DEPARTURE_CANDIDATE","stateEnteredAt":0,\
+        "travelDistanceEstimate":600,"revision":4}}
+        """
+        try Data(payload.utf8).write(to: file.url)
+        let store = FileDetectionCheckpointStore(fileURL: file.url)
+
+        // Act
+        let restored = store.load().checkpoint
+
+        // Assert
+        #expect(restored?.state == .departureCandidate)
+        #expect(restored?.travelDistanceEstimate == 600)
+        #expect(restored?.departure == nil)
+    }
+
     @Test("Overwrites in place so a crash cannot leave two checkpoints")
     func overwritesPreviousCheckpoint() throws {
         // Arrange

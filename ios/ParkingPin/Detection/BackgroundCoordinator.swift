@@ -152,6 +152,10 @@ actor BackgroundCoordinator {
     /// Smart Detection's opt-in, mirrored here because §9 makes it a trace boundary: while
     /// it is off nothing is recorded, and turning it off closes the open session.
     private var isTraceRecordingEnabled = true
+    /// Smart Detection's opt-in (docs/05 §3a "Turning Smart Detection off"). While it is off
+    /// no motion evidence, car-link edge or fix reaches the engine, so nothing can open a
+    /// capture the user switched off.
+    private var isSmartDetectionEnabled = true
 
     private let endActiveParking: (@Sendable (Date) async -> Bool)?
     private let engine: ParkingDetectionEngine
@@ -242,24 +246,33 @@ actor BackgroundCoordinator {
             snapshot.drivingSessionResumedFromCheckpoint = true
             snapshot.drivingSessionStartedAt = restored?.stateEnteredAt
         }
-        await apply(
-            engine.restore(
-                restored,
-                pendingCandidate: candidateStore?.load(),
-                // A failed load is not an absent one: seeding here would hide the damage
-                // and make a real data-loss bug look like a fresh install.
-                seedIfAbsent: {
-                    if case .failed = load { return false }
-                    return true
-                }(),
-                now: now
-            ),
+        var effects = await engine.restore(
+            restored,
+            pendingCandidate: candidateStore?.load(),
+            // A failed load is not an absent one: seeding here would hide the damage
+            // and make a real data-loss bug look like a fresh install.
+            seedIfAbsent: {
+                if case .failed = load { return false }
+                return true
+            }(),
             now: now
         )
+        if !isSmartDetectionEnabled {
+            // docs/05 §3a "Turning Smart Detection off": a process that died between the
+            // opt-out and the end it asked for left a session behind. It is ended here, and
+            // the capture the restore would reopen for it is never started.
+            effects = effects.filter { $0 != .startBoundedLocationCapture }
+                + (await engine.endDrivingSession(reason: .smartDetectionDisabled, now: now))
+        }
+        await apply(effects, now: now)
 
         // Anchored on the *restored* checkpoint only. A checkpoint seeded a moment ago
         // would collapse the window to zero and skip the replay entirely.
         await reconstructMotionHistory(now: now, anchor: restored?.latestTimestamp)
+        guard isSmartDetectionEnabled else {
+            await releaseCaptureIfIdle()
+            return
+        }
         await evaluateMotionEvidence(now: now)
     }
 
@@ -303,6 +316,7 @@ actor BackgroundCoordinator {
         await apply(effects, now: now)
 
         await reconstructMotionHistory(now: now, anchor: snapshot.currentCheckpoint?.latestTimestamp)
+        guard isSmartDetectionEnabled else { return }
         await evaluateMotionEvidence(now: now)
     }
 
@@ -331,7 +345,10 @@ actor BackgroundCoordinator {
     /// only has to cover the case where fixes stop arriving.
     func handleDrivingFix(_ fix: LocationFix) async {
         let now = dateProvider.now
-        guard await engine.snapshot().driving != nil else { return }
+        // Not `driving != nil`: docs/05 §3a / §19 keep the capture running while
+        // `PARKING_TRANSITION` decides, and the fix that answers it — a stop, or the car
+        // moving off again — is exactly the one that arrives with no drive open.
+        guard isSmartDetectionEnabled, await engine.snapshot().isLocationCaptureWanted else { return }
         recordTrace { $0.record(fix: fix) }
         await apply(engine.handle(.location(fix), now: now), now: now)
     }
@@ -364,8 +381,13 @@ actor BackgroundCoordinator {
         await endDrivingSession(reason: .captureFailed)
     }
 
-    /// Smart Detection was switched off. The session must not outlive the opt-in.
-    func stopDrivingSessionForOptOut() async {
+    /// docs/05 §3a "Turning Smart Detection off". Switching off ends whatever the engine was
+    /// inferring the way `.smartDetectionDisabled` does, and forgets the car links, so the
+    /// first observation after switching back on is a fresh edge.
+    func setSmartDetectionEnabled(_ enabled: Bool) async {
+        isSmartDetectionEnabled = enabled
+        guard !enabled else { return }
+        snapshot.connectedCarLinks = []
         await endDrivingSession(reason: .smartDetectionDisabled)
     }
 
@@ -424,6 +446,10 @@ actor BackgroundCoordinator {
     func handleCarLink(_ state: CarLinkObservation) async {
         let now = dateProvider.now
         snapshot.carLinkFailure = state.failure
+        // docs/05 §3a "Turning Smart Detection off": no edge is derived while detection is
+        // off, and the links are left unobserved, so the first sample after switching back
+        // on is compared against nothing and yields a fresh edge.
+        guard isSmartDetectionEnabled else { return }
         let observed = state.connected
         let previous = snapshot.connectedCarLinks
         guard observed != previous else { return }
@@ -707,7 +733,7 @@ actor BackgroundCoordinator {
 
     /// Core Location must never be left running for a session the engine no longer has.
     private func releaseCaptureIfIdle() async {
-        guard await engine.snapshot().driving == nil else { return }
+        guard await !engine.snapshot().isLocationCaptureWanted else { return }
         await locationCapture?.stop()
         snapshot.isCapturingDrivingLocation = await locationCapture?.isActive() ?? false
         snapshot.captureHealth = await locationCapture?.health() ?? .none
@@ -727,7 +753,8 @@ actor BackgroundCoordinator {
         snapshot.reliableLocationUpdateCount = state.reliableLocationUpdateCount
         snapshot.reliableLocationRejectCount = state.reliableLocationRejectCount
         snapshot.lastReliableLocationRejection = state.lastReliableLocationRejection
-        guard let evidence = state.driving else { return }
+        // The transition's drive keeps recording (§3a), so its counters keep moving too.
+        guard let evidence = state.driving ?? state.transitionDrive else { return }
         snapshot.drivingFixCount = evidence.fixCount
         snapshot.drivingMovingSampleCount = evidence.movingSampleCount
         snapshot.drivingSpeedAvailableCount = evidence.speedAvailableCount

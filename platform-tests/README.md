@@ -9,11 +9,10 @@
 > 각각 로드해서 **실제 엔진에 재생**하고 `expected`와 대조한다. 여기에 더해 `tools/`가
 > fixture를 **만드는** 변환기와 **검사하는** 검증기를 제공한다.
 >
-> 타임아웃 행은 `timer_tick` 이벤트에서만 발화한다(docs/05 §3a). 경과 시간으로 상태가
-> 바뀌기를 기대하는 fixture는 tick을 명시해야 한다. 2026-09-20 에 iOS 러너에 `timer_tick`
-> 이 빠져 있던 것을 고치기 전까지는 **어떤 fixture도 tick 을 쓸 수 없었다** — 그래서 §3a 의
-> 타임아웃 행 네 개에 fixture 가 하나도 없었다. 지금은
-> `quiet_transition_expires_no_candidate` 가 `transitionWindow` 를 고정한다.
+> 경과 시간 행(window)은 **모든 이벤트**에서, 그 이벤트의 시각으로 판정된다(docs/05 §3a
+> "When a timeout fires"). 다음 이벤트 없이 경과 시간만으로 상태가 바뀌기를 기대하는
+> fixture는 그 시각에 `timer_tick`을 명시해야 한다 — fixture에는 그 외의 시계가 없다.
+> `quiet_transition_expires_no_candidate` 가 `transitionWindow` 를 그렇게 고정한다.
 >
 > 차량 링크에 의존하는 fixture 는 만들지 않는다(§3a: "No fixture may depend on a link event
 > being present"). iOS 는 클래식 블루투스 엣지를 관측할 수 없어서, 링크가 있어야만 성립하는
@@ -56,7 +55,7 @@
      이 필드는 fixture로 넘어가지 않는다
 3. trace 파일을 회수한다. 진단 파일과 같은 경로다:
    - iOS: `xcrun devicectl device copy from ...`
-   - Android: `adb exec-out run-as com.parkingkok.app cat ...`
+   - Android: `adb exec-out run-as com.sjstudioz.parkingpin cat ...`
    - sudo/root 불필요
 
 라벨이 없으면 `mode: "unknown"`이고, 변환기는 `expected` 후보를 제안하지 않는다.
@@ -224,13 +223,13 @@ trace까지 왔다면 어댑터 결함이므로 변환기가 거부한다 — `p
 | # | 시나리오 | 라벨 | 상태 |
 |---|---|---|---|
 | 1 | vehicle → underground → walk → candidate | `car` / `parked: true` | ⬜ (`vehicle_then_walk.json`이 지상 버전만 커버) |
-| 2 | 긴 신호대기 → 주행 계속 → candidate 없음 | `car` / `parked: false` | ⬜ |
+| 2 | 긴 신호대기 → 주행 계속 → candidate 없음 | `car` / `parked: false` | ✅ `red_light_no_candidate.json` (짧은 정차), `long_stop_in_traffic.json` (긴 형태: stop-only 후보가 생겼다가 차량 재개로 철회, 최종 `DRIVING`) |
 | 3 | 주유소 → 짧은 도보 → 차량 재개 | `car` / `parked: false` | ⬜ |
 | 4 | taxi → walk → candidate 가능/알려진 한계 | `taxi` | ⬜ |
-| 5 | 버스 반복 정차 → 알림 폭주 없음 | `bus` / `parked: false` | ⬜ |
+| 5 | 버스 반복 정차 → 알림 폭주 없음 | `bus` / `parked: false` | ✅ `bus_repeated_stops_no_storm.json` (+ 양 러너의 travel session당 후보 1개 검사) |
 | 6 | 터널 GPS 소실 → candidate 없음 | `car` / `parked: false` | ✅ `tunnel_no_parking.json` |
-| 7 | 프로세스 사망/재시작 → 중복 candidate 없음 | — | ⬜ ⚠️ |
-| 8 | 이동 중 권한 회수 | — | ⬜ ⚠️ |
+| 7 | 프로세스 사망/재시작 → 중복 candidate 없음 | — | ⬜ ⚠️ (fixture 없음. `restore` 의미론은 테스트가 고정: docs/05 §3a 창 규칙은 엔진 단위 테스트, §14 "A restored departure keeps its evidence"는 iOS `DepartureTests` ↔ Android `ParkingDetectionRuntimeTest`의 같은 이름·같은 이벤트 twin) |
+| 8 | 이동 중 권한 회수 | — | ⬜ ⚠️ (fixture 없음. docs/05 §11 "A lost capture decides nothing" — 회수는 capture만 멈추고 상태·세션은 그대로 — 를 양 플랫폼 같은 이름 twin이 고정: `DRIVING`/`DRIVING_CANDIDATE`는 iOS `ParkingTransitionEvidenceTests` ↔ Android `ParkingDetectionRuntimeTest` "A drive that loses its capture still parks on the next exit", 출발은 iOS `DepartureTests` ↔ 같은 Android 파일의 "…lost its capture…" twin들. 권한이 돌아와도 그 세션의 capture는 다시 열리지 않는다 — §11 "A lost capture stays lost for its session" (N1): iOS `ParkingTransitionEvidenceTests` "A drive whose permission returns before the exit decides as it would without a capture", "A transition that lost its capture reopens none after a process death", "A transition that lost its capture resumes its drive without one". 같은 이름의 Android twin(실제 `TransitionEventIngestor` 경유)은 아직 커밋되지 않았다 — 그 전까지 Android 쪽은 증명되지 않음) |
 | 9 | 절전 모드 저하 동작 | — | ⬜ ⚠️ |
 | 10 | 앱이 기록을 갱신하는 중 위젯 편집 | — | ⬜ ⚠️ |
 
@@ -286,3 +285,86 @@ M3에서 필드 데이터로 튜닝된다. 지금 박으면 튜닝을 막는다.
 **이 fixture의 쓸모는 M3의 기준선이다.** confidence 튜닝이 지하철 오검출을 실제로
 낮추는지, 이 값이 내려가는 것으로 측정한다. 제품 쪽 방어선은 완곡한 문구
 ("주차한 것 같아요")와 `주차 아님` 액션이며, 그건 엔진이 아니라 UX의 몫이다.
+
+## `manual_save_then_departure` — 출발은 다음 이벤트에서 확정된다 (2026-09-27)
+
+손으로 저장한 주차(`user_saved`) → 다시 탑승 → t=730 한 fix가 §11의 두 기준(90 s, 500 m)을
+넘기면서 §7 guard도 이미 충족하는 순간 → 이어지는 주행 → 하차·도보로 다음 주차.
+docs/05 §11 "Departure rows are edges": 출발을 연 이벤트는 그것을 확정하지 않는다.
+golden이 고정하는 순서는 event 3 `DEPARTURE_CANDIDATE`, event 4 `DRIVING` + `endActiveParking`
+이다. 예전 iOS는 event 3 하나에서 둘 다 했고, 그 차이를 잡는 fixture가 이것 전에는 없었다.
+주차 종료 시각(= `DEPARTURE_CANDIDATE` 진입 시각)은 golden에 없으므로 양 플랫폼 엔진 단위
+테스트("A departure is confirmed on a later event than the one that opened it")가 고정한다.
+`expected`의 `confidence: high`와 `requiredReasons`는 양 엔진이 golden에서 같이 내는 값이고,
+§8로 다시 계산하면 25 + 15(exit) + 30(walk) + 10(stopped) + 5(300 s·1900 m, 둘 다 §7의 두 배
+이상) = 85 → `high`다.
+
+## `manual_save_then_short_departure` — 출발을 확정한 하차는 그 주행의 끝이다 (2026-09-28)
+
+지하주차장으로 들어가는 짧은 이동: 손으로 저장한 주차 → t=600 재탑승 → t=700 한 fix가
+§11의 두 기준(100 s, 600 m)을 넘긴다(§7 guard는 아직 미충족) → 경사로에서 fix가 끊기고 →
+t=740 `vehicle_exit`, 경과 시간만으로 guard 충족(140 s) → t=760 도보.
+docs/05 §11 "An event that confirms a departure is also read in `DRIVING`": 하차는 출발을
+확정하고, 같은 이벤트가 `DRIVING`에서 다시 읽혀 그 주행을 끝낸다. golden이 고정하는 순서는
+event 3 `DEPARTURE_CANDIDATE`, event 4 `PARKING_TRANSITION` + `endActiveParking`, event 5
+후보다. 이 규칙 전에는 하차가 확정에 삼켜져 `DRIVING`에 남았고, 이전 주차만 끝난 채
+다음 주차가 사라졌다. `expected`의 `confidence: medium`과 `requiredReasons`는 양 엔진이
+golden에서 같이 내는 값이고, §8로 다시 계산하면 25 + 15(exit) + 30(walk) = 70 → `medium`
+이다(정지 fix 없음, 140 s·600 m는 §7의 "넉넉히 초과"가 아니다). 링크 disconnect로 확정되는
+같은 경우는 §3a가 링크 fixture를 금지하므로 양 플랫폼 엔진 twin 테스트가 고정한다.
+t=700과 t=740 사이의 프로세스 사망은 fixture로 표현할 수 없으므로(§8 어휘에 재시작 없음) 같은
+결과 — 이전 주차 종료 t=700, 다음 주차의 `medium` 후보 — 를 twin 테스트 "A short departure
+restored before its exit still becomes the next parking"이 고정한다(docs/05 §14).
+단, 이 fixture와 twin은 명시적 `vehicle_exit`를 쓴다. iPhone 실기기에는 그 edge가 없고
+`BackgroundCoordinator`가 도보로부터 하차를 유도한다(`endDrivingSession(.walkingDetected)`).
+그 경로의 같은 결과는 iOS 전용 `DepartureTests` "A derived exit that confirms a departure also
+ends the drive"와 "A short departure restored before its derived exit still becomes the next
+parking"이 고정한다(docs/05 §11 "An adapter-decided end never leaves the parking behind").
+
+## 실주행 field fixture — 승격된 것과 drafts에 남은 것 (2026-09-27)
+
+`field_s*_parked.json`은 사용자가 **주차로 끝났다고 확인한** 실제 iPhone 주행에서 변환했다
+(좌표 없음). `expected`는 전부 `{candidate: true, finalState: CANDIDATE_PENDING}`에 더해
+양 엔진이 내는 `confidence`와 reason code 전체(`requiredReasons`)를 고정한다. 각 bucket은
+docs/05 §8 가중치로 손으로 다시 계산해 맞췄다 (s04 90·s26 85·s32 85 → `high`,
+s17 55·s16 45·s33 45·s03 40 → `low`).
+세션 s02–s17은 옛 iOS capture(드문드문한 km급 fix), s22+는 현재 dense capture로 기록됐다.
+
+**승격:** `field_s03_parked`, `field_s04_parked`, `field_s16_parked`, `field_s17_parked`,
+`field_s26_parked`, `field_s32_parked`, `field_s33_parked`. "양 플랫폼 결과 동일"의 근거는
+두 가지 커밋된 테스트다 — 각 fixture의 `expected`(state·candidate·bucket·reason), 그리고
+아래 `goldens/`의 이벤트 단위 outcome trace.
+
+**drafts에 남긴 parked 3개** — 양 엔진이 모든 이벤트에서 똑같이(`goldens/`가 고정) 후보를 만들지 못하고,
+원인은 엔진이 아니라 기록이다. `expected`를 고쳐서 통과시키지 않는다. 근거는
+`docs/05_PARKING_DETECTION_ENGINE.md` "Field drafts that no conformant engine can pass".
+
+| draft | 양쪽 결과 | 이유 | 증거 |
+|---|---|---|---|
+| `field_s02_parked` | `IDLE` | 옛 sparse capture + §3a 세션 2시간 상한 | 유일한 `vehicle_enter`가 t=1908 → 상한 t=9108. 마지막 주행(t≈8696–9068, 2–12 m/s)은 t=9084에 잠깐 멈췄다가 t=9144–9246에 저속으로 다시 움직이고 멈춘다. 상한이 그 사이에 세션을 닫아 최종 정차는 세션 밖이고, 그 구간에는 자체 `vehicle_enter`가 없다. §3a는 `vehicle_enter`/링크로만 세션을 연다 |
+| `field_s06_parked` | `IDLE` | §6 확인 신호 없음 (GPS 열화만) | 지하 진입: 마지막 speed 보유 fix t=2737, accuracy 429→1414 m. 마지막 motion 이벤트는 t=2329 `stationary_exit`. transition이 열린 뒤 walk/stationary/exit/이동 fix 어느 것도 오지 않아 만료된다. GPS 열화만으로는 후보가 될 수 없다(§6) |
+| `field_s31_parked` | `PARKING_TRANSITION` | 기록이 300 s transition window 안에서 끝남 — §6 확인 신호 미도착 | 마지막 ≥2 m/s fix t=826 → `movementIdle` 기한 1006, 그 뒤 첫 이벤트(t=1016 fix)에서 기한 시각으로 transition 진입. 기록 종료 t=1039, window 33 s 지점. 826 이후 보고 속도는 0–1.7 m/s이고 speed 없는 fix(885–1039, 정확도 18–51 m)는 17 s마다 15–40 m 움직인다 — 걷는 속도로 주차장을 도는 차로 보인다. 직선 재생은 기록된 구간이 허용하는 **최대** 변위인데도 평균 1.2–2.0 m/s로 §7의 2.0 m/s 미만이라, 재생 artefact가 아니다. 원본 trace 분할 여부(계약 §9 `splitFrom`)는 미검증 — 재변환 전 확인 |
+
+`field_s*_unknown.json` 8개는 결과 라벨이 없어(`expected: null`) 승격하지 않는다. 양
+엔진이 같은 결과를 내는지는 `goldens/`가 이벤트 단위로 고정한다.
+
+## `goldens/outcome-traces.golden.json` — 이벤트 단위 parity
+
+계약 §8 "Outcome traces". 양 러너가 `platform-tests/*.json`과 `drafts/*.json` **전부**를
+`expected`를 무시하고 재생해서, state를 바꾸거나 candidate를 만들고·거두고·주차를 끝낸
+이벤트마다 한 줄씩 이 파일과 비교한다. 초안이 한쪽 플랫폼에서만 조용히 바뀔 수 없다.
+
+- 키 집합이 디스크의 파일과 같아야 한다. fixture나 draft를 추가·삭제·개명하면 이 파일도
+  같이 바꾼다
+- 양 러너는 커밋된 fixture·draft 이름 목록도 **정확히** 적어 둔다(iOS `ParityFixtureTests`
+  "Every fixture in platform-tests/ is loaded and replayed", Android `ParityFixtureTest`
+  `every committed fixture is replayed`·`every committed draft is replayed`). golden 항목과
+  파일을 함께 지우면 키 집합은 여전히 같으므로, 이 목록이 그 삭제를 잡는다
+- golden이 바뀌는 diff는 제품 동작의 변경이다. spec이 뒷받침하는 엔진 변경에서만
+  재생성한다(Android `UPDATE_PARITY_GOLDEN=1`), 같은 변경에서 양 러너가 통과해야 한다
+- **사본은 이 파일 하나뿐이다.** Android는 fixture를 읽는 `fixtureDirectory()` 기준으로 이
+  경로를 읽고 쓰며, iOS는 번들된 `platform-tests`에서 읽기만 한다. 러너별 사본
+  (`src/test/resources/` 등)을 두면 재생성이 한쪽만 바꿔 양쪽이 초록인 채 엔진이 갈라진다.
+  iOS 테스트 "The outcome-trace golden exists exactly once, in platform-tests/goldens/"가
+  체크아웃 안(빌드 산출물 제외)의 같은 이름 파일을 전부 찾아 이 하나만 있는지 확인한다
+- `.json`이지만 `goldens/` 하위라 fixture 검증기·fixture 목록 어디에도 잡히지 않는다
