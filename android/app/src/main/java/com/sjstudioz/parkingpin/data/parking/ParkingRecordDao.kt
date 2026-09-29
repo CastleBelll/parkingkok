@@ -76,4 +76,26 @@ abstract class ParkingRecordDao {
         if (next != current) update(next)
         return next
     }
+
+    /**
+     * Ends the open record [endingId] with [end] and inserts [next], in one transaction.
+     *
+     * docs/05 §11a: the next parking saved while a departure is still asked about closes
+     * the asked-about record at the departure time, and a save that writes nothing ends
+     * nothing. Two separate writes would leave a window — a failed insert, a process death —
+     * in which the old parking is closed and the new one does not exist. Returns the ended
+     * row, or null with nothing written when [endingId] is not the open record.
+     */
+    @Transaction
+    open suspend fun endActiveAndInsert(
+        endingId: String,
+        end: (ParkingRecordEntity) -> ParkingRecordEntity,
+        next: ParkingRecordEntity,
+    ): ParkingRecordEntity? {
+        val active = findActive()?.takeIf { it.id == endingId } ?: return null
+        val ended = end(active)
+        update(ended)
+        insert(next)
+        return ended
+    }
 }

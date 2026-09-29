@@ -139,6 +139,63 @@ class RoomParkingRepositoryTest {
     }
 
     @Test
+    fun `replacing the open record ends it and inserts the next in one write`() = runTest {
+        // Arrange
+        repository.insert(record(id = "old"))
+
+        // Act
+        val ended = repository.replaceActive(
+            endingId = "old",
+            end = { it.copy(endedAtMillis = start + 60_000) },
+            next = record(id = "new", startedAt = start + 120_000),
+        )
+
+        // Assert
+        assertEquals(start + 60_000, ended?.endedAtMillis)
+        assertEquals(start + 60_000, repository.find("old")?.endedAtMillis)
+        assertEquals("new", repository.findActive()?.id)
+    }
+
+    @Test
+    fun `a replacement whose insert fails leaves the open record open`() = runTest {
+        // Arrange — docs/05 §11a: the next record reuses the open one's primary key, a real
+        // constraint error thrown after the end was written inside the transaction.
+        repository.insert(record(id = "old"))
+
+        // Act
+        val failure = runCatching {
+            repository.replaceActive(
+                endingId = "old",
+                end = { it.copy(endedAtMillis = start + 60_000) },
+                next = record(id = "old", startedAt = start + 120_000),
+            )
+        }.exceptionOrNull()
+
+        // Assert — rolled back: nothing ended.
+        assertNotNull(failure)
+        assertEquals("old", repository.findActive()?.id)
+        assertNull(repository.find("old")?.endedAtMillis)
+    }
+
+    @Test
+    fun `a replacement naming a record that is not open writes nothing`() = runTest {
+        // Arrange
+        repository.insert(record(id = "open"))
+
+        // Act
+        val ended = repository.replaceActive(
+            endingId = "someone-else",
+            end = { it.copy(endedAtMillis = start + 60_000) },
+            next = record(id = "new", startedAt = start + 120_000),
+        )
+
+        // Assert
+        assertNull(ended)
+        assertEquals("open", repository.findActive()?.id)
+        assertNull(repository.find("new"))
+    }
+
+    @Test
     fun `updating a record that is gone reports null instead of resurrecting it`() = runTest {
         assertNull(repository.update("never-existed") { it })
     }

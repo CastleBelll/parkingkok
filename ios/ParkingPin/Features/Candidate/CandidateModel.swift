@@ -139,6 +139,12 @@ final class CandidateModel {
     /// @return whether the record was written. `false` leaves the candidate pending, so a
     /// store failure costs the user nothing but a second tap.
     ///
+    /// The candidate is re-resolved first, because a form holds the value it opened with:
+    /// one that expired or was superseded while the form was open writes nothing, and —
+    /// docs/05 §11a — ends nothing and leaves a pending departure proposal pending. The
+    /// caller tells that apart from a failed write with `candidate(id:)`, as Android's
+    /// `ConfirmCandidateResult.Gone` does.
+    ///
     /// `pillarPhoto` is the shot taken on the way here, if there was one. It is attached
     /// after the write rather than discarded (docs/02 §6a): it is the pillar photo the
     /// user would otherwise have to take a second time from the detail screen. Attaching
@@ -150,6 +156,9 @@ final class CandidateModel {
         draft: ManualParkingDraft,
         pillarPhoto: Data? = nil
     ) -> Bool {
+        guard let candidate = self.candidate(id: candidate.id) else {
+            return false
+        }
         guard let recordId = parking.saveDetectedParking(from: candidate, draft: draft) else {
             return false
         }

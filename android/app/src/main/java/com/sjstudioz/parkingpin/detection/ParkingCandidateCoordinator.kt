@@ -16,13 +16,23 @@ import com.sjstudioz.parkingpin.domain.parking.ParkingLocation
 import com.sjstudioz.parkingpin.domain.parking.ParkingRecord
 import com.sjstudioz.parkingpin.domain.parking.ParkingRepository
 import com.sjstudioz.parkingpin.domain.parking.ParkingSource
+import com.sjstudioz.parkingpin.domain.parking.usecase.ActiveParkingEnd
+import com.sjstudioz.parkingpin.domain.parking.usecase.OpenParkingResult
+import com.sjstudioz.parkingpin.domain.parking.usecase.openParkingRecord
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
 /** What [ParkingCandidateCoordinator.confirm] did. */
 sealed interface ConfirmCandidateResult {
 
-    data class Confirmed(val record: ParkingRecord) : ConfirmCandidateResult
+    /**
+     * [endedPrevious] is the asked-about parking closed at its departure time in the same
+     * write (docs/05 §11a); null for an ordinary confirmation.
+     */
+    data class Confirmed(
+        val record: ParkingRecord,
+        val endedPrevious: ParkingRecord? = null,
+    ) : ConfirmCandidateResult
 
     /**
      * The candidate expired, was superseded, or was already answered.
@@ -174,7 +184,17 @@ class ParkingCandidateCoordinator(
      * tap: the elapsed time on the home screen has to count from when the car was left,
      * not from when the user got round to answering.
      */
-    suspend fun confirm(candidateId: String, details: ConfirmedCandidateDetails): ConfirmCandidateResult {
+    suspend fun confirm(
+        candidateId: String,
+        details: ConfirmedCandidateDetails,
+        /**
+         * The open parking a pending departure allows this confirmation to close
+         * (docs/05 §11a). Asked only once the candidate is known to be live, and closed in
+         * the same write as the insert, so a [ConfirmCandidateResult.Gone] or a failed write
+         * ends nothing.
+         */
+        pendingEnd: suspend () -> ActiveParkingEnd? = { null },
+    ): ConfirmCandidateResult {
         val now = clock.nowEpochMillis()
         val candidate = store.readCandidateOnce()
             ?.takeIf { it.id == candidateId }
@@ -185,9 +205,8 @@ class ParkingCandidateCoordinator(
                 return ConfirmCandidateResult.Gone(store.readConfirmedRecordIdOnce(candidateId))
             }
 
+        val ending = pendingEnd()
         val repository = repository()
-        repository.findActive()?.let { return ConfirmCandidateResult.AlreadyActive(it) }
-
         val record = ParkingRecord(
             id = idGenerator(),
             startedAtMillis = candidate.parkedAtMillis,
@@ -204,7 +223,10 @@ class ParkingCandidateCoordinator(
             updatedAtMillis = now,
             revision = 1,
         )
-        repository.insert(record)
+        val opened = when (val result = repository.openParkingRecord(record, ending, now)) {
+            is OpenParkingResult.Blocked -> return ConfirmCandidateResult.AlreadyActive(result.active)
+            is OpenParkingResult.Opened -> result
+        }
         // Clears the candidate and remembers what it became, so a tap that beats the
         // notification's withdrawal opens the record rather than home (§10a).
         store.resolveCandidate(candidate.id, record.id, candidate.detectedAtMillis)
@@ -212,7 +234,7 @@ class ParkingCandidateCoordinator(
         // After the write, never before: an event for a record that failed to insert would
         // overstate the feature.
         analytics.record(AnalyticsEvent.ParkingCandidateConfirmed(candidate.evidence))
-        return ConfirmCandidateResult.Confirmed(record)
+        return ConfirmCandidateResult.Confirmed(record, endedPrevious = opened.endedPrevious)
     }
 
     /**

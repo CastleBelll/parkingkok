@@ -12,7 +12,9 @@ Enough signal to improve detection/monetization, without uploading parking locat
 - parking_candidate_confirmed
 - parking_candidate_rejected
 - parking_manual_saved
-- parking_auto_end
+- parking_auto_end — reported when the user accepts a departure proposal (`주차 종료` on the
+  prompt, docs/05 §11a) and a record was actually closed by it; since 2026-09-29 never on
+  detection alone
 - widget_floor_changed
 - paywall_viewed
 - purchase_completed

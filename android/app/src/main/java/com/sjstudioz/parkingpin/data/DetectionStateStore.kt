@@ -13,6 +13,7 @@ import com.sjstudioz.parkingpin.domain.detection.CandidateOutcome
 import com.sjstudioz.parkingpin.domain.detection.DetectionCheckpoint
 import com.sjstudioz.parkingpin.domain.detection.DetectionEngineState
 import com.sjstudioz.parkingpin.domain.detection.ParkingCandidate
+import com.sjstudioz.parkingpin.domain.detection.ParkingEndProposal
 import com.sjstudioz.parkingpin.domain.detection.MotionDomainEvent
 import com.sjstudioz.parkingpin.domain.location.LocationSessionState
 import kotlinx.coroutines.flow.Flow
@@ -240,6 +241,39 @@ class DetectionStateStore(
         }
     }
 
+    /**
+     * The departure the user has not answered yet (docs/05 §11a), or null.
+     *
+     * Stored here rather than held in memory because an ignored proposal stays pending across
+     * process death: the notification outlives the process, and the home card has to be able
+     * to ask again on the next launch.
+     */
+    val parkingEndProposal: Flow<ParkingEndProposal?> = dataStore.data.map { it.readEndProposal() }
+
+    suspend fun readParkingEndProposalOnce(): ParkingEndProposal? = dataStore.data.first().readEndProposal()
+
+    /** Replaces whatever was pending: one proposal at a time (§11a). */
+    suspend fun writeParkingEndProposal(proposal: ParkingEndProposal) {
+        dataStore.edit {
+            it[KEY_END_PROPOSAL_RECORD] = proposal.recordId
+            it[KEY_END_PROPOSAL_DEPARTED_AT] = proposal.departedAtMillis
+        }
+    }
+
+    /**
+     * Removes the pending proposal and returns it, in one edit — so a notification action and
+     * the home card answering together act on it once, not twice.
+     */
+    suspend fun takeParkingEndProposal(): ParkingEndProposal? {
+        var taken: ParkingEndProposal? = null
+        dataStore.edit {
+            taken = it.readEndProposal()
+            it.remove(KEY_END_PROPOSAL_RECORD)
+            it.remove(KEY_END_PROPOSAL_DEPARTED_AT)
+        }
+        return taken
+    }
+
     suspend fun readEngineStateOnce(): DetectionEngineState? = dataStore.data.first().readEngineState()
 
     /**
@@ -389,6 +423,12 @@ class DetectionStateStore(
     private fun Preferences.readEngineState(): DetectionEngineState? =
         decode(this[KEY_ENGINE_STATE]) { json.decodeFromString<DetectionEngineState>(it) }
 
+    private fun Preferences.readEndProposal(): ParkingEndProposal? {
+        val recordId = this[KEY_END_PROPOSAL_RECORD] ?: return null
+        val departedAt = this[KEY_END_PROPOSAL_DEPARTED_AT] ?: return null
+        return ParkingEndProposal(recordId = recordId, departedAtMillis = departedAt)
+    }
+
     private fun Preferences.readCandidate(): ParkingCandidate? =
         decode(this[KEY_CANDIDATE]) { json.decodeFromString<ParkingCandidate>(it) }
 
@@ -449,6 +489,8 @@ class DetectionStateStore(
         val KEY_CANDIDATE_HISTORY = stringPreferencesKey("parking_candidate_history")
         val KEY_CONFIRMED_CANDIDATE = stringPreferencesKey("parking_candidate_confirmed_id")
         val KEY_CONFIRMED_RECORD = stringPreferencesKey("parking_candidate_confirmed_record")
+        val KEY_END_PROPOSAL_RECORD = stringPreferencesKey("parking_end_proposal_record_id")
+        val KEY_END_PROPOSAL_DEPARTED_AT = longPreferencesKey("parking_end_proposal_departed_at")
         val KEY_EVENT_LOG = stringPreferencesKey("event_log")
         val KEY_DESIRED_ENABLED = booleanPreferencesKey("registration_desired_enabled")
         val KEY_FIRST_RUN_ANSWERED = booleanPreferencesKey("first_run_answered")

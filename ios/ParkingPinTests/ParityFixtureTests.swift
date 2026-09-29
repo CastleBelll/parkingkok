@@ -19,6 +19,10 @@ struct ParityFixtureTests {
         // Arrange
         let committed: Set<String> = [
             "bus_repeated_stops_no_storm.json",
+            // §11a: a departure proposes the end; the user keeps the parking (2026-09-29).
+            "departure_proposal_kept.json",
+            // §11a: the next parking saved by hand while a proposal is pending (2026-09-29).
+            "departure_proposal_then_next_saved.json",
             // Real iPhone drives the user confirmed ended in a parking (promoted 2026-09-27).
             "field_s03_parked.json",
             "field_s04_parked.json",
@@ -42,6 +46,10 @@ struct ParityFixtureTests {
         // Field drafts: replayed against the golden only (contract §8), never against an
         // `expected`. Listed so a draft deleted with its golden entry fails here too.
         let drafts: Set<String> = [
+            // iPhone, 2026-09-28 08:46–08:51: a departure from an open parking, then a
+            // candidate the user rejected. Labelled car / not parked, started in PARKED;
+            // analysed under docs/05 §11a.
+            "drafts/field_0928_rejected.json",
             "drafts/field_s02_parked.json",
             "drafts/field_s05_unknown.json",
             "drafts/field_s06_parked.json",
@@ -228,7 +236,7 @@ struct ParityFixtureTests {
         }
 
         // Assert
-        #expect(effects.contains { if case .endActiveParking = $0 { true } else { false } })
+        #expect(effects.contains { if case .proposeParkingEnd = $0 { true } else { false } })
         #expect(ParityFixtureOutcome.candidatesPerTravelSession(effects) == [1, 0])
     }
 

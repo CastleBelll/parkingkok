@@ -1,5 +1,6 @@
 package com.sjstudioz.parkingpin.ui.manual
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -10,6 +11,7 @@ import com.sjstudioz.parkingpin.detection.ConfirmCandidateResult
 import com.sjstudioz.parkingpin.detection.ConfirmedCandidateDetails
 import com.sjstudioz.parkingpin.detection.ParkingCandidateCoordinator
 import com.sjstudioz.parkingpin.detection.ParkingDetectionRuntime
+import com.sjstudioz.parkingpin.detection.ParkingEndProposalCoordinator
 import com.sjstudioz.parkingpin.domain.detection.DetectionEvent
 import com.sjstudioz.parkingpin.domain.parking.FloorParser
 import com.sjstudioz.parkingpin.domain.parking.usecase.AttachParkingPhotoUseCase
@@ -19,6 +21,7 @@ import com.sjstudioz.parkingpin.domain.parking.usecase.SaveManualParkingUseCase
 import com.sjstudioz.parkingpin.domain.photo.PhotoSource
 import com.sjstudioz.parkingpin.domain.photo.PillarSuggestion
 import com.sjstudioz.parkingpin.domain.photo.ReadPillarSuggestionUseCase
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -42,6 +45,11 @@ data class ManualParkingUiState(
      * was open. The screen leaves without writing anything (docs/05 §10a).
      */
     val candidateGone: Boolean = false,
+    /**
+     * Set when the store refused the write. Nothing was saved and — docs/05 §11a — nothing
+     * was ended either, so the form stays as typed and the user can try again.
+     */
+    val saveFailed: Boolean = false,
     /**
      * True once a pillar photo actually read something and the form was filled from it
      * (docs/02 §6a).
@@ -122,6 +130,13 @@ class ManualParkingViewModel(
      */
     private val pillarPhoto: PillarPhotoEntry? = null,
     private val clock: Clock = SystemClock,
+    /**
+     * docs/05 §11a: a departure the user never answered means they drove away from the open
+     * parking. The save closes it at the departure time, not at this save, in the same write
+     * as the insert, and the question is retired only once that write committed — so a save
+     * that writes nothing ends nothing. Null in compositions with no detection.
+     */
+    private val endProposals: ParkingEndProposalCoordinator? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ManualParkingUiState())
@@ -210,10 +225,24 @@ class ManualParkingViewModel(
         // Guarding on `saving` rather than disabling the button alone: a double tap can
         // land two clicks before the first recomposition, and each would open a session.
         if (_uiState.value.saving) return
-        _uiState.update { it.copy(saving = true, alreadyActive = false) }
+        _uiState.update { it.copy(saving = true, alreadyActive = false, saveFailed = false) }
 
         viewModelScope.launch {
-            val state = _uiState.value
+            try {
+                save(_uiState.value)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (@Suppress("TooGenericExceptionCaught") failure: Exception) {
+                // A disk-full or constraint error from Room. Logged by type only: the
+                // message may quote the row, and the row holds the floor and the location.
+                Log.w(TAG, "manual save failed: ${failure.javaClass.simpleName}")
+                _uiState.update { it.copy(saving = false, saveFailed = true) }
+            }
+        }
+    }
+
+    private suspend fun save(state: ManualParkingUiState) {
+        run {
             val input = ManualParkingInput(
                 floorRaw = state.floorRaw,
                 zone = state.zone,
@@ -223,7 +252,7 @@ class ManualParkingViewModel(
             if (candidateId != null && coordinator != null) {
                 confirmCandidate(candidateId, coordinator, input)
             } else {
-                applySaveResult(saveManualParking(input))
+                applySaveResult(saveManualParking(input, ending = endProposals?.pendingEnd()))
             }
         }
     }
@@ -241,10 +270,14 @@ class ManualParkingViewModel(
                 spot = input.spot?.normalize(MAX_SHORT_FIELD),
                 memo = input.memo?.normalize(MAX_MEMO),
             ),
+            // Asked only after the candidate proved live (docs/05 §11a): an expired or
+            // superseded candidate writes nothing and must leave the asked-about parking open.
+            pendingEnd = { endProposals?.pendingEnd() },
         )
         // Only a write that happened moves the machine: `Gone` and `AlreadyActive` left
         // the candidate exactly where it was.
         if (result is ConfirmCandidateResult.Confirmed) {
+            result.endedPrevious?.let { endProposals?.retire(it.id) }
             detectionRuntime?.handleUserAnswer(DetectionEvent.UserConfirmedParking(clock.nowEpochMillis()))
             attachPillarPhoto(result.record.id)
         }
@@ -264,6 +297,7 @@ class ManualParkingViewModel(
 
     private suspend fun applySaveResult(result: SaveManualParkingResult) {
         if (result is SaveManualParkingResult.Saved) {
+            result.endedPrevious?.let { endProposals?.retire(it.id) }
             // Only a write that happened: `AlreadyActive` saved nothing, and telling the
             // machine a car was parked would drop the departure evidence of the open one.
             detectionRuntime?.handleUserSavedParking(clock.nowEpochMillis())
@@ -288,6 +322,8 @@ class ManualParkingViewModel(
         trim().take(maxLength).takeIf { it.isNotEmpty() }
 
     companion object {
+        private const val TAG = "ManualParking"
+
         /** FR-006: zone and spot are each capped at 40 characters. */
         private const val MAX_SHORT_FIELD = 40
 
@@ -320,6 +356,7 @@ class ManualParkingViewModel(
                         detectionRuntime = container.parkingDetectionRuntime,
                         pillarPhoto = if (fromPillarPhoto) container.pillarPhotoEntry() else null,
                         clock = container.clock,
+                        endProposals = container.parkingEndProposalCoordinator,
                     ) as T
             }
     }

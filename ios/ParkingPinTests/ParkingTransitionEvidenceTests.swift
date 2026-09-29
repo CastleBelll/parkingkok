@@ -269,7 +269,7 @@ struct ParkingTransitionEvidenceTests {
         #expect(lost.first == .stopLocationCapture)
         #expect(lost.count == 2)
         let recorded = lost.compactMap { if case let .persistCheckpoint(c) = $0 { c } else { nil } }.first
-        #expect(recorded?.departure?.isCaptureLost == true)
+        #expect(recorded?.engine?.transition?.isCapturing == false)
         #expect(await engine.snapshot().isLocationCaptureWanted == false)
         #expect(try #require(candidates(effects).first).reasonCodes.contains(.walkingAfterVehicle))
         #expect(!effects.contains(.stopLocationCapture))
@@ -849,8 +849,8 @@ struct ParkingTransitionEvidenceTests {
         // Act — a clean fix 40 m away, at walking pace.
         let effects = await engine.handle(fix(320, north: 40, accuracy: 5, speed: 1.3))
 
-        // Assert
-        #expect(effects.isEmpty)
+        // Assert — the drive it recorded into is written (docs/05 §14), and nothing else.
+        #expect(effects.allSatisfy { if case .persistCheckpoint = $0 { true } else { false } })
         #expect(await engine.snapshot().checkpoint.lastReliableLocation == spot)
     }
 
@@ -939,12 +939,13 @@ struct ParkingTransitionEvidenceTests {
         #expect(await engine.state == .driving)
     }
 
-    /// docs/05 §3a "The window lives exactly as long as its capture" (round 4): on iOS the
-    /// Core Location session dies with the process, so a relaunch inside the window finds no
-    /// capture — rule 4's lost capture — and the resume is forfeited. The candidate stands,
-    /// and later vehicle evidence is a new journey that leaves it answerable.
-    @Test("A relaunch inside a stop-only window forfeits the resume, not the candidate")
-    func relaunchInsideTheResumeWindowForfeitsIt() async throws {
+    /// docs/05 §3a "The window lives exactly as long as its capture" / §14 "The capture did not
+    /// survive" (2026-09-29): the Core Location session dies with the process, and the relaunch
+    /// reopens the capture the restored state wants — the stop-only window's too, which the
+    /// reopened capture then carries. So the relaunch changes nothing: the jam moving on
+    /// withdraws the candidate exactly as it does in the process that opened the window.
+    @Test("A relaunch inside a stop-only window reopens its capture and keeps the resume")
+    func relaunchInsideTheResumeWindowKeepsIt() async throws {
         // Arrange — the process dies 20 s into the window.
         let (engine, candidate) = try await stoppedInTrafficEngine()
         let checkpoint = await engine.snapshot().checkpoint
@@ -960,14 +961,66 @@ struct ParkingTransitionEvidenceTests {
         let wantedAfterRestore = await relaunched.snapshot().isLocationCaptureWanted
         _ = await relaunched.handle(fix(320, north: 150, speed: 8))
         let moving = await relaunched.handle(fix(335, north: 300, speed: 9))
-        let stateAfterMoving = await relaunched.state
-        let boarding = await relaunched.handle(.vehicleEnter(at: at(340)))
+
+        // Assert
+        #expect(restored.contains(.startBoundedLocationCapture))
+        #expect(wantedAfterRestore)
+        #expect(moving.contains(.withdrawCandidate(id: candidate.id)))
+        #expect(await relaunched.state == .driving)
+    }
+
+    /// The window's own deadline still bounds it across a relaunch: one that lapsed while the
+    /// process was dead is settled by the restore, and no capture is reopened for it.
+    @Test("A relaunch after a stop-only window lapsed reopens no capture and keeps the candidate")
+    func relaunchAfterTheResumeWindowLapsedKeepsTheCandidate() async throws {
+        // Arrange
+        let (engine, candidate) = try await stoppedInTrafficEngine()
+        let checkpoint = await engine.snapshot().checkpoint
+        let deadline = try #require(checkpoint.engine?.candidateResume?.deadline)
+        let relaunched = ParkingDetectionEngine()
+
+        // Act
+        let restored = await relaunched.restore(
+            checkpoint,
+            pendingCandidate: candidate,
+            seedIfAbsent: false,
+            now: deadline.addingTimeInterval(60)
+        )
 
         // Assert
         #expect(!restored.contains(.startBoundedLocationCapture))
-        #expect(!wantedAfterRestore)
-        #expect(!moving.contains(.withdrawCandidate(id: candidate.id)))
-        #expect(stateAfterMoving == .candidatePending)
+        #expect(await relaunched.snapshot().isLocationCaptureWanted == false)
+        #expect(!restored.contains(.withdrawCandidate(id: candidate.id)))
+        #expect(await relaunched.state == .candidatePending)
+    }
+
+    /// §14 "The capture did not survive" step 3's exception: the relaunch asks for the capture,
+    /// and Core Location refuses it (Always revoked while the process was dead — the adapter's
+    /// `captureDidLoseAuthorization`). That is rule 4's lost capture: the window closes, the
+    /// candidate stays, and the next `vehicle_enter` is a new journey, not the jam moving on.
+    /// Android twin: the reboot with background location revoked in `ParkingDetectionRuntimeTest`.
+    @Test("A relaunch inside a stop-only window whose capture cannot reopen closes it and keeps the candidate")
+    func relaunchWithoutItsCaptureClosesTheResumeWindow() async throws {
+        // Arrange
+        let (engine, candidate) = try await stoppedInTrafficEngine()
+        let checkpoint = await engine.snapshot().checkpoint
+        let relaunched = ParkingDetectionEngine()
+        let restored = await relaunched.restore(
+            checkpoint,
+            pendingCandidate: candidate,
+            seedIfAbsent: false,
+            now: at(300)
+        )
+
+        // Act
+        let refused = await relaunched.endDrivingSession(reason: .authorizationLost, now: at(301))
+        let boarding = await relaunched.handle(.vehicleEnter(at: at(330)))
+
+        // Assert
+        #expect(restored.contains(.startBoundedLocationCapture))
+        #expect(refused.contains(.stopLocationCapture))
+        #expect(await relaunched.snapshot().checkpoint.engine?.candidateResume == nil)
+        #expect(!refused.contains(.withdrawCandidate(id: candidate.id)))
         #expect(!boarding.contains(.withdrawCandidate(id: candidate.id)))
         #expect(await relaunched.state == .drivingCandidate)
     }
@@ -1168,7 +1221,7 @@ struct ParkingTransitionEvidenceTests {
         #expect(stateAfterResume == .driving)
         #expect(!resumed.contains(.startBoundedLocationCapture))
         #expect(!wantedAfterResume)
-        #expect(checkpoint.departure?.isCaptureLost == true)
+        #expect(checkpoint.engine?.isDrivingCaptureLost == true)
         #expect(!restored.contains(.startBoundedLocationCapture))
         #expect(await relaunched.state == .driving)
     }
@@ -1210,7 +1263,7 @@ struct ParkingTransitionEvidenceTests {
         let boarding = await engine.handle(.vehicleEnter(at: at(330)))
 
         // Assert
-        #expect(effects == [.stopLocationCapture])
+        #expect(effects.filter { if case .persistCheckpoint = $0 { false } else { true } } == [.stopLocationCapture])
         #expect(stateAfterOptOut == .candidatePending)
         #expect(!vehicleAfterOptOut)
         #expect(!boarding.contains(.withdrawCandidate(id: candidate.id)))

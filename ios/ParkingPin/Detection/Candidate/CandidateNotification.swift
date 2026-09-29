@@ -125,8 +125,32 @@ enum PKNotificationCategories {
     static func register() {
         UNUserNotificationCenter.current().setNotificationCategories([
             candidate,
+            departure,
             TraceLabelPromptCategory.category
         ])
+    }
+
+    /// docs/05 §11a: `주차 종료` and `아직 주차 중`. Neither is `.foreground` — both are answered
+    /// where the user is — and neither is `.destructive`: ending is the likely answer, and
+    /// keeping is the honest one when it is wrong, so they are offered at the same weight.
+    private static var departure: UNNotificationCategory {
+        UNNotificationCategory(
+            identifier: ParkingEndProposalAction.categoryIdentifier,
+            actions: [
+                UNNotificationAction(
+                    identifier: ParkingEndProposalAction.endParking,
+                    title: ParkingEndProposalCopy.endParking,
+                    options: []
+                ),
+                UNNotificationAction(
+                    identifier: ParkingEndProposalAction.keepParking,
+                    title: ParkingEndProposalCopy.keepParking,
+                    options: []
+                )
+            ],
+            intentIdentifiers: [],
+            options: []
+        )
     }
 
     /// docs/04 §8: text input `ENTER_FLOOR`, destructive-ish `NOT_PARKING`.

@@ -329,18 +329,19 @@ sealed interface DetectionEffect {
     data class MarkParkingActive(val candidateId: String) : DetectionEffect
 
     /**
-     * §11 departure, confirmed: close the open parking record.
+     * §11a departure, confirmed: **ask** the user whether the open parking ended
+     * (DECIDED 2026-09-29). The record stays open; the adapter asks, and only the user's
+     * `주차 종료` — or the next parking being saved — closes it.
      *
-     * [endedAtMillis] is when the car **started moving**, not when the engine finished
+     * [departedAtMillis] is when the car **started moving**, not when the engine finished
      * deciding — `DrivingConfirmationGuard` needs a meaningful driving session before it
-     * will say so, which is minutes of driving after the fact. Stamping "now" would put the
-     * end of the parking somewhere down the road.
+     * will say so, which is minutes of driving after the fact. It is the end time the record
+     * gets if the user accepts.
      *
-     * Only emitted from `DEPARTURE_CANDIDATE → DRIVING`, which is §7's guard in full. §11's
-     * "if uncertain → suggestion, not destructive silent end" is honoured by the state
-     * *below* it: reaching `DEPARTURE_CANDIDATE` and not confirming ends nothing.
+     * Only emitted from `DEPARTURE_CANDIDATE → DRIVING`, which is §7's guard in full.
+     * Reaching `DEPARTURE_CANDIDATE` and not confirming proposes nothing.
      */
-    data class EndActiveParking(val endedAtMillis: Long) : DetectionEffect
+    data class ProposeParkingEnd(val departedAtMillis: Long) : DetectionEffect
 }
 
 /** One turn of the reducer. */
@@ -406,6 +407,8 @@ class ParkingDetectionEngine(
         // judged: the user has said where the car is, and nothing the engine was inferring
         // — including a window that happened to close at this instant — outranks that.
         if (event is DetectionEvent.UserSavedParking) return userSavedParking(state, event.atMillis)
+        // `아직 주차 중` (§11a) is the same answer about where the car is, with no new record.
+        if (event is DetectionEvent.UserKeptParking) return userSavedParking(state, event.atMillis)
         // The opt-out likewise, and for iOS's reason: `endDrivingSession` acts on the state as
         // it stands, with no window judged first.
         if (event is DetectionEvent.SmartDetectionDisabled) return smartDetectionDisabled(state, event.atMillis)
@@ -431,22 +434,44 @@ class ParkingDetectionEngine(
     }
 
     /**
-     * [state] less a `PARKED` get-in whose evidence is too old to reopen a capture for — iOS
-     * `restoreGetIn`'s staleness check (`DrivingSessionTimeoutPolicy.expiryReason`: the 2 h
-     * ceiling from the get-in, or [VEHICLE_EVIDENCE_TIMEOUT_MILLIS] of vehicle silence).
+     * [state] less a session the relaunch finds already expired — the session timeout iOS
+     * applies at its relaunch (`DrivingSessionTimeoutPolicy.expiryReason`: the 2 h ceiling from
+     * the first vehicle evidence, or [VEHICLE_EVIDENCE_TIMEOUT_MILLIS] of vehicle silence),
+     * docs/05 §14 "The capture did not survive" step (2).
+     *
+     * - A `PARKED` get-in is dropped and the parking stays: a get-in is not a departure (§11).
+     * - A `DRIVING_CANDIDATE` or `DRIVING` ends in `IDLE` at [atMillis], with no candidate. The
+     *   process that ran it is gone with its capture, so nothing observed the stop; the reset's
+     *   tick would otherwise promote a latched candidate, reopen a capture at the phone's
+     *   current position and let its first stop fix raise a candidate at the wrong place.
+     *   Its silence counts the drive's own fixes as well as its vehicle edges: Android's
+     *   `IN_VEHICLE` is an edge, not iOS's continuous Core Motion stream (iOS applies the
+     *   silence bound in its adapter for that reason, `DrivingSessionTimeoutPolicy.silenceReason`),
+     *   so a drive twenty minutes past its only `vehicle_enter` whose fixes arrived until the
+     *   reboot is a drive in progress, and is kept.
      *
      * Asked only after a system reset, the one Android relaunch that reopens a capture on the
      * stored state's word (docs/05 §14); an ordinary batch never asks it, because a process
-     * death keeps the capture and its own deadline bounds it. The parking stays and nothing is
-     * ended: a get-in is not a departure (§11). `DEPARTURE_CANDIDATE` needs no check here —
-     * its lapse row already returns a stale one to `PARKED` on the reset's tick.
+     * death keeps the capture and its own deadline bounds it. `PARKING_TRANSITION` and
+     * `DEPARTURE_CANDIDATE` need no check here — their own windows settle a stale one on the
+     * reset's tick.
      */
-    fun dropsStaleGetIn(state: DetectionEngineState, atMillis: Long): DetectionEngineState {
-        if (state.state != DetectionState.PARKED) return state
+    fun dropsStaleSession(state: DetectionEngineState, atMillis: Long): DetectionEngineState {
         val evidence = state.session?.evidence ?: return state
         val pastCeiling = atMillis - evidence.vehicleFirstSeenAtMillis >= SESSION_MAXIMUM_DURATION_MILLIS
-        val silent = atMillis - evidence.lastVehicleEvidenceAtMillis >= VEHICLE_EVIDENCE_TIMEOUT_MILLIS
-        return if (pastCeiling || silent) state.copy(session = null) else state
+        val vehicleSilent = atMillis - evidence.lastVehicleEvidenceAtMillis >= VEHICLE_EVIDENCE_TIMEOUT_MILLIS
+        return when (state.state) {
+            DetectionState.PARKED -> if (pastCeiling || vehicleSilent) state.copy(session = null) else state
+            DetectionState.DRIVING_CANDIDATE, DetectionState.DRIVING -> {
+                val lastDriveEvidenceAt = maxOf(
+                    evidence.lastVehicleEvidenceAtMillis,
+                    evidence.movement.lastFix?.atMillis ?: Long.MIN_VALUE,
+                )
+                val driveSilent = atMillis - lastDriveEvidenceAt >= VEHICLE_EVIDENCE_TIMEOUT_MILLIS
+                if (pastCeiling || driveSilent) state.endSession(atMillis).state else state
+            }
+            else -> state
+        }
     }
 
     /**
@@ -723,6 +748,7 @@ class ParkingDetectionEngine(
 
             // Answered in [handle] before any fold, so they never reach here.
             is DetectionEvent.UserSavedParking,
+            is DetectionEvent.UserKeptParking,
             is DetectionEvent.SmartDetectionDisabled,
             -> state
         }
@@ -1132,10 +1158,10 @@ class ParkingDetectionEngine(
         // record open is recoverable; ending one the user is still inside is not, which is
         // why departure is the one place the stricter guard is the right guard.
         if (DrivingConfirmationGuard.evaluate(session.evidence, event.atMillis).confirmed) {
-            // The parking ended when the car pulled away — `stateEnteredAtMillis` is when
-            // §11's two bars were first cleared — not now, which is however long the strict
-            // guard took to be satisfied afterwards.
-            val ended = DetectionEffect.EndActiveParking(state.stateEnteredAtMillis)
+            // §11a: the end is proposed, never taken. It is stamped when the car pulled away
+            // — `stateEnteredAtMillis` is when §11's two bars were first cleared — not now,
+            // which is however long the strict guard took to be satisfied afterwards.
+            val proposed = DetectionEffect.ProposeParkingEnd(state.stateEnteredAtMillis)
             val confirmed = state.moveTo(DetectionState.DRIVING, event.atMillis)
             // docs/05 §11: the event that confirmed the departure is then read in `DRIVING`,
             // as `DRIVING_CANDIDATE` reads the exit that promoted it. A `vehicle_exit` or a
@@ -1144,7 +1170,7 @@ class ParkingDetectionEngine(
             // swallowing it lost the next parking.
             val next = fromDriving(confirmed.state, event)
             val step = if (next.effects.isEmpty()) confirmed else next
-            return EngineStep(step.state, listOf(ended) + step.effects)
+            return EngineStep(step.state, listOf(proposed) + step.effects)
         }
         // The stale-evidence half of §11's lapse is a timeout and lives in [timeoutRow];
         // an explicit exit is the event half.
@@ -1158,13 +1184,15 @@ class ParkingDetectionEngine(
     }
 
     /**
-     * §11c: the user saved a parking themselves, so the car is parked — from any state.
+     * §11c: the user saved a parking themselves, so the car is parked — from any state. §11a's
+     * `아직 주차 중` ([DetectionEvent.UserKeptParking]) lands here too: the same answer about
+     * where the car is, with no new record.
      *
      * The travel session goes, whole and silently: its driving evidence, a parking
      * transition, a departure's evidence and the vehicle activity with them. No candidate,
      * because the user just answered the question the session was building toward; and no
-     * [DetectionEffect.EndActiveParking], because the save flow closes the previous record
-     * itself and ending one here would close the record just written. Dropping the session
+     * [DetectionEffect.ProposeParkingEnd], because the user has just said where the car is and
+     * the save flow settles any previous record itself. Dropping the session
      * is also what makes the next `vehicle_enter` open a *departure's* evidence, which
      * §11's two bars and §7's guard then have to earn as before.
      *
@@ -1638,10 +1666,10 @@ class ParkingDetectionEngine(
          * iOS `DrivingSessionTimeoutPolicy.vehicleEvidenceTimeout`, 600 s: the silence after
          * which a session's vehicle evidence no longer justifies reopening a capture. Ten
          * minutes, not §11's 300 s, because a tunnel or a long queue is silent for minutes
-         * inside a real drive (docs/05 §14, stale get-in).
+         * inside a real drive (docs/05 §14, stale session).
          *
          * Not an engine window — no §3a row reads it, so a fixture with a 45-minute gap between
-         * `vehicle_enter` and `vehicle_exit` still replays. Read only by [dropsStaleGetIn], on
+         * `vehicle_enter` and `vehicle_exit` still replays. Read only by [dropsStaleSession], on
          * the one Android relaunch that reopens a capture on the stored state's word.
          */
         const val VEHICLE_EVIDENCE_TIMEOUT_MILLIS: Long = 10 * 60 * 1000L

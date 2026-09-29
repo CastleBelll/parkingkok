@@ -101,7 +101,12 @@ fun ParkingpinApp(
     // what takes the stored candidate down, so nothing can be created from one that is
     // past its 45 minutes. Every resume, because the process may have been dead for hours.
     LifecycleResumeEffect(container) {
-        val job = container.applicationScope.launch { container.parkingCandidateCoordinator.expireIfDue() }
+        val job = container.applicationScope.launch {
+            container.parkingCandidateCoordinator.expireIfDue()
+            // docs/05 §11a: a departure question about a record ended or deleted meanwhile
+            // is dropped, and its notification withdrawn, the next time anything looks.
+            container.parkingEndProposalCoordinator.dropIfStale()
+        }
         onPauseOrDispose { job.cancel() }
     }
 
@@ -323,6 +328,8 @@ private fun HomeRoute(container: AppContainer, onNavigate: (ParkingpinRoute) -> 
         onDismissPillarSuggestion = viewModel::onDismissPillarSuggestion,
         onStepFloor = viewModel::onStepFloor,
         onEndParking = viewModel::onEndParking,
+        onAcceptParkingEnd = viewModel::onAcceptParkingEnd,
+        onKeepParking = viewModel::onKeepParking,
         onSaveParking = { onNavigate(ParkingpinRoute.ManualEntry()) },
         // docs/02 §6a: the same form, opened with the camera already firing, so the floor
         // arrives read rather than typed.

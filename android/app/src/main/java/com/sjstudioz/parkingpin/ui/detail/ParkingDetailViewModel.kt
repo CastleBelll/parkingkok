@@ -76,6 +76,8 @@ class ParkingDetailViewModel(
     private val suggestFromPillarPhoto: SuggestFromPillarPhotoUseCase,
     private val applyPillarSuggestion: ApplyPillarSuggestionUseCase,
     clock: Clock,
+    /** Ending the parking by hand drops a pending departure question (docs/05 §11a). */
+    private val withdrawEndProposal: suspend () -> Unit = {},
 ) : ViewModel() {
 
     private val notice = MutableStateFlow<UiNotice?>(null)
@@ -112,7 +114,10 @@ class ParkingDetailViewModel(
         )
 
     fun onEndParking() {
-        viewModelScope.launch { endParking() }
+        viewModelScope.launch {
+            endParking()
+            withdrawEndProposal()
+        }
     }
 
     fun onDelete() {
@@ -214,6 +219,7 @@ class ParkingDetailViewModel(
                             container.clock,
                         ),
                         clock = container.clock,
+                        withdrawEndProposal = container.parkingEndProposalCoordinator::withdraw,
                     ) as T
             }
     }

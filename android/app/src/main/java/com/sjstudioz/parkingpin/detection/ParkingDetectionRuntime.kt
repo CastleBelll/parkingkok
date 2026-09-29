@@ -1,9 +1,6 @@
 package com.sjstudioz.parkingpin.detection
 
 import android.util.Log
-import com.sjstudioz.parkingpin.analytics.AnalyticsEvent
-import com.sjstudioz.parkingpin.analytics.AnalyticsRecording
-import com.sjstudioz.parkingpin.domain.parking.ParkingRecord
 import com.sjstudioz.parkingpin.analytics.DetectionProperties
 import com.sjstudioz.parkingpin.analytics.DistanceBucket
 import com.sjstudioz.parkingpin.analytics.DriveDurationBucket
@@ -62,25 +59,26 @@ import java.util.UUID
  * holds is a Play services `PendingIntent` that outlives this process, and every broadcast
  * reloads the state. What must not outlive the capture is the window: before any batch —
  * and before the capture question a motion event asks — a window whose capture is gone
- * ([captureRunning] false: reboot, force-stop, app update, revoked permission, an expired or
- * failed request) is closed, the candidate kept. That is rule 4's lost capture, and the
- * state §19 forbids ("still holds the capture") never reaches the engine or the follow.
+ * ([captureRunning] false: revoked permission, an expired or failed request) is closed, the
+ * candidate kept. That is rule 4's lost capture, and the state §19 forbids ("still holds the
+ * capture") never reaches the engine or the follow. A reboot, force-stop or app update is the
+ * one exception (docs/05 §14 "The capture did not survive"): the system dropped the capture,
+ * so [resumeAfterSystemReset] reopens it and the window rides on the reopened capture, as it
+ * does on every iOS relaunch; it closes only when that capture cannot be reopened.
  */
 class ParkingDetectionRuntime(
     private val store: DetectionStateStore,
     private val candidates: () -> ParkingCandidateCoordinator,
     private val engine: ParkingDetectionEngine = ParkingDetectionEngine { UUID.randomUUID().toString() },
     /**
-     * §11 departure closes the open record. A provider for the same reason [candidates] is
-     * one: most events this runtime handles never touch Room, and it runs in whatever
-     * process a broadcast happened to start.
+     * §11a: a confirmed departure asks whether the open parking ended — it never closes it
+     * (DECIDED 2026-09-29). Called with the departure time; a provider-shaped hook for the
+     * reason [candidates] is one: most events this runtime handles never touch Room.
      *
      * Null in the tests that only care about state transitions; a departure then moves the
-     * machine and closes nothing, which is exactly what a build without a record store
-     * should do.
+     * machine and asks nothing.
      */
-    private val endParking: (suspend (Long) -> ParkingRecord?)? = null,
-    private val analytics: (() -> AnalyticsRecording)? = null,
+    private val proposeParkingEnd: (suspend (departedAtMillis: Long) -> Unit)? = null,
     /**
      * Ends the bounded Fused Location capture when the user saves a parking by hand
      * (docs/05 §11c). Null in the tests that only care about state transitions, and in a
@@ -185,7 +183,7 @@ class ParkingDetectionRuntime(
         // would leave as it is is not rewritten. The capture is stopped either way — a
         // Play services request outlives the process that asked for it.
         val changes = mutex.withLock {
-            val stored = store.readEngineStateOnce() ?: DetectionEngineState()
+            val stored = storedState()
             previewEngine.handle(current(), event).state != stored
         }
         val effects = if (changes) handle(listOf(event)) else emptyList()
@@ -206,10 +204,21 @@ class ParkingDetectionRuntime(
      * The capture is stopped after the engine, outside the lock: it has a lock of its own,
      * and a failure there must not cost the state machine its `PARKED`.
      */
-    suspend fun handleUserSavedParking(atMillis: Long): List<DetectionEffect> {
+    suspend fun handleUserSavedParking(atMillis: Long): List<DetectionEffect> =
+        handleParkedByUser(DetectionEvent.UserSavedParking(atMillis))
+
+    /**
+     * `아직 주차 중` answered a departure proposal (docs/05 §11a, contract §2
+     * `user_kept_parking`). The engine returns to `PARKED` and drops the drive the departure
+     * opened, exactly as a hand save does, so the capture that drive started is stopped too.
+     */
+    suspend fun handleUserKeptParking(atMillis: Long): List<DetectionEffect> =
+        handleParkedByUser(DetectionEvent.UserKeptParking(atMillis))
+
+    private suspend fun handleParkedByUser(event: DetectionEvent): List<DetectionEffect> {
         // The follow already releases a capture the engine had asked for; the stop is for one
-        // it had not, since a save answers the question whatever was gathering fixes for it.
-        val effects = handle(listOf(DetectionEvent.UserSavedParking(atMillis)))
+        // it had not, since the answer settles whatever was gathering fixes for it.
+        val effects = handle(listOf(event))
         stopLocationCapture?.invoke()
         return effects
     }
@@ -239,12 +248,25 @@ class ParkingDetectionRuntime(
      * departure already past §11's lapse returns to `PARKED` — and the follow that ends every
      * batch reopens the bounded capture the engine still wants, which the reboot took with it.
      * Without it a restored `DEPARTURE_CANDIDATE` got no fixes until some motion edge happened
-     * to arrive. A `PARKED` get-in whose vehicle evidence went silent long ago is dropped first
-     * ([ParkingDetectionEngine.dropsStaleGetIn], iOS `restoreGetIn`), so the reset reopens no
-     * capture for it and the parking stays.
+     * to arrive. A session the session timeout already ends is dropped first
+     * ([ParkingDetectionEngine.dropsStaleSession], iOS `settleRelaunch`): a `PARKED` get-in
+     * whose vehicle evidence went silent long ago keeps the parking, and a stale
+     * `DRIVING_CANDIDATE` / `DRIVING` ends in `IDLE` — so the reset reopens no capture for either.
+     *
+     * A stop-only resume window is carried through the reset (docs/05 §3a "The window lives
+     * exactly as long as its capture", §14 step 3), as iOS's relaunch carries it: the capture
+     * the system dropped is one to reopen, not one that failed, so the batch starts from the
+     * stored window rather than [current]'s lost-capture close. The tick settles a window
+     * that lapsed while the phone was down, the follow reopens the capture an open one wants,
+     * and only a window whose capture could not be reopened (a revoked or "only while using"
+     * permission) is closed afterwards, the candidate kept.
      */
     suspend fun resumeAfterSystemReset(atMillis: Long): List<DetectionEffect> =
-        handle(listOf(DetectionEvent.TimerTick(atMillis)), sensor = true) { engine.dropsStaleGetIn(it, atMillis) }
+        handle(
+            listOf(DetectionEvent.TimerTick(atMillis)),
+            sensor = true,
+            reopensDroppedCapture = true,
+        ) { engine.dropsStaleSession(it, atMillis) }
 
     /**
      * One batch of events, in order, under the lock.
@@ -268,6 +290,12 @@ class ParkingDetectionRuntime(
          * discards. User events and the opt-out itself are never gated.
          */
         sensor: Boolean = false,
+        /**
+         * The system dropped the capture and this batch's follow reopens what the engine still
+         * wants: a stop-only window is kept for it, and closed after the follow only if the
+         * capture could not be reopened ([closeWindowWithoutCapture]).
+         */
+        reopensDroppedCapture: Boolean = false,
         /** What the stored state must become before the batch — a system reset's cleanup. */
         prepare: (DetectionEngineState) -> DetectionEngineState = { it },
     ): List<DetectionEffect> {
@@ -276,7 +304,7 @@ class ParkingDetectionRuntime(
         var wantedAfter: LocationSessionMode? = null
         var windowOpenAfter = false
         val effects = mutex.withLock {
-            val stored = current()
+            val stored = if (reopensDroppedCapture) storedState() else current()
             // The want before the cleanup: a get-in dropped here is a capture given up, and
             // the follow releases whatever of it is still running.
             wantedBefore = LocationCaptureModePolicy.modeWantedBy(stored)
@@ -346,11 +374,14 @@ class ParkingDetectionRuntime(
      * longer holds its capture; the closure is written with the batch's own state.
      */
     private suspend fun current(): DetectionEngineState {
-        val stored = store.readEngineStateOnce() ?: DetectionEngineState()
+        val stored = storedState()
         if (stored.stopOnlyResumeWindow == null) return stored
         val holdsCapture = captureRunning?.invoke() ?: true
         return if (holdsCapture) stored else stored.copy(stopOnlyResumeWindow = null)
     }
+
+    /** The stored state exactly as the last batch wrote it, or `IDLE` for a first launch. */
+    private suspend fun storedState(): DetectionEngineState = store.readEngineStateOnce() ?: DetectionEngineState()
 
     private suspend fun apply(effects: List<DetectionEffect>) {
         for (effect in effects) {
@@ -368,13 +399,9 @@ class ParkingDetectionRuntime(
                 // half and it is already in the checkpoint written below.
                 is DetectionEffect.MarkParkingActive -> Unit
 
-                // §11 departure. The record is closed at the moment the car pulled away,
-                // and the report goes out only if a record was actually open — a departure
-                // detected for a parking the user already ended by hand is not an auto-end.
-                is DetectionEffect.EndActiveParking ->
-                    if (endParking?.invoke(effect.endedAtMillis) != null) {
-                        analytics?.invoke()?.record(AnalyticsEvent.ParkingAutoEnd)
-                    }
+                // §11a departure: asked, never ended here. The record is closed only by the
+                // user's answer or by the next parking, at the time carried here.
+                is DetectionEffect.ProposeParkingEnd -> proposeParkingEnd?.invoke(effect.departedAtMillis)
 
                 // Written together with the engine state at the end of the batch, not once
                 // per effect: §14 wants a durable checkpoint after a transition, not a file

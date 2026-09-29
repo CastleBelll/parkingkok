@@ -1,0 +1,406 @@
+{
+  "name": "field_0928_rejected",
+  "initialState": "IDLE",
+  "events": [
+    {
+      "type": "user_saved",
+      "t": 0
+    },
+    {
+      "type": "stationary_enter",
+      "t": 0,
+      "confidence": "high"
+    },
+    {
+      "type": "walking_enter",
+      "t": 1130,
+      "confidence": "high"
+    },
+    {
+      "type": "stationary_exit",
+      "t": 1130,
+      "confidence": "high"
+    },
+    {
+      "type": "location",
+      "t": 2173,
+      "accuracy": 2545.851026667492
+    },
+    {
+      "type": "location",
+      "t": 2590,
+      "accuracy": 2142.7444333161707
+    },
+    {
+      "type": "vehicle_enter",
+      "t": 2590,
+      "confidence": "high"
+    },
+    {
+      "type": "location",
+      "t": 2633,
+      "accuracy": 1709.0263149086902,
+      "distanceFromPreviousM": 1932.1327300894425
+    },
+    {
+      "type": "location",
+      "t": 2701,
+      "accuracy": 529.4165910453296,
+      "distanceFromPreviousM": 605.4473007852629
+    },
+    {
+      "type": "location",
+      "t": 2739,
+      "accuracy": 1940.1358077526006,
+      "distanceFromPreviousM": 2.966327376071607
+    },
+    {
+      "type": "location",
+      "t": 2782,
+      "accuracy": 2012.3273965759984,
+      "distanceFromPreviousM": 346.97165580861474
+    },
+    {
+      "type": "location",
+      "t": 2806,
+      "accuracy": 34.99595905151252,
+      "distanceFromPreviousM": 1207.929307263326
+    },
+    {
+      "type": "location",
+      "t": 2850,
+      "accuracy": 34.975846929498964,
+      "distanceFromPreviousM": 0.219201345230368
+    },
+    {
+      "type": "location",
+      "t": 2873,
+      "accuracy": 283.42254659907536,
+      "distanceFromPreviousM": 26.442486663344777
+    },
+    {
+      "type": "location_quality_degraded",
+      "t": 2873,
+      "fromBucket": "fair",
+      "toBucket": "poor"
+    },
+    {
+      "type": "location",
+      "t": 2890,
+      "accuracy": 954.8604121769382,
+      "distanceFromPreviousM": 0.6619140102646799
+    },
+    {
+      "type": "location",
+      "t": 2940,
+      "accuracy": 1622.4598263647072
+    },
+    {
+      "type": "location",
+      "t": 2962,
+      "accuracy": 1982.9943319437407,
+      "distanceFromPreviousM": 578.3396700620601
+    },
+    {
+      "type": "location",
+      "t": 3030,
+      "accuracy": 2041.4798317919447,
+      "distanceFromPreviousM": 2.92263808597814
+    },
+    {
+      "type": "location",
+      "t": 3064,
+      "accuracy": 2178.350558739741,
+      "distanceFromPreviousM": 334.3445672401983
+    },
+    {
+      "type": "location",
+      "t": 3092,
+      "accuracy": 2221.0167215007054,
+      "distanceFromPreviousM": 337.7133895376942
+    },
+    {
+      "type": "location",
+      "t": 3113,
+      "accuracy": 214.95782210245133,
+      "distanceFromPreviousM": 1704.3562240099116
+    },
+    {
+      "type": "location",
+      "t": 3128,
+      "accuracy": 221.90321999595812,
+      "distanceFromPreviousM": 2.5017340795129126
+    },
+    {
+      "type": "location",
+      "t": 3156,
+      "accuracy": 59.40081961993383,
+      "distanceFromPreviousM": 3.182805711441687
+    },
+    {
+      "type": "location",
+      "t": 3182,
+      "accuracy": 433.04118650785864,
+      "distanceFromPreviousM": 11.840789077870674
+    },
+    {
+      "type": "location",
+      "t": 3231,
+      "accuracy": 753.2961404045126,
+      "distanceFromPreviousM": 0.3515387426725434
+    },
+    {
+      "type": "location",
+      "t": 3245,
+      "accuracy": 1096.3096592793859
+    },
+    {
+      "type": "location",
+      "t": 3265,
+      "accuracy": 1540.0117482235612,
+      "distanceFromPreviousM": 158.08294249049348
+    },
+    {
+      "type": "location",
+      "t": 3281,
+      "accuracy": 1561.3923981909954,
+      "distanceFromPreviousM": 140.34009945346153
+    },
+    {
+      "type": "location",
+      "t": 3304,
+      "accuracy": 111.04547246479639,
+      "distanceFromPreviousM": 1093.3914930779977
+    },
+    {
+      "type": "location",
+      "t": 3358,
+      "accuracy": 34.897325536223626,
+      "distanceFromPreviousM": 7.665679967742331
+    },
+    {
+      "type": "location",
+      "t": 3364,
+      "accuracy": 36.78591103599805,
+      "distanceFromPreviousM": 4.300470559009906
+    },
+    {
+      "type": "location_quality_degraded",
+      "t": 3364,
+      "fromBucket": "fair",
+      "toBucket": "poor"
+    },
+    {
+      "type": "location",
+      "t": 3391,
+      "accuracy": 39.3165497164885,
+      "distanceFromPreviousM": 6.021812402401901
+    },
+    {
+      "type": "location",
+      "t": 3419,
+      "accuracy": 50.62586068353281,
+      "distanceFromPreviousM": 10.087742014029196
+    },
+    {
+      "type": "location",
+      "t": 3435,
+      "accuracy": 44.93229971868817,
+      "distanceFromPreviousM": 26.94512514675016
+    },
+    {
+      "type": "location",
+      "t": 3451,
+      "accuracy": 22.700040059054317,
+      "speed": 0,
+      "distanceFromPreviousM": 87.33494177472397
+    },
+    {
+      "type": "location",
+      "t": 3467,
+      "accuracy": 14.245954590575272,
+      "speed": 0.18398658931255332,
+      "distanceFromPreviousM": 20.27416146958533
+    },
+    {
+      "type": "location",
+      "t": 3483,
+      "accuracy": 14.2459546095623,
+      "speed": 0.7338036018716007,
+      "distanceFromPreviousM": 14.77768707476363
+    },
+    {
+      "type": "location",
+      "t": 3499,
+      "accuracy": 12.868135771103962,
+      "speed": 0.04984236462136811,
+      "distanceFromPreviousM": 11.176825586813562
+    },
+    {
+      "type": "location",
+      "t": 3515,
+      "accuracy": 14.245954590575272,
+      "speed": 0,
+      "distanceFromPreviousM": 4.780351967811214
+    },
+    {
+      "type": "location",
+      "t": 3531,
+      "accuracy": 14.245954590575272,
+      "speed": 0,
+      "distanceFromPreviousM": 0
+    },
+    {
+      "type": "location",
+      "t": 3546,
+      "accuracy": 14.245954590575272
+    },
+    {
+      "type": "vehicle_exit",
+      "t": 3588,
+      "confidence": "high"
+    },
+    {
+      "type": "stationary_enter",
+      "t": 3588,
+      "confidence": "high"
+    },
+    {
+      "type": "location",
+      "t": 4071,
+      "accuracy": 64.91210655308548
+    },
+    {
+      "type": "location_quality_degraded",
+      "t": 4071,
+      "fromBucket": "good",
+      "toBucket": "poor"
+    },
+    {
+      "type": "location",
+      "t": 4391,
+      "accuracy": 1414
+    },
+    {
+      "type": "vehicle_enter",
+      "t": 4391,
+      "confidence": "high"
+    },
+    {
+      "type": "stationary_exit",
+      "t": 4391,
+      "confidence": "high"
+    },
+    {
+      "type": "location",
+      "t": 4424,
+      "accuracy": 1438.6091167453535,
+      "distanceFromPreviousM": 1206.8318841266541
+    },
+    {
+      "type": "location",
+      "t": 4497,
+      "accuracy": 1414,
+      "distanceFromPreviousM": 1105.0236014114
+    },
+    {
+      "type": "location",
+      "t": 4538,
+      "accuracy": 1454.3914842489226,
+      "distanceFromPreviousM": 1145.5469020674923
+    },
+    {
+      "type": "location",
+      "t": 4559,
+      "accuracy": 221.85617676139546
+    },
+    {
+      "type": "location",
+      "t": 4589,
+      "accuracy": 127.08269393074643,
+      "distanceFromPreviousM": 2293.2774082103488
+    },
+    {
+      "type": "location",
+      "t": 4604,
+      "accuracy": 173.90580446266105,
+      "distanceFromPreviousM": 58.96947351278075
+    },
+    {
+      "type": "location",
+      "t": 4624,
+      "accuracy": 119.69004549741578,
+      "distanceFromPreviousM": 155.3702086842502
+    },
+    {
+      "type": "location",
+      "t": 4639,
+      "accuracy": 140.8825056975606,
+      "distanceFromPreviousM": 82.28012628349416
+    },
+    {
+      "type": "location",
+      "t": 4654,
+      "accuracy": 117.6867042231056,
+      "speed": 0,
+      "distanceFromPreviousM": 133.51335270902098
+    },
+    {
+      "type": "location",
+      "t": 4670,
+      "accuracy": 79.14708099978512,
+      "speed": 0,
+      "distanceFromPreviousM": 95.98891872782004
+    },
+    {
+      "type": "location",
+      "t": 4686,
+      "accuracy": 53.57618829315909,
+      "distanceFromPreviousM": 53.67119192160067
+    },
+    {
+      "type": "location",
+      "t": 4715,
+      "accuracy": 78.308778988,
+      "distanceFromPreviousM": 49.76103659068121
+    },
+    {
+      "type": "location",
+      "t": 4715,
+      "accuracy": 78.308778988
+    },
+    {
+      "type": "vehicle_exit",
+      "t": 4715,
+      "confidence": "high"
+    },
+    {
+      "type": "walking_enter",
+      "t": 4715,
+      "confidence": "high"
+    }
+  ],
+  "expected": null,
+  "_todo": {
+    "status": "needs_human_review",
+    "proposedExpected": {
+      "candidate": false
+    },
+    "rationale": "The label says a car trip that did not end in a parking. No candidate should have been created; the final state depends on where the recording stops (still driving, a fuel stop, a red light), so decide it from the events. This draft was converted with --repair: the recording contradicted itself and was rescued rather than re-made. See `repair` for which source events were dropped or reordered, and check them against the trace before trusting anything nearby. The engine was PARKED when the recording began (a parking saved by hand on 09-27 19:27 was open until the 08:48 auto end), so the draft opens with user_saved at t=0 from IDLE rather than initialState PARKED, which the iOS runner cannot seed; event indices are therefore shifted by one from the trace.",
+    "repair": {
+      "droppedReplayIndices": [],
+      "reorderedIndices": [
+        44,
+        45
+      ]
+    },
+    "source": {
+      "sessionId": "C857F31C-6448-4290-93F0-CBA270BC744A",
+      "platform": "ios",
+      "labelMode": "car",
+      "labelParked": false,
+      "durationSeconds": 4715,
+      "eventCount": 64
+    }
+  }
+}

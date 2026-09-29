@@ -58,6 +58,12 @@ struct ParkingSession: Sendable, Equatable, Identifiable {
     /// as `03` under the floor, at hero weight, with nothing saying what the number was.
     /// The zone is what made the pair legible, so without one the number takes the word.
     var placeText: String? {
+        Self.placeText(zone: zone, spot: spot)
+    }
+
+    /// The same rule for a parking held as loose fields — the widget projection a background
+    /// wake reads when it asks about a departure (docs/05 §11a) has no `ParkingSession`.
+    static func placeText(zone: String?, spot: String?) -> String? {
         switch (zone, spot) {
         case let (zone?, spot?): "\(zone) · \(spot)"
         case let (zone?, nil): zone
@@ -70,7 +76,7 @@ struct ParkingSession: Sendable, Equatable, Identifiable {
     ///
     /// FR-006 lets the field hold any text, and a person copying a wall writes `01번` as
     /// often as `01`. Appending unconditionally rendered that as `01번번`.
-    private func spotAlone(_ spot: String) -> String {
+    private static func spotAlone(_ spot: String) -> String {
         spot.hasSuffix("번") ? spot : "\(spot)번"
     }
 

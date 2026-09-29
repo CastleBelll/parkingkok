@@ -147,6 +147,11 @@
             android:name=".detection.ParkingCandidateReceiver"
             android:exported="false" />
 
+        <!-- 주차 종료 / 아직 주차 중 on the departure question (docs/05 §11a). -->
+        <receiver
+            android:name=".detection.ParkingEndProposalReceiver"
+            android:exported="false" />
+
         <!-- The car link (docs/05 §3a). Declared in the manifest rather than registered
              at runtime because the signal is worth nothing unless it arrives while the app
              is not running — the disconnect happens as the driver walks away. ACL_CONNECTED

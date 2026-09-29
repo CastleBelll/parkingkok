@@ -14,17 +14,14 @@ struct DetectionCheckpoint: Sendable, Equatable, Codable {
     /// Metres travelled in the current vehicle session.
     var travelDistanceEstimate: Double
     var candidateId: UUID?
-    /// docs/05 §14 "A restored departure keeps its evidence" (2026-09-28): the get-in session
-    /// `PARKED` measures §11's bars on, and the departure `DEPARTURE_CANDIDATE` asks §7's
-    /// guard of — and the drive of `DRIVING_CANDIDATE` or `DRIVING` while it has lost its
-    /// capture (§11 "A lost capture decides nothing"), which a relaunch cannot rebuild — and
-    /// the drive of a `PARKING_TRANSITION` that has no capture, so a relaunch reopens none
-    /// (§11 "A lost capture stays lost for its session"). `nil` in every other case, and in
-    /// any checkpoint written before schema 2.
-    ///
-    /// On-device only, like `lastReliableLocation`: it holds the session's anchor fixes, and
-    /// `DiagnosticsReport` flattens the checkpoint precisely so they never leave the device.
-    var departure: DepartureCheckpoint?
+    /// The rest of the engine's state (docs/05 §14 "Both platforms persist and reload their
+    /// whole engine state", schema 3): with the fields above it is everything the engine
+    /// holds, written whenever any of it changes and restored verbatim. `nil` only in a
+    /// checkpoint written before schema 3, which `ParkingDetectionEngine.restore` migrates.
+    var engine: DetectionEngineRecord?
+    /// Schema 2's departure record, read from such a checkpoint and never written again — the
+    /// one input of the pre-schema-3 migration it did not have as a field of its own.
+    var legacyDeparture: DepartureCheckpoint?
     /// Bumped on every write so a widget or a later process can detect staleness
     /// (docs/04 §13 uses the same idea for the shared snapshot).
     var revision: Int
@@ -37,7 +34,8 @@ struct DetectionCheckpoint: Sendable, Equatable, Codable {
         lastLocationAt: Date? = nil,
         travelDistanceEstimate: Double = 0,
         candidateId: UUID? = nil,
-        departure: DepartureCheckpoint? = nil,
+        engine: DetectionEngineRecord? = nil,
+        legacyDeparture: DepartureCheckpoint? = nil,
         revision: Int = 0
     ) {
         self.state = state
@@ -47,13 +45,14 @@ struct DetectionCheckpoint: Sendable, Equatable, Codable {
         self.lastLocationAt = lastLocationAt
         self.travelDistanceEstimate = travelDistanceEstimate
         self.candidateId = candidateId
-        self.departure = departure
+        self.engine = engine
+        self.legacyDeparture = legacyDeparture
         self.revision = revision
     }
 
-    /// The first checkpoint a fresh install writes.
+    /// The first checkpoint a fresh install writes: `IDLE`, with an empty engine state.
     static func initial(at date: Date) -> DetectionCheckpoint {
-        DetectionCheckpoint(state: .idle, stateEnteredAt: date)
+        DetectionCheckpoint(state: .idle, stateEnteredAt: date, engine: DetectionEngineRecord())
     }
 
     /// Newest timestamp the checkpoint knows about — the anchor for motion replay
@@ -67,13 +66,19 @@ struct DetectionCheckpoint: Sendable, Equatable, Codable {
     func age(now: Date) -> TimeInterval {
         now.timeIntervalSince(latestTimestamp)
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case state, stateEnteredAt, lastAutomotiveAt, lastReliableLocation, lastLocationAt
+        case travelDistanceEstimate, candidateId, engine, revision
+        /// Schema 2's key, kept so a schema 2 file still decodes.
+        case legacyDeparture = "departure"
+    }
 }
 
-/// What a process death must not take from a departure (docs/05 §14): everything §11's bars
-/// and §7's guard read — the session's start, distance and its anchor, moving samples, the
-/// last vehicle evidence (a car-link edge included, §11b) — and the vehicle-activity level
-/// §11's 90 s bar is measured from. Android's runtime reloads the same things with its whole
-/// engine state.
+/// Schema 2's departure record (2026-09-28 to 2026-09-29): the session a `PARKED` get-in or a
+/// `DEPARTURE_CANDIDATE` measured, and the drive of a session that had lost its capture.
+/// Read only to migrate such a checkpoint (`ParkingDetectionEngine.restore`); schema 3
+/// persists the whole engine state (`DetectionEngineRecord`) instead.
 struct DepartureCheckpoint: Sendable, Equatable, Codable {
     var drive: DrivingEvidence
     /// When the current stretch of vehicle activity began; `nil` when none is active.

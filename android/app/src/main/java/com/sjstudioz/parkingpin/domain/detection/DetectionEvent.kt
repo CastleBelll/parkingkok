@@ -105,6 +105,16 @@ sealed interface DetectionEvent {
     data class UserSavedParking(override val atMillis: Long) : DetectionEvent
 
     /**
+     * The user answered a departure proposal with `아직 주차 중` (docs/05 §11a, contract §2
+     * `user_kept_parking`, DECIDED 2026-09-29).
+     *
+     * The same move as [UserSavedParking] — every state goes to `PARKED` and the drive the
+     * departure opened is dropped silently — except that no record is written: the car is
+     * still where the open record says it is.
+     */
+    data class UserKeptParking(override val atMillis: Long) : DetectionEvent
+
+    /**
      * The user switched Smart Detection off (docs/05 §11 / §3a rule 4) — iOS's
      * `endDrivingSession(reason: .smartDetectionDisabled)`.
      *

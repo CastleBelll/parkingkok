@@ -62,10 +62,11 @@ struct FileDetectionCheckpointStore: DetectionCheckpointStoring {
     /// Bump whenever the encoded shape changes; a payload outside `readableSchemaVersions`
     /// is rejected rather than half-decoded.
     ///
-    /// 2 (2026-09-28) added `DetectionCheckpoint.departure`. Additive and optional, so a
-    /// schema 1 payload still decodes — with no departure evidence, which the engine treats
-    /// as a departure it cannot judge (docs/05 §14).
-    static let schemaVersion = 2
+    /// 2 (2026-09-28) added the departure record (`DetectionCheckpoint.legacyDeparture`).
+    /// 3 (2026-09-29) replaced it with the whole engine state (`DetectionCheckpoint.engine`,
+    /// docs/05 §14). Both additions are optional keys, so a schema 1 or 2 payload still
+    /// decodes — with no engine state, which `ParkingDetectionEngine.restore` migrates.
+    static let schemaVersion = 3
     static let readableSchemaVersions: ClosedRange<Int> = 1 ... schemaVersion
 
     private static let directoryName = "Detection"

@@ -208,6 +208,7 @@
     <string name="manual_cancel">취소</string>
     <string name="manual_privacy_note">입력한 내용과 위치는 이 기기에만 저장돼요.</string>
     <string name="manual_already_active">이미 주차 중인 기록이 있어요. 먼저 종료해 주세요.</string>
+    <string name="manual_save_failed">저장하지 못했어요. 다시 시도해 주세요.</string>
 
     <!-- Parking detail (design-references/03-parking-detail.png) -->
     <string name="detail_title">주차 위치</string>

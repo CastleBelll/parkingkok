@@ -47,6 +47,9 @@ final class DetectionRuntime {
     /// the screen's model and this coordinator must write to the one file, or a
     /// confirmation answered on the lock screen would be missing from the list.
     private(set) var candidateHistoryStore: (any CandidateHistoryStoring)?
+    /// The pending departure proposal (docs/05 §11a). Exposed for the same reason: the home
+    /// row and the notification actions answer the proposal this coordinator wrote.
+    private(set) var parkingEndProposalStore: (any ParkingEndProposalStoring)?
 
     init(
         monitor: SignificantLocationMonitor = SignificantLocationMonitor(),
@@ -60,6 +63,8 @@ final class DetectionRuntime {
         candidateStore: (any ParkingCandidateStoring)? = nil,
         candidateHistory: (any CandidateHistoryStoring)? = nil,
         candidateNotifier: (any CandidateNotifying)? = nil,
+        proposalStore: (any ParkingEndProposalStoring)? = nil,
+        proposalNotifier: (any ParkingEndProposalNotifying)? = nil,
         analytics: any AnalyticsRecording = AnalyticsComposition.recorder,
         carLink: any CarLinkObserving = AudioRouteCarLinkObserver()
     ) {
@@ -122,6 +127,11 @@ final class DetectionRuntime {
         let history = candidateHistory
             ?? (try? FileCandidateHistoryStore(fileURL: FileCandidateHistoryStore.defaultFileURL()))
         candidateHistoryStore = history
+        // docs/05 §11a. Same directory, same reason: a departure is noticed on a background
+        // wake and answered from a screen, a notification, or not at all.
+        let proposals = proposalStore
+            ?? (try? FileParkingEndProposalStore(fileURL: FileParkingEndProposalStore.defaultFileURL()))
+        parkingEndProposalStore = proposals
 
         coordinator = BackgroundCoordinator(
             checkpointStore: store,
@@ -132,12 +142,14 @@ final class DetectionRuntime {
             candidateHistory: history,
             candidateNotifier: candidateNotifier ?? UserNotificationCandidateDelivery(),
             analytics: analytics,
-            // §11. Resolved at call time rather than captured: this runtime is built on a
-            // background wake that may precede the model container entirely, and only a
-            // confirmed departure ever reaches here.
-            endActiveParking: { at in
-                await MainActor.run { ParkingComposition.shared?.model.endActiveParking(at: at) ?? false }
-            }
+            // §11a. The widget projection, not SwiftData: this runtime is built on a
+            // background wake that may precede the model container entirely (docs/04 §7),
+            // and the projection is what the app keeps in step with the active record.
+            activeParking: {
+                FileActiveParkingSnapshotStore.appGroup()?.read().map(ActiveParkingSummary.init)
+            },
+            proposalStore: proposals,
+            proposalNotifier: proposalNotifier ?? UserNotificationParkingEndProposalDelivery()
         )
         locationAuthorization = monitor.authorization
         motionAuthorization = motionHistory.authorization
@@ -221,6 +233,7 @@ final class DetectionRuntime {
             router.register { labelPromptResponder }
         }
         router.register { ParkingComposition.shared?.candidateResponder }
+        router.register { ParkingComposition.shared?.proposalResponder }
         UNUserNotificationCenter.current().delegate = router
     }
 
@@ -428,6 +441,12 @@ extension DetectionRuntime: CandidateResolving {
 extension DetectionRuntime: ManualParkingReporting {
     func userSavedParking(at date: Date) async {
         await coordinator.userSavedParking(at: date)
+        await exportDiagnostics()
+    }
+
+    /// docs/05 §11a: 아직 주차 중 — the car is still where the active parking says.
+    func userKeptParking(at date: Date) async {
+        await coordinator.userKeptParking(at: date)
         await exportDiagnostics()
     }
 }

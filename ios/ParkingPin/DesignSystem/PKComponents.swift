@@ -156,6 +156,24 @@ struct PKPrimaryButtonStyle: ButtonStyle {
     }
 }
 
+/// The filled action at an outlined sibling's height — the primary of a pair inside a card
+/// (docs/05 §11a's 주차 종료 beside 아직 주차 중), where the full-height style would outrank
+/// the card's own hero.
+struct PKCompactPrimaryButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(PKTypography.row)
+            .foregroundStyle(Color.white)
+            .frame(maxWidth: .infinity, minHeight: PKSize.minimumTouchTarget)
+            .padding(.vertical, PKSpacing.m)
+            .background {
+                RoundedRectangle(cornerRadius: PKRadius.button)
+                    .fill(PKColor.primary)
+            }
+            .pkPressFeedback(configuration.isPressed)
+    }
+}
+
 /// The two-line call to action the mocks use for the consequential one: what it does on
 /// top, what it will do to your data underneath (`01-home-main.png`, `03-parking-detail`).
 ///

@@ -121,11 +121,17 @@ fun ManualParkingScreen(
             }
         }
 
-        if (state.alreadyActive) {
-            item("already-active") {
+        val refusal = when {
+            state.alreadyActive -> R.string.manual_already_active
+            // Nothing was saved and nothing ended (docs/05 §11a); the form keeps what was typed.
+            state.saveFailed -> R.string.manual_save_failed
+            else -> null
+        }
+        if (refusal != null) {
+            item("save-refused") {
                 ParkingpinCard {
                     Text(
-                        text = stringResource(R.string.manual_already_active),
+                        text = stringResource(refusal),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.error,
                     )

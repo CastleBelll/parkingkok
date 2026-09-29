@@ -348,12 +348,12 @@ class ParkingDetectionEngineTest {
         // Opening is not ending: §11a says only §7's guard closes a record.
         assertTrue(
             "a connect is not yet a drive",
-            step.effects.none { it is DetectionEffect.EndActiveParking },
+            step.effects.none { it is DetectionEffect.ProposeParkingEnd },
         )
     }
 
     @Test
-    fun `a car link departure ends the parking at the moment of the connect`() {
+    fun `a car link departure proposes the end at the moment of the connect`() {
         val parked = pendingCandidate().handle(DetectionEvent.UserConfirmedParking(T0 + 40_000))
         val gotIn = parked.handle(DetectionEvent.CarLinkConnected(T1))
 
@@ -373,10 +373,10 @@ class ParkingDetectionEngineTest {
         }
 
         assertEquals(DetectionState.DRIVING, confirmed.state)
-        val ended = effects.filterIsInstance<DetectionEffect.EndActiveParking>().single()
+        val ended = effects.filterIsInstance<DetectionEffect.ProposeParkingEnd>().single()
         // Better than what §11's bars answered: the record closes when the phone rejoined
         // the car, not whenever 90 s and 500 m were reached afterwards.
-        assertEquals(T1, ended.endedAtMillis)
+        assertEquals(T1, ended.departedAtMillis)
     }
 
     @Test
@@ -391,7 +391,7 @@ class ParkingDetectionEngineTest {
         )
 
         assertEquals(DetectionState.PARKED, step.state.state)
-        assertTrue(step.effects.none { it is DetectionEffect.EndActiveParking })
+        assertTrue(step.effects.none { it is DetectionEffect.ProposeParkingEnd })
     }
 
     @Test
@@ -448,10 +448,10 @@ class ParkingDetectionEngineTest {
         // Assert — opened, not confirmed; the next event confirms and the parking ends at
         // the DEPARTURE_CANDIDATE entry.
         assertEquals(DetectionState.DEPARTURE_CANDIDATE, opening.state.state)
-        assertTrue(opening.effects.none { it is DetectionEffect.EndActiveParking })
+        assertTrue(opening.effects.none { it is DetectionEffect.ProposeParkingEnd })
         assertEquals(DetectionState.DRIVING, confirming.state.state)
-        val ended = confirming.effects.filterIsInstance<DetectionEffect.EndActiveParking>().single()
-        assertEquals(T1 + 130_000, ended.endedAtMillis)
+        val ended = confirming.effects.filterIsInstance<DetectionEffect.ProposeParkingEnd>().single()
+        assertEquals(T1 + 130_000, ended.departedAtMillis)
     }
 
     /**
@@ -483,8 +483,8 @@ class ParkingDetectionEngineTest {
 
         // Assert — the old parking ends at the DEPARTURE_CANDIDATE entry, and the exit opens
         // the transition the walk confirms.
-        val ended = exit.effects.filterIsInstance<DetectionEffect.EndActiveParking>().single()
-        assertEquals(at(700), ended.endedAtMillis)
+        val ended = exit.effects.filterIsInstance<DetectionEffect.ProposeParkingEnd>().single()
+        assertEquals(at(700), ended.departedAtMillis)
         assertEquals(DetectionState.PARKING_TRANSITION, exit.state.state)
         assertEquals(at(740), exit.state.stateEnteredAtMillis)
         assertEquals(DetectionState.CANDIDATE_PENDING, walk.state.state)
@@ -513,7 +513,7 @@ class ParkingDetectionEngineTest {
         assertEquals(DetectionState.PARKED, step.state.state)
         assertNull(step.state.session)
         assertNull(LocationCaptureModePolicy.modeWantedBy(step.state))
-        assertTrue(step.effects.none { it is DetectionEffect.EndActiveParking })
+        assertTrue(step.effects.none { it is DetectionEffect.ProposeParkingEnd })
     }
 
     @Test
@@ -525,9 +525,9 @@ class ParkingDetectionEngineTest {
         val step = engine.handle(departing, DetectionEvent.CarLinkDisconnected(at(740)))
 
         // Assert — the end first, then the new parking, on the same event.
-        val endAt = step.effects.indexOfFirst { it is DetectionEffect.EndActiveParking }
+        val endAt = step.effects.indexOfFirst { it is DetectionEffect.ProposeParkingEnd }
         val createAt = step.effects.indexOfFirst { it is DetectionEffect.CreateCandidate }
-        assertEquals(at(700), (step.effects[endAt] as DetectionEffect.EndActiveParking).endedAtMillis)
+        assertEquals(at(700), (step.effects[endAt] as DetectionEffect.ProposeParkingEnd).departedAtMillis)
         assertTrue("the parking ends before the next one is raised", endAt in 0 until createAt)
         assertEquals(DetectionState.CANDIDATE_PENDING, step.state.state)
     }
@@ -542,7 +542,7 @@ class ParkingDetectionEngineTest {
 
         // Assert
         assertEquals(DetectionState.PARKED, step.state.state)
-        assertTrue(step.effects.none { it is DetectionEffect.EndActiveParking })
+        assertTrue(step.effects.none { it is DetectionEffect.ProposeParkingEnd })
     }
 
     /**
@@ -560,7 +560,7 @@ class ParkingDetectionEngineTest {
 
         // Assert
         assertEquals(DetectionState.DRIVING, step.state.state)
-        assertEquals(at(700), step.effects.filterIsInstance<DetectionEffect.EndActiveParking>().single().endedAtMillis)
+        assertEquals(at(700), step.effects.filterIsInstance<DetectionEffect.ProposeParkingEnd>().single().departedAtMillis)
         assertTrue(step.effects.none { it is DetectionEffect.CreateCandidate })
     }
 
@@ -607,7 +607,7 @@ class ParkingDetectionEngineTest {
         assertEquals(DetectionState.PARKED, control.state.state)
         assertEquals(DetectionState.DEPARTURE_CANDIDATE, connected.state)
         assertEquals(DetectionState.DRIVING, step.state.state)
-        assertEquals(T1 + SUSTAIN, step.effects.filterIsInstance<DetectionEffect.EndActiveParking>().single().endedAtMillis)
+        assertEquals(T1 + SUSTAIN, step.effects.filterIsInstance<DetectionEffect.ProposeParkingEnd>().single().departedAtMillis)
     }
 
     /**
@@ -629,9 +629,9 @@ class ParkingDetectionEngineTest {
         // Assert — the disconnect's evidence is 250 s old at the tick: recent, so the tick
         // meets §7's guard where the control lapsed.
         assertEquals(DetectionState.PARKED, control.state.state)
-        assertTrue(control.effects.none { it is DetectionEffect.EndActiveParking })
+        assertTrue(control.effects.none { it is DetectionEffect.ProposeParkingEnd })
         assertEquals(DetectionState.DEPARTURE_CANDIDATE, disconnected.state)
-        assertEquals(T1 + SUSTAIN, step.effects.filterIsInstance<DetectionEffect.EndActiveParking>().single().endedAtMillis)
+        assertEquals(T1 + SUSTAIN, step.effects.filterIsInstance<DetectionEffect.ProposeParkingEnd>().single().departedAtMillis)
     }
 
     // ── §3a "The car link" ──────────────────────────────────────────────────────────
@@ -1706,7 +1706,7 @@ class ParkingDetectionEngineTest {
             val step = engine.handle(before, DetectionEvent.UserSavedParking(savedAt))
 
             // Assert — §11c: whatever was being inferred is dropped, silently. In particular
-            // `EndActiveParking` here would close the record the user just wrote.
+            // `ProposeParkingEnd` here would ask to close the record the user just wrote.
             assertEquals(name, DetectionState.PARKED, step.state.state)
             assertEquals(name, savedAt, step.state.stateEnteredAtMillis)
             assertNull("$name: the session and its vehicle activity are gone", step.state.session)
@@ -1731,7 +1731,7 @@ class ParkingDetectionEngineTest {
         assertEquals(DetectionState.PARKED, step.state.state)
         assertNull(step.state.candidate)
         assertEquals(DetectionEffect.RetireCandidate(candidateId), step.effects.filterIsInstance<DetectionEffect.RetireCandidate>().single())
-        assertTrue(step.effects.none { it is DetectionEffect.EndActiveParking || it is DetectionEffect.MarkParkingActive })
+        assertTrue(step.effects.none { it is DetectionEffect.ProposeParkingEnd || it is DetectionEffect.MarkParkingActive })
     }
 
     @Test
@@ -1751,7 +1751,7 @@ class ParkingDetectionEngineTest {
     }
 
     @Test
-    fun `driving away from a hand-saved parking ends it where the car pulled away`() {
+    fun `driving away from a hand-saved parking proposes its end where the car pulled away`() {
         // Arrange — the field report behind §11c: saved by hand, never answered a prompt.
         val parked = idle().handle(DetectionEvent.UserSavedParking(T0))
 
@@ -1773,8 +1773,94 @@ class ParkingDetectionEngineTest {
 
         // Assert
         assertEquals(DetectionState.DRIVING, state.state)
-        val ended = effects.filterIsInstance<DetectionEffect.EndActiveParking>().single()
-        assertEquals(checkNotNull(departureEnteredAt) { "never reached DEPARTURE_CANDIDATE" }, ended.endedAtMillis)
+        val ended = effects.filterIsInstance<DetectionEffect.ProposeParkingEnd>().single()
+        assertEquals(checkNotNull(departureEnteredAt) { "never reached DEPARTURE_CANDIDATE" }, ended.departedAtMillis)
+    }
+
+    // ── §11a the departure is asked, not ended (DECIDED 2026-09-29) ───────────────
+
+    @Test
+    fun `user_kept_parking after a proposal returns to PARKED and drops the drive silently`() {
+        // Arrange — driven away, the end proposed, the user says the car is still there.
+        val (departed, _, _) = driveAwayFrom(idle().handle(DetectionEvent.UserSavedParking(T0)))
+        val keptAt = T1 + 600_000L
+
+        // Act
+        val step = engine.handle(departed, DetectionEvent.UserKeptParking(keptAt))
+
+        // Assert — like user_saved: PARKED, the session gone, nothing created, retired or ended.
+        assertEquals(DetectionState.PARKED, step.state.state)
+        assertEquals(keptAt, step.state.stateEnteredAtMillis)
+        assertNull(step.state.session)
+        assertTrue(step.effects.all { it is DetectionEffect.PersistCheckpoint })
+    }
+
+    @Test
+    fun `the drive a kept parking interrupted produces no candidate when it ends`() {
+        // Arrange
+        val (departed, _, _) = driveAwayFrom(idle().handle(DetectionEvent.UserSavedParking(T0)))
+        val kept = departed.handle(DetectionEvent.UserKeptParking(T1 + 300_000L))
+
+        // Act
+        val step = engine.handle(
+            kept.handle(DetectionEvent.VehicleExit(T1 + 310_000L)),
+            DetectionEvent.WalkingEnter(T1 + 330_000L),
+        )
+
+        // Assert
+        assertEquals(DetectionState.PARKED, step.state.state)
+        assertTrue(step.effects.none { it is DetectionEffect.CreateCandidate })
+    }
+
+    @Test
+    fun `user_kept_parking retires a later candidate without rejecting it`() {
+        // Arrange — the drive after the departure raised a candidate before the answer came.
+        val pending = pendingCandidate()
+        val candidateId = checkNotNull(pending.candidate).id
+
+        // Act
+        val step = engine.handle(pending, DetectionEvent.UserKeptParking(T0 + 40_000))
+
+        // Assert — the car is still at the old parking, so the new guess is withdrawn.
+        assertEquals(DetectionState.PARKED, step.state.state)
+        assertNull(step.state.candidate)
+        assertEquals(listOf(DetectionEffect.RetireCandidate(candidateId)), step.effects.filterIsInstance<DetectionEffect.RetireCandidate>())
+    }
+
+    @Test
+    fun `a drive away after user_kept_parking proposes the end again`() {
+        // Arrange
+        val (departed, _, _) = driveAwayFrom(idle().handle(DetectionEvent.UserSavedParking(T0)))
+        val kept = departed.handle(DetectionEvent.UserKeptParking(T1 + 300_000L))
+
+        // Act — a later, real departure from the same parking.
+        val (state, effects, departureEnteredAt) = driveAwayFrom(kept, startAt = T1 + 3_600_000L)
+
+        // Assert
+        assertEquals(DetectionState.DRIVING, state.state)
+        assertEquals(departureEnteredAt, effects.filterIsInstance<DetectionEffect.ProposeParkingEnd>().single().departedAtMillis)
+    }
+
+    /** Gets in at [startAt] and drives 2 km: §11's two bars, then §7's guard in full. */
+    private fun driveAwayFrom(
+        parked: DetectionEngineState,
+        startAt: Long = T1,
+    ): Triple<DetectionEngineState, List<DetectionEffect>, Long> {
+        var state = parked.handle(DetectionEvent.VehicleEnter(startAt))
+        var departureEnteredAt: Long? = null
+        val effects = mutableListOf<DetectionEffect>()
+        for (leg in 1..8) {
+            val step = engine.handle(
+                state,
+                DetectionEvent.Location(fix(startAt + leg * 30_000L, accuracyM = 5f, speedMps = 15f, north = leg * 250.0)),
+            )
+            state = step.state
+            effects += step.effects
+            if (state.state == DetectionState.DEPARTURE_CANDIDATE && departureEnteredAt == null) {
+                departureEnteredAt = state.stateEnteredAtMillis
+            }
+        }
+        return Triple(state, effects, checkNotNull(departureEnteredAt) { "never reached DEPARTURE_CANDIDATE" })
     }
 
     /**
@@ -2186,7 +2272,7 @@ class ParkingDetectionEngineTest {
         assertEquals(DetectionState.PARKED, step.state.state)
         assertNull(step.state.session)
         assertNull("the capture is released", LocationCaptureModePolicy.modeWantedBy(step.state))
-        assertTrue(step.effects.none { it is DetectionEffect.EndActiveParking })
+        assertTrue(step.effects.none { it is DetectionEffect.ProposeParkingEnd })
     }
 
     @Test
@@ -2263,7 +2349,7 @@ class ParkingDetectionEngineTest {
         assertEquals("the parking keeps its own entry", at(0), step.state.stateEnteredAtMillis)
         assertNull(step.state.session)
         assertNull(LocationCaptureModePolicy.modeWantedBy(step.state))
-        assertTrue(step.effects.none { it is DetectionEffect.EndActiveParking })
+        assertTrue(step.effects.none { it is DetectionEffect.ProposeParkingEnd })
     }
 
     @Test

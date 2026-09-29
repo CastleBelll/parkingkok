@@ -35,6 +35,8 @@ import com.sjstudioz.parkingpin.detection.FusedLocationSessionController
 import com.sjstudioz.parkingpin.detection.FusedLocationSessionRegistrar
 import com.sjstudioz.parkingpin.detection.NotificationCandidateDelivery
 import com.sjstudioz.parkingpin.detection.ParkingCandidateCoordinator
+import com.sjstudioz.parkingpin.detection.NotificationParkingEndProposalDelivery
+import com.sjstudioz.parkingpin.detection.ParkingEndProposalCoordinator
 import com.sjstudioz.parkingpin.detection.ParkingDetectionRuntime
 import com.sjstudioz.parkingpin.detection.TransitionEventIngestor
 import com.sjstudioz.parkingpin.diagnostics.DiagnosticsExporter
@@ -67,7 +69,6 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
 import android.os.PowerManager
-import com.sjstudioz.parkingpin.domain.parking.usecase.EndParkingUseCase
 import com.sjstudioz.parkingpin.widget.CompositeWidgetProjectionStore
 import com.sjstudioz.parkingpin.widget.GlanceWidgetProjectionStore
 import com.sjstudioz.parkingpin.widget.LockScreenParkingNotice
@@ -353,6 +354,22 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
     }
 
     /**
+     * The departure question and everything that answers it (docs/05 §11a). Lazy for the
+     * bargain [parkingCandidateCoordinator] makes; `아직 주차 중` reaches the engine through
+     * [ParkingDetectionRuntime.handleUserKeptParking], resolved when called.
+     */
+    val parkingEndProposalCoordinator: ParkingEndProposalCoordinator by lazy {
+        ParkingEndProposalCoordinator(
+            store = detectionStateStore,
+            repository = { parkingRepository },
+            notifier = NotificationParkingEndProposalDelivery(appContext),
+            clock = clock,
+            analytics = analyticsRecorder,
+            keptParking = { atMillis -> parkingDetectionRuntime.handleUserKeptParking(atMillis) },
+        )
+    }
+
+    /**
      * Where a manual save gets its coordinates, when there are any.
      *
      * FR-001: this returning null is an ordinary outcome, not a failure — see
@@ -445,10 +462,9 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
     val parkingDetectionRuntime: ParkingDetectionRuntime = ParkingDetectionRuntime(
         store = detectionStateStore,
         candidates = { parkingCandidateCoordinator },
-        // §11 departure. Providers, not values: a broadcast-started process that only sees
-        // a transition must not pay to open Room, and only a confirmed departure calls this.
-        endParking = { endedAtMillis -> EndParkingUseCase(parkingRepository, clock)(endedAtMillis) },
-        analytics = { analyticsRecorder },
+        // §11a departure: asked, never ended. Resolved when called, so a broadcast-started
+        // process that only sees a transition does not pay to open Room.
+        proposeParkingEnd = { departedAtMillis -> parkingEndProposalCoordinator.propose(departedAtMillis) },
         // §11c: a hand save answers the question a running capture was gathering fixes for.
         stopLocationCapture = { locationSessionController.stop() },
         // docs/05 §3a / §19: the capture runs while PARKING_TRANSITION decides and is

@@ -79,7 +79,18 @@ struct HomeView: View {
                         session: active,
                         now: displayNow,
                         onStepFloor: { model.stepActiveFloor(by: $0) },
-                        onEditFloor: { isManualSheetPresented = true }
+                        onEditFloor: { isManualSheetPresented = true },
+                        endPrompt: model.endPrompt,
+                        onAcceptEnd: {
+                            pkWithAnimation(PKMotion.sessionChange, reduceMotion: reduceMotion) {
+                                _ = model.acceptEndProposal()
+                            }
+                        },
+                        onKeepParking: {
+                            pkWithAnimation(PKMotion.sessionChange, reduceMotion: reduceMotion) {
+                                model.keepParking()
+                            }
+                        }
                     )
                     .pkEntrance(1)
                     HomeActionRow(
@@ -90,16 +101,21 @@ struct HomeView: View {
                         path.append(.parkingDetail(id: active.id))
                     }
                     .pkEntrance(2)
-                    PKPrimaryActionButton(
-                        title: "주차 종료",
-                        subtitle: "주차를 종료하고 기록을 저장합니다",
-                        systemImage: "flag.checkered"
-                    ) {
-                        pkWithAnimation(PKMotion.sessionChange, reduceMotion: reduceMotion) {
-                            _ = model.endActiveParking()
+                    // One primary per screen (CLAUDE.md): while a departure proposal is
+                    // pending, the card's own 주차 종료 is that primary — it ends the parking
+                    // when the car left, which is what this button would get wrong.
+                    if model.endPrompt == nil {
+                        PKPrimaryActionButton(
+                            title: "주차 종료",
+                            subtitle: "주차를 종료하고 기록을 저장합니다",
+                            systemImage: "flag.checkered"
+                        ) {
+                            pkWithAnimation(PKMotion.sessionChange, reduceMotion: reduceMotion) {
+                                _ = model.endActiveParking()
+                            }
                         }
+                        .pkEntrance(3)
                     }
-                    .pkEntrance(3)
                 } else if candidates.pending == nil {
                     EmptyParkingCard(
                         onSaveManually: { isManualSheetPresented = true },

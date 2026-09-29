@@ -16,10 +16,11 @@ import kotlinx.coroutines.launch
  *
  * The location session is reset too, for the same reason: both events drop the Fused
  * Location request as well, so a session record that outlived it describes a registration
- * that no longer exists and has to be cleared rather than trusted. Clearing it is also what
- * closes a stop-only resume window that capture was holding (docs/05 §3a "The window lives
- * exactly as long as its capture"). The engine is then asked once, at the current time, what
- * it still wants: a restored drive or departure gets its bounded capture back (docs/05 §14).
+ * that no longer exists and has to be cleared rather than trusted. The engine is then asked
+ * once, at the current time, what it still wants: a restored drive, departure or stop-only
+ * resume window gets its bounded capture back (docs/05 §14 "The capture did not survive"
+ * step 3). A window whose capture cannot be reopened (a revoked or "only while using"
+ * permission) closes there, the candidate kept (docs/05 §3a).
  */
 class RegistrationRecoveryReceiver : BroadcastReceiver() {
 

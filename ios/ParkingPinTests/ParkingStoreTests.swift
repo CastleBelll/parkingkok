@@ -157,6 +157,40 @@ struct ParkingStoreTests {
         #expect(try store.completedSessions(limit: nil).map(\.id) == [first.id])
     }
 
+    @Test("Replacing the active parking ends it and starts the next one together")
+    func replacesActiveSession() throws {
+        // Arrange
+        let store = try makeStore()
+        let first = session()
+        try store.startSession(first)
+        let endedAt = start.addingTimeInterval(3600)
+        let second = session(startedAt: start.addingTimeInterval(7200))
+
+        // Act
+        try store.replaceActiveSession(ending: first.id, at: endedAt, with: second)
+
+        // Assert
+        #expect(try store.activeSession()?.id == second.id)
+        #expect(try store.session(id: first.id)?.endedAt == endedAt)
+    }
+
+    @Test("Replacing a record that is not the active one changes nothing")
+    func replaceRefusesWrongActive() throws {
+        // Arrange
+        let store = try makeStore()
+        let first = session()
+        try store.startSession(first)
+        let stale = UUID()
+        let second = session(startedAt: start.addingTimeInterval(7200))
+
+        // Act / Assert
+        #expect(throws: ParkingStoreError.notFound(stale)) {
+            try store.replaceActiveSession(ending: stale, at: start.addingTimeInterval(3600), with: second)
+        }
+        #expect(try store.activeSession()?.id == first.id)
+        #expect(try store.session(id: second.id) == nil)
+    }
+
     // ── docs/06 §8: completion commit ───────────────────────────────────────
 
     @Test("Ending a parking keeps the same id and moves it into history")

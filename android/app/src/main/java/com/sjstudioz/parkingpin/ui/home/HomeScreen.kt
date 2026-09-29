@@ -54,6 +54,8 @@ import androidx.compose.ui.unit.dp
 import com.sjstudioz.parkingpin.R
 import com.sjstudioz.parkingpin.ui.format.bayLabel
 import com.sjstudioz.parkingpin.domain.detection.ParkingCandidateNotice
+import com.sjstudioz.parkingpin.domain.detection.ParkingEndProposal
+import com.sjstudioz.parkingpin.domain.detection.ParkingEndProposalNotice
 import com.sjstudioz.parkingpin.domain.parking.ElapsedTime
 import com.sjstudioz.parkingpin.domain.parking.Floor
 import com.sjstudioz.parkingpin.domain.parking.FloorParser
@@ -111,6 +113,10 @@ fun HomeScreen(
     onApplyPillarSuggestion: () -> Unit,
     onDismissPillarSuggestion: () -> Unit,
     modifier: Modifier = Modifier,
+    /** docs/05 §11a `주차 종료` on the departure question. */
+    onAcceptParkingEnd: () -> Unit = {},
+    /** docs/05 §11a `아직 주차 중`. */
+    onKeepParking: () -> Unit = {},
 ) {
     var pickingPhoto by remember { mutableStateOf(false) }
 
@@ -138,9 +144,12 @@ fun HomeScreen(
             HeroSlot(
                 active = active,
                 nowMillis = state.nowMillis,
+                asksParkingEnd = state.endProposal != null,
                 onStepFloor = onStepFloor,
                 onSaveParking = onSaveParking,
                 onPhotoEntry = onPhotoEntry,
+                onAcceptParkingEnd = onAcceptParkingEnd,
+                onKeepParking = onKeepParking,
             )
         }
         val candidateId = state.pendingCandidateId
@@ -180,6 +189,9 @@ fun HomeScreen(
                     },
                     onOpenDetail = { onOpenDetail(active.id) },
                     onEndParking = onEndParking,
+                    // One primary CTA per screen: while the departure is asked, its
+                    // `주차 종료` on the card is the primary, so this one steps aside.
+                    showsEndParking = state.endProposal == null,
                 )
             }
             val notice = state.notice
@@ -262,9 +274,12 @@ private fun PendingCandidateRow(parkedAtMillis: Long?, onClick: () -> Unit) {
 private fun HeroSlot(
     active: ParkingRecord?,
     nowMillis: Long,
+    asksParkingEnd: Boolean,
     onStepFloor: (Int) -> Unit,
     onSaveParking: () -> Unit,
     onPhotoEntry: () -> Unit,
+    onAcceptParkingEnd: () -> Unit,
+    onKeepParking: () -> Unit,
 ) {
     val motionEnabled = LocalMotionEnabled.current
     AnimatedContent(
@@ -291,7 +306,10 @@ private fun HeroSlot(
             ActiveParkingCard(
                 record = record,
                 nowMillis = nowMillis,
+                asksParkingEnd = asksParkingEnd,
                 onStepFloor = onStepFloor,
+                onAcceptParkingEnd = onAcceptParkingEnd,
+                onKeepParking = onKeepParking,
             )
         }
     }
@@ -308,7 +326,10 @@ private fun HeroSlot(
 private fun ActiveParkingCard(
     record: ParkingRecord,
     nowMillis: Long,
+    asksParkingEnd: Boolean,
     onStepFloor: (Int) -> Unit,
+    onAcceptParkingEnd: () -> Unit,
+    onKeepParking: () -> Unit,
 ) {
     // One step nearer than the rows below it: this is the card the screen is about.
     ParkingpinCard {
@@ -392,6 +413,60 @@ private fun ActiveParkingCard(
 
         Spacer(Modifier.height(MaterialTheme.spacing.large))
         FloorStepper(floor = record.floor, onStepFloor = onStepFloor)
+
+        if (asksParkingEnd) {
+            Spacer(Modifier.height(MaterialTheme.spacing.large))
+            ParkingEndPrompt(record = record, onAccept = onAcceptParkingEnd, onKeep = onKeepParking)
+        }
+    }
+}
+
+/**
+ * docs/05 §11a: the departure question, on the card it is about.
+ *
+ * A compact row under a hairline rather than a card of its own — it is a question about this
+ * parking, and the floor above it still leads (docs/10 §6). The copy is the notification's:
+ * a guess, then a question, never a statement that the car left. `주차 종료` is the one filled
+ * button on the screen while it is asked; `아직 주차 중` is a text button beside it.
+ */
+@Composable
+private fun ParkingEndPrompt(record: ParkingRecord, onAccept: () -> Unit, onKeep: () -> Unit) {
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    Spacer(Modifier.height(MaterialTheme.spacing.medium))
+    Text(
+        text = ParkingEndProposalNotice.TITLE,
+        style = MaterialTheme.typography.titleMedium,
+        color = MaterialTheme.colorScheme.onSurface,
+        modifier = Modifier.semantics { heading() },
+    )
+    Spacer(Modifier.height(MaterialTheme.spacing.tiny))
+    Text(
+        text = ParkingEndProposalNotice.body(record),
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Spacer(Modifier.height(MaterialTheme.spacing.medium))
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TextButton(
+            onClick = onKeep,
+            modifier = Modifier
+                .weight(1f)
+                .heightIn(min = MaterialTheme.spacing.touchTarget),
+        ) {
+            Text(text = ParkingEndProposalNotice.ACTION_KEEP, style = MaterialTheme.typography.titleSmall)
+        }
+        Button(
+            onClick = onAccept,
+            shape = MaterialTheme.shapes.small,
+            modifier = Modifier
+                .weight(1f)
+                .heightIn(min = MaterialTheme.spacing.touchTarget),
+        ) {
+            Text(text = ParkingEndProposalNotice.ACTION_END, style = MaterialTheme.typography.titleSmall)
+        }
     }
 }
 
@@ -591,6 +666,7 @@ private fun PrimaryActions(
     onPhoto: () -> Unit,
     onOpenDetail: () -> Unit,
     onEndParking: () -> Unit,
+    showsEndParking: Boolean,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.medium)) {
         ParkingpinCard(contentPadding = 0.dp) {
@@ -639,12 +715,14 @@ private fun PrimaryActions(
                 trailing = { RowChevron() },
             )
         }
-        PrimaryCtaButton(
-            iconRes = R.drawable.ic_flag,
-            label = stringResource(R.string.home_end_parking),
-            caption = stringResource(R.string.home_end_parking_caption),
-            onClick = onEndParking,
-        )
+        if (showsEndParking) {
+            PrimaryCtaButton(
+                iconRes = R.drawable.ic_flag,
+                label = stringResource(R.string.home_end_parking),
+                caption = stringResource(R.string.home_end_parking_caption),
+                onClick = onEndParking,
+            )
+        }
     }
 }
 
@@ -914,6 +992,36 @@ private fun HomeCandidatePreview() {
                 nowMillis = PREVIEW_NOW,
                 pendingCandidateId = "candidate-1",
                 pendingCandidateAtMillis = PREVIEW_NOW,
+            ),
+            onStepFloor = {},
+            onEndParking = {},
+            onSaveParking = {},
+            onPhotoEntry = {},
+            onOpenDetail = {},
+            onOpenHistory = {},
+            onOpenSettings = {},
+            onOpenNotifications = {},
+            onOpenCandidate = {},
+            onDirections = {},
+            onPhotoSelected = {},
+            onApplyPillarSuggestion = {},
+            onDismissPillarSuggestion = {},
+            onCameraUnavailable = {},
+            onNoticeShown = {},
+        )
+    }
+}
+
+@Preview(name = "Home - departure asked", showBackground = true)
+@Composable
+private fun HomeDepartureAskedPreview() {
+    ParkingpinTheme {
+        HomeScreen(
+            state = HomeUiState(
+                active = previewRecord(),
+                nowMillis = PREVIEW_NOW,
+                loaded = true,
+                endProposal = ParkingEndProposal(recordId = "a", departedAtMillis = PREVIEW_NOW),
             ),
             onStepFloor = {},
             onEndParking = {},

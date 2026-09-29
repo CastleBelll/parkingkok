@@ -19,6 +19,7 @@ TimerTick(at)
 UserConfirmedParking(at, floor?)
 UserRejectedParking(at)
 UserSavedParking(at)
+UserKeptParking(at)
 ```
 
 Platform mapping:
@@ -28,6 +29,10 @@ Platform mapping:
 - Android WALKING ENTER -> direct mapping
 - UserSavedParking: the user saved a parking record themselves, not by answering a
   candidate. It moves every state to `PARKED` (`docs/05_PARKING_DETECTION_ENGINE.md` §11c)
+- UserKeptParking (2026-09-29): the user answered a departure proposal (`ProposeParkingEnd`,
+  engine §11a) with `아직 주차 중`. The same row as `UserSavedParking` — every state to `PARKED`,
+  whatever was inferred dropped silently, a pending candidate withdrawn — with no new record.
+  It carries no payload beyond `at`
 - Android STILL ENTER/EXIT -> MotionBecameStationary / MotionStoppedBeingStationary.
   `docs/04_ANDROID_IMPLEMENTATION.md` §2가 supporting evidence로 요구하고 실기기에서
   실제로 관측된다. iOS는 Core Motion `stationary` 플래그의 전이에서 유도한다
@@ -52,6 +57,7 @@ trace(§9)와 fixture(§8)가 쓰는 문자열. 플랫폼 내부 표현과 별�
 | UserConfirmedParking | `user_confirmed` |
 | UserRejectedParking | `user_rejected` |
 | UserSavedParking | `user_saved` |
+| UserKeptParking | `user_kept_parking` |
 
 ### Quality bucket
 `LocationQualityDegraded`의 `fromBucket`/`toBucket`:
@@ -196,7 +202,7 @@ line, and the test is named "No travel session produces more than one candidate"
    candidate id belongs to.
 4. `withdrawCandidate` / `RetireCandidate` **immediately followed** by a `createCandidate` in
    the same effect list is a supersession (§10a) and changes nothing. Any other withdrawal —
-   expiry, a car-link reconnect, a stop-only resume, `user_saved` — subtracts 1 from the
+   expiry, a car-link reconnect, a stop-only resume, `user_saved`, `user_kept_parking` — subtracts 1 from the
    session that created that candidate.
 5. Every count must be ≤ 1.
 
@@ -230,8 +236,10 @@ and compare the result, with `expected` ignored, to one committed golden:
   index into `events`, `t` its relative time.
 - `state` is the state after the event, present only when it changed.
 - `effects`, in emission order: `create <bucket> <wire codes, sorted, comma-joined>`,
-  `withdraw`, `endActiveParking`. Checkpoints, notifications and capture requests are not
-  outcomes and are not recorded.
+  `withdraw`, `proposeParkingEnd`. Checkpoints, notifications and capture requests are not
+  outcomes and are not recorded. `proposeParkingEnd` (engine §11a, DECIDED 2026-09-29) replaced
+  `endActiveParking` at the same position: the engine proposes the end of the active parking
+  and never ends one itself, so no golden carries `endActiveParking` any more.
 - The golden's key set must equal the files on disk, so a new fixture or draft fails until
   its trace is recorded.
 - Each runner also lists the exact committed names — the fixtures and the drafts — so a file

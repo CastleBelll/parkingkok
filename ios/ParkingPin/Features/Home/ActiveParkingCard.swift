@@ -18,6 +18,10 @@ struct ActiveParkingCard: View {
     /// Opens the editor — the way to set a floor that was never entered, and the only
     /// way to change one that is free text.
     let onEditFloor: () -> Void
+    /// docs/05 §11a: the departure question, while one is pending. `nil` is the ordinary state.
+    var endPrompt: ParkingEndPrompt?
+    var onAcceptEnd: () -> Void = {}
+    var onKeepParking: () -> Void = {}
 
     var body: some View {
         PKCard {
@@ -31,6 +35,9 @@ struct ActiveParkingCard: View {
                     ParkingMapThumbnail(point: ParkingMapPoint(session), zoneText: session.zone)
                 }
                 floorStepper
+                if let endPrompt {
+                    endPromptRow(endPrompt)
+                }
             }
             .padding(PKSpacing.xl)
         }
@@ -111,6 +118,36 @@ struct ActiveParkingCard: View {
             return "층을 변경할 수 있어요"
         }
         return session.floor == nil ? "층을 입력하면 바로 바꿀 수 있어요" : "숫자 층만 바꿀 수 있어요"
+    }
+
+    /// docs/05 §11a's in-app surface: the notification's words and its two answers, inside
+    /// the card they are about. Separated by a hairline, not a card of its own (CLAUDE.md
+    /// design harness). `주차 종료` is the screen's one primary while this shows — home hides
+    /// its own 주차 종료 button meanwhile — and `아직 주차 중` is the outlined secondary.
+    private func endPromptRow(_ prompt: ParkingEndPrompt) -> some View {
+        VStack(alignment: .leading, spacing: PKSpacing.m) {
+            Rectangle()
+                .fill(PKColor.divider)
+                .frame(height: PKSize.hairline)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: PKSpacing.xs) {
+                Text(prompt.title)
+                    .font(PKTypography.row)
+                    .foregroundStyle(PKColor.textPrimary)
+                Text(prompt.body)
+                    .font(PKTypography.supporting)
+                    .foregroundStyle(PKColor.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityElement(children: .combine)
+            HStack(spacing: PKSpacing.m) {
+                Button(prompt.keepTitle, action: onKeepParking)
+                    .buttonStyle(PKOutlineButtonStyle())
+                Button(prompt.endTitle, action: onAcceptEnd)
+                    .buttonStyle(PKCompactPrimaryButtonStyle())
+            }
+        }
+        .padding(.top, PKSpacing.s)
     }
 
     private func stepButton(delta: Int, symbol: String, label: String, enabled: Bool) -> some View {

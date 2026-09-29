@@ -44,9 +44,12 @@ struct RehydrationSnapshot: Sendable, Equatable {
     /// Location observations the recorder refused because it had already recorded that
     /// instant — Core Location replaying a cached fix, most often after a relaunch.
     var traceReplayDropCount = 0
-    /// §11 departures that actually closed a record. Zero with a rising
+    /// §11a departures that raised a proposal about an active record. Zero with a rising
     /// `drivingSessionCount` is a departure detector that moves the machine and nothing else.
-    var autoEndedParkingCount = 0
+    var parkingEndProposedCount = 0
+    /// Last proposal write failure. A proposal that could not be written is never announced
+    /// (the prompt would have nothing behind it), so the failure has to be visible here.
+    var proposalStoreFailure: String?
 
     // ── Bounded driving session (M0A-2) ──────────────────────────────────────
     var isCapturingDrivingLocation = false
@@ -157,7 +160,13 @@ actor BackgroundCoordinator {
     /// capture the user switched off.
     private var isSmartDetectionEnabled = true
 
-    private let endActiveParking: (@Sendable (Date) async -> Bool)?
+    /// §11a: what the proposal asks about. A closure rather than the SwiftData store: this
+    /// actor runs in background wakes that must not open the model container (docs/04 §7),
+    /// so production reads the widget projection. `nil` answers "no active parking", and a
+    /// departure then asks nothing.
+    private let activeParking: (@Sendable () async -> ActiveParkingSummary?)?
+    private let proposalStore: (any ParkingEndProposalStoring)?
+    private let proposalNotifier: (any ParkingEndProposalNotifying)?
     private let engine: ParkingDetectionEngine
     private var snapshot = RehydrationSnapshot()
     /// Newest vehicle observation already handed to the engine. Motion history is replayed
@@ -177,14 +186,14 @@ actor BackgroundCoordinator {
         candidateHistory: (any CandidateHistoryStoring)? = nil,
         candidateNotifier: (any CandidateNotifying)? = nil,
         analytics: any AnalyticsRecording = DisabledAnalyticsRecorder(),
-        /// §11 departure closes the open record. A closure rather than the SwiftData store
-        /// itself: this actor runs in background wakes that must not open the model
-        /// container (docs/04 §7), and only a confirmed departure ever calls it. Answers
-        /// whether a record was actually closed.
-        endActiveParking: (@Sendable (Date) async -> Bool)? = nil,
+        activeParking: (@Sendable () async -> ActiveParkingSummary?)? = nil,
+        proposalStore: (any ParkingEndProposalStoring)? = nil,
+        proposalNotifier: (any ParkingEndProposalNotifying)? = nil,
         engine: ParkingDetectionEngine = ParkingDetectionEngine()
     ) {
-        self.endActiveParking = endActiveParking
+        self.activeParking = activeParking
+        self.proposalStore = proposalStore
+        self.proposalNotifier = proposalNotifier
         self.checkpointStore = checkpointStore
         self.motionHistory = motionHistory
         self.locationCapture = locationCapture
@@ -435,6 +444,14 @@ actor BackgroundCoordinator {
         await apply(engine.handle(.userSavedParking(at: date)), now: date)
     }
 
+    /// The user answered a departure proposal with 아직 주차 중 (docs/05 §11a,
+    /// `user_kept_parking`): the same `*any* → PARKED` row as a hand save, with no new record.
+    /// Stops the capture the departure had open, which is the battery half of the answer.
+    func userKeptParking(at date: Date) async {
+        await apply(engine.handle(.userKeptParking(at: date)), now: date)
+        await releaseCaptureIfIdle()
+    }
+
     // MARK: - The car link (docs/05 §3a "The car link")
 
     /// The adapter's only entry for a car link.
@@ -681,13 +698,8 @@ actor BackgroundCoordinator {
             try? candidateStore?.clear()
             await candidateNotifier?.withdraw(candidateId: id)
 
-        case let .endActiveParking(at):
-            // §11. Reported only when a record was actually closed: a departure detected
-            // after the user already pressed 주차 종료 is not an automatic end.
-            if await endActiveParking?(at) == true {
-                analytics.record(.parkingAutoEnd)
-                snapshot.autoEndedParkingCount += 1
-            }
+        case let .proposeParkingEnd(departedAt):
+            await proposeParkingEnd(departedAt: departedAt, now: now)
 
         case .candidateRuleUnmet:
             // §6's rule was not met. An ordinary outcome, counted rather than logged as a
@@ -695,6 +707,35 @@ actor BackgroundCoordinator {
             // how a mis-tuned transition window announces itself.
             snapshot.candidateRuleUnmetCount += 1
         }
+    }
+
+    /// docs/05 §11a: ask, never end. The proposal is written before it is announced, as a
+    /// candidate is (§10a), so a denied notification costs nothing — the home row reads the
+    /// file. A later departure overwrites it: one question at a time. `parking_auto_end` is
+    /// not reported here; it belongs to the user's 주차 종료 (`ParkingModel.acceptEndProposal`).
+    private func proposeParkingEnd(departedAt: Date, now: Date) async {
+        guard let proposalStore, let active = await activeParking?() else {
+            // A departure detected after the user already ended the parking by hand asks
+            // nothing: there is no record for the question to be about.
+            AppLog.detection.notice("departure detected with no active parking; nothing proposed")
+            return
+        }
+        let proposal = ParkingEndProposal(
+            sessionId: active.sessionId,
+            departedAt: max(departedAt, active.startedAt),
+            proposedAt: now
+        )
+        do {
+            try proposalStore.save(proposal)
+            snapshot.proposalStoreFailure = nil
+        } catch {
+            snapshot.proposalStoreFailure = String(describing: error)
+            AppLog.detection.error("departure proposal save failed: \(String(describing: error), privacy: .public)")
+            return
+        }
+        snapshot.parkingEndProposedCount += 1
+        AppLog.detection.notice("departure proposed; the parking stays active until answered")
+        await proposalNotifier?.post(proposal, placeText: active.placeText)
     }
 
     private func saveCandidate(_ candidate: ParkingCandidate) {
