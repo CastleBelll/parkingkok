@@ -148,7 +148,8 @@ final class DetectionRuntime {
             activeParking: {
                 FileActiveParkingSnapshotStore.appGroup()?.read().map(ActiveParkingSummary.init)
             },
-            proposalStore: proposals,
+            // Announced, so a home card already on screen shows the prompt at once.
+            proposalStore: proposals.map { AnnouncingParkingEndProposalStore(base: $0, center: .default) },
             proposalNotifier: proposalNotifier ?? UserNotificationParkingEndProposalDelivery()
         )
         locationAuthorization = monitor.authorization

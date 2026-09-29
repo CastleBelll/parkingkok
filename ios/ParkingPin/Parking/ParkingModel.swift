@@ -77,6 +77,8 @@ final class ParkingModel {
     private let endProposals: ParkingEndProposalInbox?
     /// The in-flight withdrawal of the proposal's notification, held so tests can await it.
     private(set) var proposalWithdrawal: Task<Void, Never>?
+    /// Re-reads the proposal when the coordinator writes one while the app is on screen.
+    @ObservationIgnored private var proposalObservation: ParkingEndProposalObservation?
 
     init(
         store: any ParkingStoring,
@@ -96,6 +98,9 @@ final class ParkingModel {
         self.snapshots = snapshots
         self.detection = detection
         self.endProposals = endProposals
+        proposalObservation = endProposals?.observeChanges { [weak self] in
+            self?.reconcileEndProposal()
+        }
     }
 
     var homePreviewSessions: [ParkingSession] {

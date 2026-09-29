@@ -7,9 +7,10 @@ import UserNotifications
 /// **At most one.** A later departure from the same parking replaces it, so a single slot is
 /// the whole shape — and a single slot is what keeps two prompts off the lock screen.
 struct ParkingEndProposal: Codable, Sendable, Equatable {
-    /// The record the question is about. `nil` only when the proposal was raised without a
-    /// projection to read the id from; it then applies to whichever parking is active.
-    let sessionId: UUID?
+    /// The record the question is about. Never optional: a proposal that does not name its
+    /// record could only be applied to whichever parking happens to be active, which is the
+    /// stale case docs/05 §11a drops. A stored one without it fails to decode and is dropped.
+    let sessionId: UUID
     /// `ProposeParkingEnd`'s stamp: when the car pulled away. The end the user accepts.
     let departedAt: Date
     /// When the prompt was raised. Diagnostics only.
@@ -18,7 +19,7 @@ struct ParkingEndProposal: Codable, Sendable, Equatable {
     /// Whether this still asks about `session`. A proposal about a record that was ended or
     /// replaced meanwhile is stale and must be withdrawn rather than applied to its successor.
     func isAbout(_ session: ParkingSession) -> Bool {
-        sessionId == nil || sessionId == session.id
+        sessionId == session.id
     }
 
     /// The end to stamp on `session`: never before it started, however the clocks drifted.
@@ -77,8 +78,8 @@ enum ParkingEndProposalCopy {
         return "\(placeText) \(question)"
     }
 
-    /// Floor, then the record's own zone/spot text, joined the way docs/10 §7b's history
-    /// row joins them.
+    /// Floor, then the home hero's zone/spot text (`ParkingSession.placeText`: a bay on its
+    /// own takes `번`), joined by ` · ` — docs/05 §11a's `<place>` rule, identical on Android.
     static func placeText(floor: FloorValue?, zone: String?, spot: String?) -> String? {
         let parts = [floor?.displayText, ParkingSession.placeText(zone: zone, spot: spot)].compactMap(\.self)
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
@@ -131,7 +132,10 @@ struct FileParkingEndProposalStore: ParkingEndProposalStoring {
         guard let envelope = try? JSONDecoder().decode(Envelope.self, from: data),
               envelope.schemaVersion == Self.schemaVersion
         else {
-            AppLog.detection.notice("departure proposal unreadable; treating as none")
+            // Includes a proposal that names no record (docs/05 §11a: stale). Removed so the
+            // same unreadable question is not re-read on every refresh.
+            AppLog.detection.notice("departure proposal unreadable; dropped")
+            try? clear()
             return nil
         }
         return envelope.proposal
@@ -165,6 +169,33 @@ struct FileParkingEndProposalStore: ParkingEndProposalStoring {
     private struct Envelope: Codable {
         let schemaVersion: Int
         let proposal: ParkingEndProposal
+    }
+}
+
+extension Notification.Name {
+    /// Posted after a departure proposal is written, so a screen already on display picks it
+    /// up without waiting for the next activation (docs/05 §11a: the card carries the prompt
+    /// for as long as the proposal is pending).
+    static let parkingEndProposalDidChange = Notification.Name("ParkingPin.parkingEndProposalDidChange")
+}
+
+/// The coordinator's store: writes through `base`, then announces the write. Only a save is
+/// announced — the model is the only one that clears, and it already knows.
+struct AnnouncingParkingEndProposalStore: ParkingEndProposalStoring {
+    let base: any ParkingEndProposalStoring
+    let center: NotificationCenter
+
+    func load() -> ParkingEndProposal? {
+        base.load()
+    }
+
+    func save(_ proposal: ParkingEndProposal) throws {
+        try base.save(proposal)
+        center.post(name: .parkingEndProposalDidChange, object: nil)
+    }
+
+    func clear() throws {
+        try base.clear()
     }
 }
 
@@ -273,6 +304,14 @@ final class ParkingEndProposalResponder: NotificationResponding {
 struct ParkingEndProposalInbox: Sendable {
     let store: any ParkingEndProposalStoring
     let notifier: any ParkingEndProposalNotifying
+    /// Where `AnnouncingParkingEndProposalStore` says a proposal was written.
+    var changes: NotificationCenter = .default
+
+    /// Calls `onChange` on the main actor whenever a proposal is written. The observation
+    /// lasts as long as the returned object.
+    func observeChanges(_ onChange: @escaping @MainActor @Sendable () -> Void) -> ParkingEndProposalObservation {
+        ParkingEndProposalObservation(center: changes, onChange: onChange)
+    }
 
     func load() -> ParkingEndProposal? {
         store.load()
@@ -289,6 +328,25 @@ struct ParkingEndProposalInbox: Sendable {
         }
         let notifier = notifier
         return Task { await notifier.withdraw() }
+    }
+}
+
+/// A registration on `parkingEndProposalDidChange`, removed when this is released.
+final class ParkingEndProposalObservation {
+    private let center: NotificationCenter
+    private let token: any NSObjectProtocol
+
+    init(center: NotificationCenter, onChange: @escaping @MainActor @Sendable () -> Void) {
+        self.center = center
+        // No queue: the writer is the coordinator actor, which must not wait on the main
+        // thread. The hop happens here instead.
+        token = center.addObserver(forName: .parkingEndProposalDidChange, object: nil, queue: nil) { _ in
+            Task { @MainActor in onChange() }
+        }
+    }
+
+    deinit {
+        center.removeObserver(token)
     }
 }
 

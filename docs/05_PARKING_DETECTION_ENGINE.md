@@ -1407,19 +1407,44 @@ death), there is **at most one**, and a later departure from the same parking re
 
 **What the user sees, identically on both platforms:**
 - A notification, posted only when there is an active record to ask about. Title
-  **`출발한 것 같아요`**; body **`<place> 주차를 종료할까요?`**, where `<place>` is the record's own
-  place text — floor, then zone/spot, joined by ` · ` — with whatever is missing omitted (no
-  place at all → `주차를 종료할까요?`). Actions **`주차 종료`** and **`아직 주차 중`**. The copy never
+  **`출발한 것 같아요`**; body **`<place> 주차를 종료할까요?`**, where `<place>` follows the rule
+  below (no place at all → `주차를 종료할까요?`). Actions **`주차 종료`** and **`아직 주차 중`**. The copy never
   states the departure as fact. It uses the platform's existing detection-notification
   conventions (iOS: its own `UNNotificationCategory` beside the candidate's, one request
   identifier so a new proposal replaces the old; Android: the candidate channel, one
   notification id). Notification permission is not required for correctness: denied, the
   in-app prompt below is the only surface and nothing is lost.
 - In the app, the home active-parking card carries a compact prompt row with the same text and
-  the same two actions for as long as the proposal is pending. **`주차 종료` is the screen's one
+  the same two actions for as long as the proposal is pending — including a proposal written
+  while the app is already on screen: the card updates when the proposal is written, not at the
+  next activation (iOS: the coordinator's store posts `parkingEndProposalDidChange` and
+  `ParkingModel` re-reads; Android: the home screen observes the DataStore flow). **`주차 종료` is the screen's one
   primary action** while it shows (docs/10's one-primary-CTA rule): it ends the record at
   `departedAt`, which is the right answer, where the screen's ordinary 주차 종료 would end it now.
   `아직 주차 중` is secondary.
+
+**`<place>`, character for character the same on both platforms (review 2026-09-29).** It is
+the home hero's place text after the floor:
+- floor first (its display text, e.g. `B3`), then the zone/spot text, joined by ` · `;
+- zone/spot text: both → `zone · spot`; zone alone → `zone`; spot alone → the spot with `번`
+  appended, **unless it already ends in `번`** (the user copying a wall writes `01번` as often
+  as `01`); neither → nothing;
+- a missing part is omitted with its separator. Zone and spot are stored trimmed, and blank
+  text is stored as absent, so a blank field never produces an empty part.
+
+| floor | zone | spot | body |
+|---|---|---|---|
+| B3 | A구역 | 142 | `B3 · A구역 · 142 주차를 종료할까요?` |
+| B3 | A구역 | — | `B3 · A구역 주차를 종료할까요?` |
+| B3 | — | 142 | `B3 · 142번 주차를 종료할까요?` |
+| — | — | 142 | `142번 주차를 종료할까요?` |
+| B3 | — | 01번 | `B3 · 01번 주차를 종료할까요?` |
+| — | A구역 | 142 | `A구역 · 142 주차를 종료할까요?` |
+| B3 | — | — | `B3 주차를 종료할까요?` |
+| — | — | — | `주차를 종료할까요?` |
+
+Pinned by the same table on both platforms: iOS `ParkingEndProposalCopyParityTests`, Android's
+proposal copy test.
 
 **The three outcomes:**
 - **`주차 종료`** → the record is ended at `departedAt` (never now, never before its start),
@@ -1438,10 +1463,26 @@ death), there is **at most one**, and a later departure from the same parking re
   a save that writes nothing — a failed write, or a candidate that expired or was superseded
   while the form was open — ends nothing and leaves the proposal pending (review 2026-09-29).
   If the user ends the parking by hand (the
-  ordinary 주차 종료), the proposal is withdrawn and the record ends when they said.
+  ordinary 주차 종료, from home or from the detail screen), the proposal is withdrawn and the
+  record ends when they said. **Deleting the active record** withdraws the proposal and its
+  notification at once, on the same write — the user is in the app, and the shade must not go
+  on asking about a record that no longer exists.
 
-A proposal whose record is no longer the active one (it was ended or deleted meanwhile) is
-stale: it is dropped and its notification withdrawn the next time anything looks.
+**A candidate confirmed while a parking is open and nothing is pending** — for example right
+after `아직 주차 중`, when the drive that followed ends in a new candidate the user confirms —
+closes the open record at **`max(startedAt, candidate.detectedAt)`** and inserts the new one, in
+one store write (DECIDED 2026-09-29; the user just said they parked somewhere else, and one
+parking can be active — FR-004). A write that fails ends nothing. Not an acceptance of any
+proposal: `parking_auto_end` is not reported. A **hand** save with a parking open and nothing
+pending is still refused (FR-004); only a pending proposal lets a hand save end the old record.
+Held on both platforms by "With nothing pending, a confirmed candidate ends the open record at
+detectedAt in one write" and its clamp twin (iOS `ParkingEndProposalModelTests`).
+
+**A proposal always names the record it is about.** The record id is not optional. A proposal
+about a record that is no longer the active one (it was ended or deleted meanwhile) is stale: it
+is dropped and its notification withdrawn the next time anything looks. A stored proposal with
+no record id — a legacy or damaged file — is stale by definition and dropped, never applied to
+whichever record happens to be active.
 
 `parking_auto_end` is therefore reported when the user accepts the proposal, and only when a
 record was actually closed by that acceptance.

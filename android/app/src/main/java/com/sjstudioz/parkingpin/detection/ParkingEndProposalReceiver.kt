@@ -4,7 +4,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
-import androidx.core.app.NotificationManagerCompat
 import com.sjstudioz.parkingpin.ParkingpinApplication
 import kotlinx.coroutines.launch
 
@@ -23,12 +22,9 @@ class ParkingEndProposalReceiver : BroadcastReceiver() {
             return
         }
 
-        // The tap has been acted on: take the question down now, not after the write.
-        NotificationManagerCompat.from(context).cancel(ParkingEndProposalChannel.NOTIFICATION_ID)
-
         val container = ParkingpinApplication.containerOf(context)
         if (container == null) {
-            // The proposal stays pending and the home card still asks it.
+            // The proposal stays pending, on the shade and on the home card.
             Log.w(TAG, "departure answer arrived with no container")
             return
         }
@@ -37,7 +33,14 @@ class ParkingEndProposalReceiver : BroadcastReceiver() {
         container.applicationScope.launch {
             try {
                 val proposals = container.parkingEndProposalCoordinator
-                if (action == ParkingEndProposalChannel.ACTION_END) proposals.accept(recordId) else proposals.keep(recordId)
+                // Never throws: a failed write is logged and the question re-asked, so the
+                // user can tap again. The coordinator withdraws the notification of whatever
+                // it answered, and of a tap about a question that is already gone.
+                if (action == ParkingEndProposalChannel.ACTION_END) {
+                    proposals.tryAccept(recordId)
+                } else {
+                    proposals.tryKeep(recordId)
+                }
             } finally {
                 pending.finish()
             }

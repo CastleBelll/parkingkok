@@ -118,9 +118,9 @@ class HomeViewModel(
     private val endParking: EndParkingUseCase,
     /** §11a's pending departure question, as stored. */
     private val observeEndProposal: () -> Flow<ParkingEndProposal?> = { flowOf(null) },
-    /** `주차 종료` on the question: closes the record at the departure time. */
+    /** `주차 종료` on the question: closes the record at the departure time. Never throws. */
     private val acceptEndProposal: suspend () -> Unit = {},
-    /** `아직 주차 중` on the question: keeps the record, tells the engine. */
+    /** `아직 주차 중` on the question: keeps the record, tells the engine. Never throws. */
     private val keepParking: suspend () -> Unit = {},
     /** Ending the parking by hand drops the question with it. */
     private val withdrawEndProposal: suspend () -> Unit = {},
@@ -277,8 +277,8 @@ class HomeViewModel(
                     observePendingCandidate = container.parkingCandidateCoordinator::observePending,
                     endParking = EndParkingUseCase(container.parkingRepository, container.clock),
                     observeEndProposal = container.parkingEndProposalCoordinator::observePending,
-                    acceptEndProposal = { container.parkingEndProposalCoordinator.accept() },
-                    keepParking = { container.parkingEndProposalCoordinator.keep() },
+                    acceptEndProposal = { container.parkingEndProposalCoordinator.tryAccept() },
+                    keepParking = { container.parkingEndProposalCoordinator.tryKeep() },
                     withdrawEndProposal = container.parkingEndProposalCoordinator::withdraw,
                     adjustParkingFloor = AdjustParkingFloorUseCase(
                         container.parkingRepository,

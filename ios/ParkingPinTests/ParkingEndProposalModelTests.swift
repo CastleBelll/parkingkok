@@ -21,6 +21,8 @@ struct ParkingEndProposalModelTests {
         let detection: StubManualParkingReporter
         let analytics: RecordingAnalyticsSink
         let clock: MutableDateProvider
+        /// Where the coordinator announces a proposal it wrote (docs/05 §11a).
+        let changes: NotificationCenter
 
         /// The active record the proposal is about.
         var active: ParkingSession {
@@ -40,7 +42,7 @@ struct ParkingEndProposalModelTests {
         zone: String? = "A구역",
         spot: String? = "142",
         proposing: Bool = true,
-        proposalSessionId: UUID?? = nil,
+        proposalSessionId: UUID? = nil,
         failingNewRecordWrite: Bool = false
     ) throws -> Harness {
         let clock = MutableDateProvider(Self.now)
@@ -73,6 +75,7 @@ struct ParkingEndProposalModelTests {
         let notifier = RecordingParkingEndProposalNotifier()
         let detection = StubManualParkingReporter()
         let sink = RecordingAnalyticsSink()
+        let changes = NotificationCenter()
         let parking = ParkingModel(
             store: failingNewRecordWrite ? NewRecordWriteFailingParkingStore(store) : store,
             locationProvider: UnavailableParkingLocationProvider(),
@@ -83,7 +86,7 @@ struct ParkingEndProposalModelTests {
                 clock: clock
             ),
             detection: detection,
-            endProposals: ParkingEndProposalInbox(store: proposals, notifier: notifier)
+            endProposals: ParkingEndProposalInbox(store: proposals, notifier: notifier, changes: changes)
         )
         parking.refresh()
         return Harness(
@@ -93,7 +96,8 @@ struct ParkingEndProposalModelTests {
             notifier: notifier,
             detection: detection,
             analytics: sink,
-            clock: clock
+            clock: clock,
+            changes: changes
         )
     }
 
@@ -138,7 +142,7 @@ struct ParkingEndProposalModelTests {
     @Test("A proposal about another record is stale: no prompt, file cleared, notification withdrawn")
     func staleProposalIsRetired() async throws {
         // Arrange / Act
-        let harness = try harness(proposalSessionId: .some(UUID()))
+        let harness = try harness(proposalSessionId: UUID())
         await harness.settle()
 
         // Assert
@@ -387,7 +391,10 @@ struct ParkingEndProposalModelTests {
     // MARK: - A candidate that is no longer live settles nothing
 
     /// The candidate path a form takes: a `CandidateModel` over the harness's parking.
-    private func candidates(over harness: Harness, pending: ParkingCandidate) -> (CandidateModel, StubParkingCandidateStore) {
+    private func candidates(
+        over harness: Harness,
+        pending: ParkingCandidate
+    ) -> (CandidateModel, StubParkingCandidateStore) {
         let store = StubParkingCandidateStore(current: pending)
         let model = CandidateModel(
             store: store,
@@ -462,6 +469,115 @@ struct ParkingEndProposalModelTests {
         #expect(harness.proposals.load() == nil)
         #expect(await harness.notifier.withdrawCount >= 1)
         #expect(harness.analytics.payloads.isEmpty)
+    }
+
+    // MARK: - Written while the app is in the foreground
+
+    @Test("A proposal written while the app is open reaches the home card without an activation")
+    func proposalWrittenInForegroundShowsThePrompt() async throws {
+        // Arrange — the app is open, nothing is pending yet.
+        let harness = try harness(proposing: false)
+        let active = try harness.active
+        let coordinatorStore = AnnouncingParkingEndProposalStore(base: harness.proposals, center: harness.changes)
+        #expect(harness.parking.endPrompt == nil)
+
+        // Act — the coordinator writes a proposal on a wake that happens while the app is up.
+        try coordinatorStore.save(ParkingEndProposal(
+            sessionId: active.id,
+            departedAt: Self.departedAt,
+            proposedAt: Self.now
+        ))
+        await Self.yield(until: { harness.parking.endPrompt != nil })
+
+        // Assert
+        #expect(harness.parking.endPrompt?.body == "B3 · A구역 · 142 주차를 종료할까요?")
+        #expect(harness.parking.endProposal?.departedAt == Self.departedAt)
+    }
+
+    @Test("A proposal written in the foreground about another record is retired, not shown")
+    func staleProposalWrittenInForegroundIsRetired() async throws {
+        // Arrange
+        let harness = try harness(proposing: false)
+        let coordinatorStore = AnnouncingParkingEndProposalStore(base: harness.proposals, center: harness.changes)
+
+        // Act
+        try coordinatorStore.save(ParkingEndProposal(
+            sessionId: UUID(),
+            departedAt: Self.departedAt,
+            proposedAt: Self.now
+        ))
+        await Self.yield(until: { harness.proposals.load() == nil })
+        await harness.settle()
+
+        // Assert
+        #expect(harness.parking.endPrompt == nil)
+        #expect(harness.proposals.load() == nil)
+        #expect(await harness.notifier.withdrawCount == 1)
+    }
+
+    /// The observer hops to the main actor through a `Task`; yielding lets it run. Bounded,
+    /// so a broken observer fails the assertion rather than hanging the suite.
+    private static func yield(until condition: @MainActor () -> Bool) async {
+        for _ in 0 ..< 1000 where !condition() {
+            await Task.yield()
+        }
+    }
+
+    // MARK: - Deleting the record the question is about
+
+    @Test("Deleting the active record withdraws the proposal and its notification")
+    func deletingTheActiveRecordWithdrawsTheProposal() async throws {
+        // Arrange
+        let harness = try harness()
+        let id = try harness.active.id
+
+        // Act
+        #expect(await harness.parking.delete(id: id))
+        await harness.settle()
+
+        // Assert
+        #expect(harness.parking.activeSession == nil)
+        #expect(harness.parking.endPrompt == nil)
+        #expect(harness.proposals.load() == nil)
+        #expect(await harness.notifier.withdrawCount >= 1)
+        #expect(harness.analytics.payloads.isEmpty)
+    }
+
+    // MARK: - A candidate confirmed with a parking open and nothing pending
+
+    @Test("With nothing pending, a confirmed candidate ends the open record at detectedAt in one write")
+    func confirmedCandidateWithoutProposalEndsAtDetectedAt() async throws {
+        // Arrange — e.g. right after 아직 주차 중.
+        let harness = try harness(proposing: false)
+        let oldId = try harness.active.id
+        let detectedAt = Self.departedAt.addingTimeInterval(1200)
+        let candidate = TestCandidate.make(detectedAt: detectedAt)
+
+        // Act
+        let newId = harness.parking.saveDetectedParking(from: candidate, draft: ManualParkingDraft(floorText: "B1"))
+        await harness.settle()
+
+        // Assert
+        #expect(newId != nil)
+        #expect(harness.parking.activeSession?.id == newId)
+        #expect(harness.parking.activeSession?.startedAt == detectedAt)
+        #expect(harness.parking.session(id: oldId)?.endedAt == detectedAt)
+        #expect(!harness.analytics.payloads.map(\.name).contains("parking_auto_end"))
+    }
+
+    @Test("With nothing pending, a candidate stamped before the open record ends it at its own start")
+    func confirmedCandidateWithoutProposalNeverEndsBeforeStart() throws {
+        // Arrange — clock drift put the candidate before the record.
+        let harness = try harness(proposing: false)
+        let oldId = try harness.active.id
+        let candidate = TestCandidate.make(detectedAt: Self.start.addingTimeInterval(-60))
+
+        // Act
+        let newId = harness.parking.saveDetectedParking(from: candidate, draft: ManualParkingDraft(floorText: "B1"))
+
+        // Assert
+        #expect(newId != nil)
+        #expect(harness.parking.session(id: oldId)?.endedAt == Self.start)
     }
 
     // MARK: - Notification actions
@@ -581,4 +697,139 @@ private final class NewRecordWriteFailingParkingStore: ParkingStoring {
     func deleteAll() throws {
         try base.deleteAll()
     }
+}
+
+/// docs/05 §11a's `<place>` rule, pinned with the strings Android's copy test pins too: the
+/// home hero's zone/spot text after the floor, so a bay on its own reads `142번`.
+@Suite("§11a departure proposal — copy parity")
+struct ParkingEndProposalCopyParityTests {
+    struct Case: Sendable, CustomTestStringConvertible {
+        let floor: String?
+        let zone: String?
+        let spot: String?
+        let body: String
+
+        var testDescription: String {
+            body
+        }
+    }
+
+    static let cases: [Case] = [
+        Case(floor: "B3", zone: "A구역", spot: "142", body: "B3 · A구역 · 142 주차를 종료할까요?"),
+        Case(floor: "B3", zone: "A구역", spot: nil, body: "B3 · A구역 주차를 종료할까요?"),
+        Case(floor: "B3", zone: nil, spot: "142", body: "B3 · 142번 주차를 종료할까요?"),
+        Case(floor: nil, zone: nil, spot: "142", body: "142번 주차를 종료할까요?"),
+        Case(floor: "B3", zone: nil, spot: "01번", body: "B3 · 01번 주차를 종료할까요?"),
+        Case(floor: nil, zone: "A구역", spot: "142", body: "A구역 · 142 주차를 종료할까요?"),
+        Case(floor: "B3", zone: nil, spot: nil, body: "B3 주차를 종료할까요?"),
+        Case(floor: nil, zone: nil, spot: nil, body: "주차를 종료할까요?")
+    ]
+
+    @Test("The body names the place the way the home hero does", arguments: cases)
+    func bodyMatchesTheSharedRule(_ testCase: Case) {
+        // Arrange
+        let floor = testCase.floor.flatMap(FloorValue.parse)
+
+        // Act
+        let body = ParkingEndProposalCopy.body(
+            placeText: ParkingEndProposalCopy.placeText(floor: floor, zone: testCase.zone, spot: testCase.spot)
+        )
+
+        // Assert
+        #expect(body == testCase.body)
+    }
+}
+
+/// A proposal always names its record (docs/05 §11a); a file that does not is stale.
+@Suite("§11a departure proposal — persistence")
+struct ParkingEndProposalPersistenceTests {
+    @Test("A stored proposal with no record id is dropped, file and all")
+    func proposalWithoutSessionIdIsDropped() throws {
+        // Arrange — the shape a nil-id proposal was encoded in.
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appending(path: "departure-proposal.json")
+        let legacy = #"{"schemaVersion":1,"proposal":{"departedAt":800000000,"proposedAt":800000300}}"#
+        try Data(legacy.utf8).write(to: fileURL)
+        let store = FileParkingEndProposalStore(fileURL: fileURL)
+
+        // Act
+        let loaded = store.load()
+
+        // Assert
+        #expect(loaded == nil)
+        #expect(!FileManager.default.fileExists(atPath: fileURL.path()))
+    }
+
+    @Test("A stored proposal round-trips with its record id")
+    func proposalRoundTrips() throws {
+        // Arrange
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FileParkingEndProposalStore(fileURL: directory.appending(path: "departure-proposal.json"))
+        let proposal = ParkingEndProposal(
+            sessionId: UUID(),
+            departedAt: TestTime.reference,
+            proposedAt: TestTime.reference
+        )
+
+        // Act
+        try store.save(proposal)
+
+        // Assert
+        #expect(store.load() == proposal)
+    }
+
+    @Test("The coordinator's store announces a proposal once it is written, and only then")
+    func announcingStorePostsAfterAWrite() throws {
+        // Arrange
+        let center = NotificationCenter()
+        let counter = AnnouncementCounter()
+        let token = center.addObserver(forName: .parkingEndProposalDidChange, object: nil, queue: nil) { _ in
+            counter.increment()
+        }
+        defer { center.removeObserver(token) }
+        let proposal = ParkingEndProposal(
+            sessionId: UUID(),
+            departedAt: TestTime.reference,
+            proposedAt: TestTime.reference
+        )
+        let written = AnnouncingParkingEndProposalStore(base: InMemoryParkingEndProposalStore(), center: center)
+        let failing = AnnouncingParkingEndProposalStore(base: FailingParkingEndProposalStore(), center: center)
+
+        // Act
+        try written.save(proposal)
+        #expect(throws: ParkingEndProposalStoreError.self) { try failing.save(proposal) }
+        try written.clear()
+
+        // Assert — one write, one announcement; a failed write and a clear announce nothing.
+        #expect(counter.value == 1)
+    }
+}
+
+private final class AnnouncementCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var value: Int {
+        lock.withLock { count }
+    }
+
+    func increment() {
+        lock.withLock { count += 1 }
+    }
+}
+
+private struct FailingParkingEndProposalStore: ParkingEndProposalStoring {
+    func load() -> ParkingEndProposal? {
+        nil
+    }
+
+    func save(_: ParkingEndProposal) throws {
+        throw ParkingEndProposalStoreError.writeFailed("test")
+    }
+
+    func clear() throws {}
 }

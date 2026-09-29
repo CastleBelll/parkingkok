@@ -1,5 +1,6 @@
 package com.sjstudioz.parkingpin.detection
 
+import android.util.Log
 import com.sjstudioz.parkingpin.analytics.AnalyticsEvent
 import com.sjstudioz.parkingpin.analytics.AnalyticsRecording
 import com.sjstudioz.parkingpin.analytics.DisabledAnalyticsRecorder
@@ -10,6 +11,7 @@ import com.sjstudioz.parkingpin.domain.parking.ParkingRecord
 import com.sjstudioz.parkingpin.domain.parking.ParkingRepository
 import com.sjstudioz.parkingpin.domain.parking.usecase.ActiveParkingEnd
 import com.sjstudioz.parkingpin.domain.parking.usecase.EndParkingUseCase
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -32,7 +34,8 @@ import kotlinx.coroutines.flow.Flow
  *
  * Every answer takes the proposal out of the store in one edit before acting, so a
  * notification action and the home card answering together act once. The next parking is
- * the exception: it reads the proposal, and retires it only after its write committed.
+ * the exception: it reads the proposal, and retires it only after its write committed. An
+ * answer whose write fails puts the proposal back and asks again, so it can be retried.
  */
 class ParkingEndProposalCoordinator(
     private val store: DetectionStateStore,
@@ -75,7 +78,7 @@ class ParkingEndProposalCoordinator(
      */
     suspend fun accept(recordId: String? = null): ParkingRecord? {
         val proposal = takeMatching(recordId) ?: return null
-        val closed = closeAtDeparture(proposal) ?: return null
+        val closed = reaskingOnFailure(proposal) { closeAtDeparture(proposal) } ?: return null
         // docs/17: reported on the user's acceptance, and only when a record was closed.
         analytics.record(AnalyticsEvent.ParkingAutoEnd)
         return closed
@@ -88,10 +91,24 @@ class ParkingEndProposalCoordinator(
      */
     suspend fun keep(recordId: String? = null): Boolean {
         val proposal = takeMatching(recordId) ?: return false
-        if (repository().findActive()?.id != proposal.recordId) return false
-        keptParking?.invoke(clock.nowEpochMillis())
-        return true
+        return reaskingOnFailure(proposal) {
+            if (repository().findActive()?.id != proposal.recordId) return false
+            keptParking?.invoke(clock.nowEpochMillis())
+            true
+        }
     }
+
+    /**
+     * [accept] for a caller with nowhere to throw to — the notification action on the
+     * application scope, the home card on the view-model scope. A Room or DataStore failure
+     * (disk full, IO) is logged by type and swallowed instead of taking the process down;
+     * the question is still pending and on screen, so the user can answer again. Returns
+     * whether the answer ran to completion.
+     */
+    suspend fun tryAccept(recordId: String? = null): Boolean = answering("accept") { accept(recordId) }
+
+    /** [keep], with [tryAccept]'s failure handling. */
+    suspend fun tryKeep(recordId: String? = null): Boolean = answering("keep") { keep(recordId) }
 
     /**
      * What the next parking, saved by hand or from a candidate, may close: the asked-about
@@ -140,9 +157,50 @@ class ParkingEndProposalCoordinator(
         return taken
     }
 
+    private suspend fun answering(answer: String, act: suspend () -> Unit): Boolean =
+        try {
+            act()
+            true
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (@Suppress("TooGenericExceptionCaught") failure: Exception) {
+            // By type only: a Room message may quote the row, and the row holds the location.
+            Log.w(TAG, "departure $answer failed: ${failure.javaClass.simpleName}")
+            false
+        }
+
+    /**
+     * Runs an answer to a proposal that was already taken out of the store. If the answer
+     * fails, the proposal is put back and asked again, so a failed write ends nothing and
+     * leaves the question where the user can retry it (§11a); the failure is rethrown.
+     */
+    private suspend inline fun <T> reaskingOnFailure(proposal: ParkingEndProposal, answer: () -> T): T =
+        try {
+            answer()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (@Suppress("TooGenericExceptionCaught") failure: Exception) {
+            try {
+                reask(proposal)
+            } catch (@Suppress("TooGenericExceptionCaught") alsoFailed: Exception) {
+                failure.addSuppressed(alsoFailed)
+            }
+            throw failure
+        }
+
+    private suspend fun reask(proposal: ParkingEndProposal) {
+        store.writeParkingEndProposal(proposal)
+        val record = repository().findActive()?.takeIf { it.id == proposal.recordId } ?: return
+        if (notifier.isAuthorized()) notifier.post(record)
+    }
+
     private suspend fun closeAtDeparture(proposal: ParkingEndProposal): ParkingRecord? {
         val repository = repository()
         if (repository.findActive()?.id != proposal.recordId) return null
         return EndParkingUseCase(repository, clock)(proposal.departedAtMillis)
+    }
+
+    private companion object {
+        const val TAG = "PkDetection"
     }
 }

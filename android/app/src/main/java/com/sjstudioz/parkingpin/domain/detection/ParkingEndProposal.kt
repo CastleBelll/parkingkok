@@ -1,5 +1,6 @@
 package com.sjstudioz.parkingpin.domain.detection
 
+import com.sjstudioz.parkingpin.domain.parking.ParkingPlaceText
 import com.sjstudioz.parkingpin.domain.parking.ParkingRecord
 
 /**
@@ -46,11 +47,13 @@ object ParkingEndProposalNotice {
         return "$place $QUESTION"
     }
 
-    /** Floor, zone and spot joined with a middle dot, or null when the record holds none. */
+    /**
+     * The floor, then the zone/spot line the home hero shows ([ParkingPlaceText]), joined
+     * with a middle dot — or null when the record holds none. Identical to iOS
+     * `ParkingEndProposalCopy.placeText`: `B3 · 142번` for a floor and a spot alone.
+     */
     fun placeText(record: ParkingRecord): String? =
-        listOfNotNull(record.floor?.displayLabel, record.zone, record.spot)
-            .map(String::trim)
-            .filter(String::isNotEmpty)
+        listOfNotNull(record.floor?.displayLabel, ParkingPlaceText.zoneAndSpot(record.zone, record.spot))
             .takeIf { it.isNotEmpty() }
             ?.joinToString(SEPARATOR)
 }

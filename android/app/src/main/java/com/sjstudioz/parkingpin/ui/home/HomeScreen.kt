@@ -52,7 +52,6 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.sjstudioz.parkingpin.R
-import com.sjstudioz.parkingpin.ui.format.bayLabel
 import com.sjstudioz.parkingpin.domain.detection.ParkingCandidateNotice
 import com.sjstudioz.parkingpin.domain.detection.ParkingEndProposal
 import com.sjstudioz.parkingpin.domain.detection.ParkingEndProposalNotice
@@ -60,6 +59,7 @@ import com.sjstudioz.parkingpin.domain.parking.ElapsedTime
 import com.sjstudioz.parkingpin.domain.parking.Floor
 import com.sjstudioz.parkingpin.domain.parking.FloorParser
 import com.sjstudioz.parkingpin.domain.parking.ParkingLocation
+import com.sjstudioz.parkingpin.domain.parking.ParkingPlaceText
 import com.sjstudioz.parkingpin.domain.parking.ParkingRecord
 import com.sjstudioz.parkingpin.domain.parking.ParkingSource
 import com.sjstudioz.parkingpin.domain.photo.PhotoSource
@@ -368,14 +368,7 @@ private fun ActiveParkingCard(
                 // `A구역 · 142`, or `142번` when there is no zone. A spot on its own used
                 // to render as the bare number, so a record holding only `03` showed `03`
                 // under the floor at hero weight — a large unexplained numeral.
-                val zone = record.zone
-                val spot = record.spot
-                val supporting = when {
-                    zone != null && spot != null -> "$zone · $spot"
-                    zone != null -> zone
-                    spot != null -> bayLabel(spot)
-                    else -> null
-                }
+                val supporting = ParkingPlaceText.zoneAndSpot(record.zone, record.spot)
                 if (supporting != null) {
                     Spacer(Modifier.height(MaterialTheme.spacing.tiny))
                     Text(

@@ -313,8 +313,7 @@ Manual:
 Auto end — **asked, never silent (DECIDED BY THE USER 2026-09-29; docs/05 §11a):**
 - only after strong departure evidence (§11's bars and §7's guard in full)
 - the app **asks**; the record stays active until the user answers
-- notification: **`출발한 것 같아요`** / **`<place> 주차를 종료할까요?`** (floor · zone · spot, whatever
-  exists), actions **`주차 종료`** and **`아직 주차 중`**. Never phrased as a settled fact
+- notification: **`출발한 것 같아요`** / **`<place> 주차를 종료할까요?`**, actions **`주차 종료`** and **`아직 주차 중`**. Never phrased as a settled fact
 - home: the active-parking card carries the same question as a compact row while it is pending;
   `주차 종료` is the screen's one primary action, `아직 주차 중` secondary
 - `주차 종료` ends the record at the moment the car left, not at the moment of the tap
@@ -323,6 +322,12 @@ Auto end — **asked, never silent (DECIDED BY THE USER 2026-09-29; docs/05 §11
   the moment the car left; ending by hand ends it when the user says
 - one question at a time: a later departure replaces the pending one
 - works with notifications denied — the home row is then the only surface
+- `<place>` is identical on both platforms: floor, then the home hero's zone/spot text, joined
+  by ` · `, missing parts omitted. A spot without a zone takes `번` unless it already ends in
+  `번` (`B3 · 142번`, `B3 · 01번`); with a zone it does not (`B3 · A구역 · 142`). Full table in
+  docs/05 §11a
+- deleting the active record, or ending it by hand from any screen, withdraws the question and
+  its notification
 
 ## 11. Subscription Flow
 Paywall uses platform store product metadata.

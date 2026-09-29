@@ -30,14 +30,66 @@ class ParkingEndProposalNoticeTest {
 
     @Test
     fun `the body leaves out what is missing`() {
-        assertEquals("B3 · 142 주차를 종료할까요?", ParkingEndProposalNotice.body(record(floor = "B3", spot = "142")))
-        assertEquals("A구역 주차를 종료할까요?", ParkingEndProposalNotice.body(record(zone = " A구역 ", spot = " ")))
+        assertEquals("B3 · A구역 주차를 종료할까요?", ParkingEndProposalNotice.body(record(floor = "B3", zone = "A구역")))
+        assertEquals("A구역 · 142 주차를 종료할까요?", ParkingEndProposalNotice.body(record(zone = "A구역", spot = "142")))
+    }
+
+    // The spot-only rule is the home hero's (ParkingPlaceText), and the strings below are
+    // the ones iOS ParkingEndProposalCopy pins: the same record reads the same on both.
+
+    @Test
+    fun `a floor and a spot with no zone give the spot its 번`() {
+        // Arrange
+        val record = record(floor = "B3", spot = "142")
+
+        // Act
+        val body = ParkingEndProposalNotice.body(record)
+
+        // Assert
+        assertEquals("B3 · 142번 주차를 종료할까요?", body)
+    }
+
+    @Test
+    fun `a spot alone gives the spot its 번`() {
+        assertEquals("142번 주차를 종료할까요?", ParkingEndProposalNotice.body(record(spot = "142")))
+    }
+
+    @Test
+    fun `a spot that already ends in 번 is not given a second one`() {
+        assertEquals("B3 · 142번 주차를 종료할까요?", ParkingEndProposalNotice.body(record(floor = "B3", spot = "142번")))
     }
 
     @Test
     fun `a record with no place asks the bare question`() {
         assertEquals("주차를 종료할까요?", ParkingEndProposalNotice.body(record()))
         assertEquals("주차를 종료할까요?", ParkingEndProposalNotice.body(null))
+    }
+
+    /**
+     * The same eight rows iOS `ParkingEndProposalCopyParityTests` pins, in the same order, so
+     * the two platforms cannot drift on the question's wording (docs/05 §11a).
+     */
+    @Test
+    fun `the body names the place the way the home hero does`() {
+        // Arrange
+        val cases = listOf(
+            Triple(record(floor = "B3", zone = "A구역", spot = "142"), "B3 · A구역 · 142 주차를 종료할까요?", "all three"),
+            Triple(record(floor = "B3", zone = "A구역"), "B3 · A구역 주차를 종료할까요?", "floor and zone"),
+            Triple(record(floor = "B3", spot = "142"), "B3 · 142번 주차를 종료할까요?", "floor and spot"),
+            Triple(record(spot = "142"), "142번 주차를 종료할까요?", "spot alone"),
+            Triple(record(floor = "B3", spot = "01번"), "B3 · 01번 주차를 종료할까요?", "spot already ends in 번"),
+            Triple(record(zone = "A구역", spot = "142"), "A구역 · 142 주차를 종료할까요?", "zone and spot"),
+            Triple(record(floor = "B3"), "B3 주차를 종료할까요?", "floor alone"),
+            Triple(record(), "주차를 종료할까요?", "nothing"),
+        )
+
+        for ((record, expected, name) in cases) {
+            // Act
+            val body = ParkingEndProposalNotice.body(record)
+
+            // Assert
+            assertEquals(name, expected, body)
+        }
     }
 
     @Test

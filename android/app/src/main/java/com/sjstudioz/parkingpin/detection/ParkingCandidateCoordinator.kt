@@ -45,14 +45,13 @@ sealed interface ConfirmCandidateResult {
     data class Gone(val alreadyBecame: String? = null) : ConfirmCandidateResult
 
     /**
-     * A parking session is already open, so nothing was written and the candidate is left
-     * alone.
+     * A parking session is open that this confirmation was not allowed to close, so nothing
+     * was written and the candidate is left alone.
      *
-     * Same refusal [com.sjstudioz.parkingpin.domain.parking.usecase.SaveManualParkingUseCase]
-     * makes, and for the same reason: silently ending the open session would throw away a
-     * record the user never asked to close, and a second open record would leave two cars
-     * parked. Detection is a guess — it is the last thing that should overrule a session
-     * the user established themselves.
+     * A confirmation closes the parking that was open when it started (see
+     * [ParkingCandidateCoordinator.confirm]), so this is reached only when a different
+     * record became the open one between that read and the write — a hand save on another
+     * screen. Closing a record nobody was asked about would lose it.
      */
     data class AlreadyActive(val existing: ParkingRecord) : ConfirmCandidateResult
 }
@@ -189,9 +188,10 @@ class ParkingCandidateCoordinator(
         details: ConfirmedCandidateDetails,
         /**
          * The open parking a pending departure allows this confirmation to close
-         * (docs/05 §11a). Asked only once the candidate is known to be live, and closed in
-         * the same write as the insert, so a [ConfirmCandidateResult.Gone] or a failed write
-         * ends nothing.
+         * (docs/05 §11a), at the departure time. Asked only once the candidate is known to
+         * be live, and closed in the same write as the insert, so a
+         * [ConfirmCandidateResult.Gone] or a failed write ends nothing. With no pending
+         * departure the open parking is still closed, at the end of this drive.
          */
         pendingEnd: suspend () -> ActiveParkingEnd? = { null },
     ): ConfirmCandidateResult {
@@ -205,8 +205,8 @@ class ParkingCandidateCoordinator(
                 return ConfirmCandidateResult.Gone(store.readConfirmedRecordIdOnce(candidateId))
             }
 
-        val ending = pendingEnd()
         val repository = repository()
+        val ending = endingForConfirmation(repository.findActive(), candidate, pendingEnd)
         val record = ParkingRecord(
             id = idGenerator(),
             startedAtMillis = candidate.parkedAtMillis,
@@ -235,6 +235,26 @@ class ParkingCandidateCoordinator(
         // overstate the feature.
         analytics.record(AnalyticsEvent.ParkingCandidateConfirmed(candidate.evidence))
         return ConfirmCandidateResult.Confirmed(record, endedPrevious = opened.endedPrevious)
+    }
+
+    /**
+     * What a confirmation closes, if a parking is still open — mirrors iOS
+     * `ParkingModel.saveDetectedParking`.
+     *
+     * A pending departure about the open record (§11a) closes it at the departure time.
+     * With none — the user answered `아직 주차 중`, or no departure was ever seen — the car
+     * still cannot be in two places, and the user just said they parked somewhere else, so
+     * the open record ends when this drive finished: `max(startedAt, candidate.detectedAt)`,
+     * never before it started. Both land in one write with the insert (FR-004).
+     */
+    private suspend fun endingForConfirmation(
+        active: ParkingRecord?,
+        candidate: ParkingCandidate,
+        pendingEnd: suspend () -> ActiveParkingEnd?,
+    ): ActiveParkingEnd? {
+        if (active == null) return null
+        return pendingEnd()?.takeIf { it.recordId == active.id }
+            ?: ActiveParkingEnd(active.id, maxOf(active.startedAtMillis, candidate.detectedAtMillis))
     }
 
     /**

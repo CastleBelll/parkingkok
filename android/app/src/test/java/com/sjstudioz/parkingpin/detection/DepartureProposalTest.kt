@@ -1,6 +1,7 @@
 package com.sjstudioz.parkingpin.detection
 
 import com.sjstudioz.parkingpin.analytics.AnalyticsEvent
+import com.sjstudioz.parkingpin.analytics.DetectionProperties
 import com.sjstudioz.parkingpin.analytics.RecordingAnalytics
 import com.sjstudioz.parkingpin.data.DetectionStateStore
 import com.sjstudioz.parkingpin.data.InMemoryPreferencesDataStore
@@ -11,8 +12,11 @@ import com.sjstudioz.parkingpin.domain.detection.DetectionState
 import com.sjstudioz.parkingpin.domain.detection.MotionDomainEvent
 import com.sjstudioz.parkingpin.domain.detection.MotionEventKind
 import com.sjstudioz.parkingpin.domain.detection.ParkingDetectionEngine
+import com.sjstudioz.parkingpin.domain.detection.ParkingCandidate
 import com.sjstudioz.parkingpin.domain.detection.ParkingEndProposal
 import com.sjstudioz.parkingpin.domain.location.LocationSample
+import com.sjstudioz.parkingpin.domain.parking.ConfidenceBucket
+import com.sjstudioz.parkingpin.domain.parking.FloorParser
 import com.sjstudioz.parkingpin.domain.parking.ParkingRecord
 import com.sjstudioz.parkingpin.domain.parking.usecase.EndParkingUseCase
 import com.sjstudioz.parkingpin.domain.parking.usecase.ManualParkingInput
@@ -23,6 +27,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -39,10 +44,12 @@ class DepartureProposalTest {
 
     private lateinit var database: ParkingDatabase
     private lateinit var repository: RoomParkingRepository
+    private lateinit var storage: WriteFailingParkingRepository
     private lateinit var store: DetectionStateStore
     private lateinit var analytics: RecordingAnalytics
     private lateinit var notifier: FakeParkingEndProposalNotifier
     private lateinit var proposals: ParkingEndProposalCoordinator
+    private lateinit var candidates: ParkingCandidateCoordinator
     private lateinit var runtime: ParkingDetectionRuntime
     private val clock = MutableTestClock(epochMillis = START)
     private var captureStops = 0
@@ -51,6 +58,7 @@ class DepartureProposalTest {
     fun setUp() {
         database = createTestParkingDatabase()
         repository = RoomParkingRepository(database.parkingRecordDao())
+        storage = WriteFailingParkingRepository(repository)
         store = DetectionStateStore(InMemoryPreferencesDataStore())
         analytics = RecordingAnalytics()
         notifier = FakeParkingEndProposalNotifier()
@@ -58,24 +66,26 @@ class DepartureProposalTest {
     }
 
     /** Builds the coordinator and runtime over the current store — also a process restart. */
-    private fun wire() {
+    private fun wire(keptParking: (suspend (atMillis: Long) -> Unit)? = null) {
         var nextId = 0
         val candidates = ParkingCandidateCoordinator(
             store = store,
-            repository = { repository },
+            repository = { storage },
             notifier = FakeCandidateNotifier(),
             analytics = analytics,
             clock = clock,
             idGenerator = { "coordinator-${nextId++}" },
         )
         lateinit var built: ParkingDetectionRuntime
+        this.candidates = candidates
+        val engineHearsKept: suspend (Long) -> Unit = { at -> built.handleUserKeptParking(at) }
         proposals = ParkingEndProposalCoordinator(
             store = store,
-            repository = { repository },
+            repository = { storage },
             notifier = notifier,
             clock = clock,
             analytics = analytics,
-            keptParking = { at -> built.handleUserKeptParking(at) },
+            keptParking = keptParking ?: engineHearsKept,
         )
         built = ParkingDetectionRuntime(
             store = store,
@@ -219,6 +229,59 @@ class DepartureProposalTest {
         assertEquals(parked.id, store.readParkingEndProposalOnce()?.recordId)
     }
 
+    @Test
+    fun `a failed accept keeps the question pending and on screen`() = runTest {
+        // Arrange — the tap from the shade reaches a full disk.
+        val parked = saveByHand("B3")
+        val departedAt = driveAway()
+        storage.failWrites = true
+
+        // Act — what the notification action and the home card run: never a crash.
+        val answered = proposals.tryAccept(parked.id)
+
+        // Assert — nothing closed, and the question is still there to be answered again.
+        assertFalse(answered)
+        assertEquals(parked.id, repository.findActive()?.id)
+        assertEquals(ParkingEndProposal(parked.id, departedAt), store.readParkingEndProposalOnce())
+        assertEquals(parked.id, notifier.showing?.id)
+        assertFalse(analytics.events.any { it is AnalyticsEvent.ParkingAutoEnd })
+    }
+
+    @Test
+    fun `a retried accept after a failure ends the record at the departure time`() = runTest {
+        // Arrange
+        val parked = saveByHand("B3")
+        val departedAt = driveAway()
+        storage.failWrites = true
+        proposals.tryAccept(parked.id)
+        storage.failWrites = false
+
+        // Act
+        val answered = proposals.tryAccept(parked.id)
+
+        // Assert
+        assertTrue(answered)
+        assertEquals(departedAt, repository.find(parked.id)?.endedAtMillis)
+        assertNull(store.readParkingEndProposalOnce())
+    }
+
+    @Test
+    fun `a failed keep keeps the question pending and on screen`() = runTest {
+        // Arrange — the engine's own store write fails when it hears user_kept_parking.
+        val parked = saveByHand("B3")
+        val departedAt = driveAway()
+        wire(keptParking = { _ -> throw java.io.IOException("disk full") })
+
+        // Act
+        val answered = proposals.tryKeep(parked.id)
+
+        // Assert
+        assertFalse(answered)
+        assertEquals(parked.id, repository.findActive()?.id)
+        assertEquals(ParkingEndProposal(parked.id, departedAt), store.readParkingEndProposalOnce())
+        assertEquals(parked.id, notifier.showing?.id)
+    }
+
     // ── 아직 주차 중 ──────────────────────────────────────────────────────────────────
 
     @Test
@@ -348,6 +411,175 @@ class DepartureProposalTest {
         assertNull(store.readParkingEndProposalOnce())
         assertNull(notifier.showing)
     }
+
+    // ── The next parking, from a candidate (twins of iOS ParkingEndProposalModelTests) ──
+
+    @Test
+    fun `a confirmed candidate while a proposal is pending ends the old record at departedAt`() = runTest {
+        // Arrange — the candidate was detected well after the car left.
+        val old = saveByHand("B3")
+        val departedAt = driveAway()
+        clock.epochMillis = departedAt + 1_200_000L
+        val candidate = candidates.create(evidence(), lastReliableLocation = null)
+
+        // Act — what ManualParkingViewModel does for a candidate.
+        val result = confirm(candidate.id)
+
+        // Assert
+        assertTrue(result is ConfirmCandidateResult.Confirmed)
+        val confirmed = result as ConfirmCandidateResult.Confirmed
+        assertEquals(departedAt, repository.find(old.id)?.endedAtMillis)
+        assertEquals(confirmed.record.id, repository.findActive()?.id)
+        assertNull(store.readParkingEndProposalOnce())
+        assertNull(notifier.showing)
+    }
+
+    @Test
+    fun `a hand save whose write fails leaves the old record active and the proposal pending`() = runTest {
+        // Arrange
+        val old = saveByHand("B3")
+        driveAway()
+        storage.failWrites = true
+        val withdrawalsBefore = notifier.withdrawals
+
+        // Act
+        val failure = runCatching {
+            SaveManualParkingUseCase(
+                repository = storage,
+                locationProvider = { null },
+                clock = clock,
+                idGenerator = { "record-new" },
+            )(ManualParkingInput(floorRaw = "4F"), ending = proposals.pendingEnd())
+        }.exceptionOrNull()
+
+        // Assert
+        assertNotNull(failure)
+        expectNothingSettled(old.id, withdrawalsBefore)
+    }
+
+    @Test
+    fun `a confirmed candidate whose write fails leaves the old record active and the proposal pending`() = runTest {
+        // Arrange
+        val old = saveByHand("B3")
+        val departedAt = driveAway()
+        clock.epochMillis = departedAt + 1_200_000L
+        val candidate = candidates.create(evidence(), lastReliableLocation = null)
+        storage.failWrites = true
+        val withdrawalsBefore = notifier.withdrawals
+
+        // Act
+        val failure = runCatching { confirm(candidate.id) }.exceptionOrNull()
+
+        // Assert
+        assertNotNull(failure)
+        expectNothingSettled(old.id, withdrawalsBefore)
+    }
+
+    @Test
+    fun `without a proposal, a confirmed candidate whose write fails does not end the active record`() = runTest {
+        // Arrange
+        val old = saveByHand("B3")
+        clock.epochMillis = DEPART
+        val candidate = candidates.create(evidence(), lastReliableLocation = null)
+        storage.failWrites = true
+
+        // Act
+        val failure = runCatching { confirm(candidate.id) }.exceptionOrNull()
+
+        // Assert
+        assertNotNull(failure)
+        assertEquals(old.id, repository.findActive()?.id)
+        assertNull(repository.find(old.id)?.endedAtMillis)
+    }
+
+    @Test
+    fun `confirming a candidate that expired while the form was open ends nothing and keeps the proposal`() = runTest {
+        // Arrange — the form captured the candidate, then its 45 minutes ran out.
+        val old = saveByHand("B3")
+        val departedAt = driveAway()
+        clock.epochMillis = departedAt + 60_000L
+        val captured = candidates.create(evidence(), lastReliableLocation = null)
+        clock.epochMillis += ParkingCandidate.LIFETIME_MILLIS + 1
+        val withdrawalsBefore = notifier.withdrawals
+
+        // Act
+        val result = confirm(captured.id)
+
+        // Assert
+        assertTrue(result is ConfirmCandidateResult.Gone)
+        expectNothingSettled(old.id, withdrawalsBefore)
+    }
+
+    @Test
+    fun `confirming a candidate that was superseded while the form was open ends nothing and keeps the proposal`() = runTest {
+        // Arrange — a newer candidate replaced the one the form captured.
+        val old = saveByHand("B3")
+        val departedAt = driveAway()
+        clock.epochMillis = departedAt + 60_000L
+        val captured = candidates.create(evidence(), lastReliableLocation = null)
+        clock.epochMillis += 60_000L
+        candidates.create(evidence(), lastReliableLocation = null)
+        val withdrawalsBefore = notifier.withdrawals
+
+        // Act
+        val result = confirm(captured.id)
+
+        // Assert
+        assertTrue(result is ConfirmCandidateResult.Gone)
+        expectNothingSettled(old.id, withdrawalsBefore)
+    }
+
+    // ── A parking still open with nothing asked (e.g. after 아직 주차 중) ───────────────
+
+    @Test
+    fun `a confirmed candidate after the parking was kept ends it when the drive finished`() = runTest {
+        // Arrange — asked, answered 아직 주차 중, then a later drive produced a candidate.
+        val old = saveByHand("B3")
+        driveAway()
+        proposals.keep(old.id)
+        clock.epochMillis = DEPART + 3_600_000L
+        val candidate = candidates.create(evidence(), lastReliableLocation = null)
+
+        // Act
+        val result = confirm(candidate.id)
+
+        // Assert — iOS's rule: the kept record ends at max(startedAt, detectedAt), in the
+        // same write as the insert, and the new record is the open one.
+        assertTrue(result is ConfirmCandidateResult.Confirmed)
+        val confirmed = result as ConfirmCandidateResult.Confirmed
+        assertEquals(old.id, confirmed.endedPrevious?.id)
+        assertEquals(candidate.detectedAtMillis, repository.find(old.id)?.endedAtMillis)
+        assertEquals(confirmed.record.id, repository.findActive()?.id)
+    }
+
+    /** What ManualParkingViewModel.confirmCandidate does around the coordinator. */
+    private suspend fun confirm(candidateId: String): ConfirmCandidateResult {
+        val result = candidates.confirm(
+            candidateId,
+            ConfirmedCandidateDetails(floor = FloorParser.parse("B1")),
+            pendingEnd = { proposals.pendingEnd() },
+        )
+        (result as? ConfirmCandidateResult.Confirmed)?.endedPrevious?.let { proposals.retire(it.id) }
+        return result
+    }
+
+    /** §11a for a save that writes nothing: the old record, the question and its notification as they were. */
+    private suspend fun expectNothingSettled(oldId: String, withdrawalsBefore: Int) {
+        val active = repository.findActive()
+        assertEquals(oldId, active?.id)
+        assertNull(active?.endedAtMillis)
+        assertTrue(repository.observeCompleted(limit = -1).first().isEmpty())
+        assertEquals(oldId, store.readParkingEndProposalOnce()?.recordId)
+        assertEquals(oldId, notifier.showing?.id)
+        assertEquals(withdrawalsBefore, notifier.withdrawals)
+    }
+
+    private fun evidence() = DetectionProperties(
+        confidenceBucket = ConfidenceBucket.HIGH,
+        walkingEvidence = true,
+        gpsDegradation = false,
+        optionalVehicleSignal = false,
+    )
 
     private suspend fun saveByHand(floor: String, spot: String? = null): ParkingRecord {
         val result = SaveManualParkingUseCase(
