@@ -12,6 +12,8 @@ import com.sjstudioz.parkingpin.domain.detection.ReliableLocation
 import com.sjstudioz.parkingpin.domain.parking.ConfidenceBucket
 import com.sjstudioz.parkingpin.domain.parking.FloorParser
 import com.sjstudioz.parkingpin.domain.parking.ParkingSource
+import com.sjstudioz.parkingpin.domain.parking.usecase.ManualParkingInput
+import com.sjstudioz.parkingpin.domain.parking.usecase.SaveManualParkingUseCase
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -166,19 +168,47 @@ class ParkingCandidateCoordinatorTest {
     }
 
     @Test
-    fun `confirming refuses to open a second session while one is already active`() = runTest {
+    fun `confirming while a parking is open and nothing was asked ends it when this drive finished`() =
+        runTest {
+            // Arrange — docs/05 §11a with no proposal pending (e.g. after 아직 주차 중).
+            val candidate = coordinator.create(evidence(ConfidenceBucket.HIGH), location())
+            val first = (coordinator.confirm(candidate.id, ConfirmedCandidateDetails(floor = null))
+                as ConfirmCandidateResult.Confirmed).record
+            clock.epochMillis = start + 60_000L
+            val second = coordinator.create(evidence(ConfidenceBucket.HIGH), location())
+
+            // Act
+            val result = coordinator.confirm(second.id, ConfirmedCandidateDetails(floor = null))
+
+            // Assert — one write: the open record closed at max(startedAt, detectedAt), the
+            // new one open, and the candidate resolved.
+            assertTrue(result is ConfirmCandidateResult.Confirmed)
+            val confirmed = result as ConfirmCandidateResult.Confirmed
+            assertEquals(first.id, confirmed.endedPrevious?.id)
+            assertEquals(second.detectedAtMillis, repository.find(first.id)?.endedAtMillis)
+            assertEquals(confirmed.record.id, repository.findActive()?.id)
+            assertNull(store.readCandidateOnce())
+        }
+
+    @Test
+    fun `an open parking closed by a confirmation never ends before it started`() = runTest {
+        // Arrange — the open record starts after the candidate's detection (a clock that
+        // moved backwards, or a hand save made while the candidate waited).
         val candidate = coordinator.create(evidence(ConfidenceBucket.HIGH), location())
-        coordinator.confirm(candidate.id, ConfirmedCandidateDetails(floor = null))
+        clock.epochMillis = start + 600_000L
+        SaveManualParkingUseCase(
+            repository = repository,
+            locationProvider = { null },
+            clock = clock,
+            idGenerator = { "hand" },
+        )(ManualParkingInput(floorRaw = "B2"))
 
-        clock.epochMillis = start + 60_000L
-        val second = coordinator.create(evidence(ConfidenceBucket.HIGH), location())
-        val result = coordinator.confirm(second.id, ConfirmedCandidateDetails(floor = null))
+        // Act
+        val result = coordinator.confirm(candidate.id, ConfirmedCandidateDetails(floor = null))
 
-        assertTrue(result is ConfirmCandidateResult.AlreadyActive)
-        // Nothing was written — no second record, and no record was closed to make room.
-        assertEquals(emptyList<String>(), repository.observeCompleted(limit = -1).first().map { it.id })
-        // The candidate is left for the user to answer or abandon.
-        assertEquals(second.id, store.readCandidateOnce()?.id)
+        // Assert
+        assertTrue(result is ConfirmCandidateResult.Confirmed)
+        assertEquals(start + 600_000L, repository.find("hand")?.endedAtMillis)
     }
 
     // ── Rejection (§10a "never dropped") ─────────────────────────────────────────────

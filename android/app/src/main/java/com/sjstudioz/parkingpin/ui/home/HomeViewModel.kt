@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.sjstudioz.parkingpin.AppContainer
 import com.sjstudioz.parkingpin.core.Clock
 import com.sjstudioz.parkingpin.domain.detection.ParkingCandidate
+import com.sjstudioz.parkingpin.domain.detection.ParkingEndProposal
 import com.sjstudioz.parkingpin.domain.parking.ParkingRecord
 import com.sjstudioz.parkingpin.domain.parking.usecase.AdjustParkingFloorUseCase
 import com.sjstudioz.parkingpin.domain.parking.usecase.ApplyPillarSuggestionUseCase
@@ -28,6 +29,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -75,12 +77,33 @@ data class HomeUiState(
      * state, including every read that found nothing.
      */
     val pillarSuggestion: PillarSuggestion? = null,
+    /**
+     * The departure the user has not answered yet, about the parking on screen (docs/05 §11a),
+     * or null. Drives the compact `출발한 것 같아요` row on the active card; see
+     * [pendingEndProposalOf].
+     */
+    val endProposal: ParkingEndProposal? = null,
 ) {
     /** FR-008: with no stored coordinate there is nowhere to send a maps app. */
     val canOpenMap: Boolean get() = active?.location != null
 
     val hasPhoto: Boolean get() = active?.photoRelativePath != null
 }
+
+/**
+ * The proposal the home card asks, or null (docs/05 §11a).
+ *
+ * Only a proposal about the record that is open **now**: one left behind by a parking since
+ * ended or replaced asks about nothing, and showing it would offer to close the wrong record.
+ */
+fun pendingEndProposalOf(active: ParkingRecord?, proposal: ParkingEndProposal?): ParkingEndProposal? =
+    proposal?.takeIf { active != null && active.isActive && it.recordId == active.id }
+
+/** The two pending questions home can ask, paired to keep the outer combine typed. */
+private data class HomeQuestions(
+    val candidate: ParkingCandidate?,
+    val endProposal: ParkingEndProposal?,
+)
 
 /**
  * Drives the home screen.
@@ -93,6 +116,14 @@ class HomeViewModel(
     observeHistory: ObserveParkingHistoryUseCase,
     private val observePendingCandidate: () -> Flow<ParkingCandidate?>,
     private val endParking: EndParkingUseCase,
+    /** §11a's pending departure question, as stored. */
+    private val observeEndProposal: () -> Flow<ParkingEndProposal?> = { flowOf(null) },
+    /** `주차 종료` on the question: closes the record at the departure time. Never throws. */
+    private val acceptEndProposal: suspend () -> Unit = {},
+    /** `아직 주차 중` on the question: keeps the record, tells the engine. Never throws. */
+    private val keepParking: suspend () -> Unit = {},
+    /** Ending the parking by hand drops the question with it. */
+    private val withdrawEndProposal: suspend () -> Unit = {},
     private val adjustParkingFloor: AdjustParkingFloorUseCase,
     private val attachPhoto: AttachParkingPhotoUseCase,
     /** docs/02 §6a, the home and detail half: offered, never written (see [onPhotoSelected]). */
@@ -114,8 +145,9 @@ class HomeViewModel(
             // source would fall onto the `Array<*>` one, where every field becomes an
             // unchecked cast and the compiler stops catching a reordered argument.
             combine(notice, photoBusy, pillarSuggestion, ::HomeChrome),
-            observePendingCandidate(),
-        ) { active, recent, nowMillis, chrome, candidate ->
+            combine(observePendingCandidate(), observeEndProposal(), ::HomeQuestions),
+        ) { active, recent, nowMillis, chrome, questions ->
+            val candidate = questions.candidate
             HomeUiState(
                 active = active,
                 recent = recent,
@@ -126,6 +158,7 @@ class HomeViewModel(
                 pillarSuggestion = chrome.pillarSuggestion,
                 pendingCandidateId = candidate?.id,
                 pendingCandidateAtMillis = candidate?.parkedAtMillis,
+                endProposal = pendingEndProposalOf(active, questions.endProposal),
             )
         }.stateIn(
             scope = viewModelScope,
@@ -134,7 +167,20 @@ class HomeViewModel(
         )
 
     fun onEndParking() {
-        viewModelScope.launch { endParking() }
+        viewModelScope.launch {
+            endParking()
+            withdrawEndProposal()
+        }
+    }
+
+    /** §11a `주차 종료`: the record ends when the car pulled away, not now. */
+    fun onAcceptParkingEnd() {
+        viewModelScope.launch { acceptEndProposal() }
+    }
+
+    /** §11a `아직 주차 중`. */
+    fun onKeepParking() {
+        viewModelScope.launch { keepParking() }
     }
 
     fun onStepFloor(delta: Int) {
@@ -230,6 +276,10 @@ class HomeViewModel(
                     observeHistory = ObserveParkingHistoryUseCase(container.parkingRepository),
                     observePendingCandidate = container.parkingCandidateCoordinator::observePending,
                     endParking = EndParkingUseCase(container.parkingRepository, container.clock),
+                    observeEndProposal = container.parkingEndProposalCoordinator::observePending,
+                    acceptEndProposal = { container.parkingEndProposalCoordinator.tryAccept() },
+                    keepParking = { container.parkingEndProposalCoordinator.tryKeep() },
+                    withdrawEndProposal = container.parkingEndProposalCoordinator::withdraw,
                     adjustParkingFloor = AdjustParkingFloorUseCase(
                         container.parkingRepository,
                         container.clock,

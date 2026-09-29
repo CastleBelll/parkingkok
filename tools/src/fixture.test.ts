@@ -116,6 +116,28 @@ describe('parseFixture', () => {
     assert.throws(() => parseFixture(document), /expected one of/);
   });
 
+  it('accepts user_kept_parking, the answer to a departure proposal (contract §2)', () => {
+    // Arrange
+    const document = validFixture();
+    (document['events'] as Record<string, unknown>[]).push({ type: 'user_kept_parking', t: 300 });
+    document['expected'] = { candidate: false, finalState: 'PARKED' };
+
+    // Act
+    const parsed = parseFixtureText(JSON.stringify(document), 'kept');
+
+    // Assert
+    assert.equal(parsed.kind, 'confirmed');
+  });
+
+  it('rejects a payload on user_kept_parking, which carries only its time', () => {
+    // Arrange
+    const document = validFixture();
+    (document['events'] as Record<string, unknown>[]).push({ type: 'user_kept_parking', t: 300, floor: 'B3' });
+
+    // Act / Assert
+    assert.throws(() => parseFixtureText(JSON.stringify(document), 'kept'));
+  });
+
   it('rejects out-of-order events', () => {
     // Arrange
     const document = validFixture();

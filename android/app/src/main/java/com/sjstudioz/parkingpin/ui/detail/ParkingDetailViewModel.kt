@@ -76,6 +76,13 @@ class ParkingDetailViewModel(
     private val suggestFromPillarPhoto: SuggestFromPillarPhotoUseCase,
     private val applyPillarSuggestion: ApplyPillarSuggestionUseCase,
     clock: Clock,
+    /** Ending the parking by hand drops a pending departure question (docs/05 §11a). */
+    private val withdrawEndProposal: suspend () -> Unit = {},
+    /**
+     * Deleting the asked-about parking drops its departure question and notification at
+     * once (§11a), as iOS retires it on delete. A question about another record stays.
+     */
+    private val dropStaleEndProposal: suspend () -> Unit = {},
 ) : ViewModel() {
 
     private val notice = MutableStateFlow<UiNotice?>(null)
@@ -112,11 +119,17 @@ class ParkingDetailViewModel(
         )
 
     fun onEndParking() {
-        viewModelScope.launch { endParking() }
+        viewModelScope.launch {
+            endParking()
+            withdrawEndProposal()
+        }
     }
 
     fun onDelete() {
-        viewModelScope.launch { deleteRecord(recordId) }
+        viewModelScope.launch {
+            deleteRecord(recordId)
+            dropStaleEndProposal()
+        }
     }
 
     /** FR-007: downsample and store what the picker or the camera returned. */
@@ -214,6 +227,8 @@ class ParkingDetailViewModel(
                             container.clock,
                         ),
                         clock = container.clock,
+                        withdrawEndProposal = container.parkingEndProposalCoordinator::withdraw,
+                        dropStaleEndProposal = container.parkingEndProposalCoordinator::dropIfStale,
                     ) as T
             }
     }

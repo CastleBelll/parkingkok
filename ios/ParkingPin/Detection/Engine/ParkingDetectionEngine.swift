@@ -48,50 +48,96 @@ struct DetectionEngineSnapshot: Sendable, Equatable {
 /// derived from field traces. This type decides *when* to consult them, never what they
 /// should say.
 actor ParkingDetectionEngine {
+    /// The §14 checkpoint fields. Its `engine` is refreshed from `memory` on every write.
     private var checkpoint: DetectionCheckpoint
+    /// Everything else the engine decides from (docs/05 §14 "Both platforms persist and reload
+    /// their whole engine state"). The properties below forward here, so the value a
+    /// checkpoint writes is the engine's state itself, not a copy that could miss a field.
+    private var memory = DetectionEngineRecord()
+    /// The last value handed to `persistCheckpoint` — or read back by `restore` — which is
+    /// what a process death leaves on disk. `persistIfChanged` compares against it.
+    private var persisted: DetectionCheckpoint?
+
     /// The open session: the drive of `DRIVING_CANDIDATE` and `DRIVING`, and the get-in or
     /// departure §11 measures in `PARKED` and `DEPARTURE_CANDIDATE` (`nil` in `PARKED` with
     /// no get-in). `nil` in `IDLE`, `PARKING_TRANSITION` and `CANDIDATE_PENDING`, whose drives
     /// live in `transition` and `candidateDrive`.
-    private var driving: DrivingEvidence?
+    private var driving: DrivingEvidence? {
+        get { memory.driving }
+        set { memory.driving = newValue }
+    }
+
     /// docs/05 §11 "A lost capture decides nothing" (2026-09-28): the open session in
     /// `driving` has lost its bounded capture and keeps going without one. Carried into the
     /// transition that session ends in (`isCapturing: false`), so no stop-only window is
-    /// opened on a capture that is not running, and persisted with the session record
-    /// (`DetectionCheckpoint.departure`, in every state that holds a session) so a relaunch
-    /// does not reopen it. Cleared whenever a session opens or a capture starts.
-    private var isDrivingCaptureLost = false
+    /// opened on a capture that is not running, and restored with the rest of the state so a
+    /// relaunch does not reopen it. Cleared whenever a session opens or a capture starts.
+    private var isDrivingCaptureLost: Bool {
+        get { memory.isDrivingCaptureLost }
+        set { memory.isDrivingCaptureLost = newValue }
+    }
+
     /// Non-nil exactly while the state is `PARKING_TRANSITION`.
-    private var transition: ParkingTransition?
+    private var transition: ParkingTransition? {
+        get { memory.transition }
+        set { memory.transition = newValue }
+    }
+
     /// The drive a pending candidate came from, kept only while `CANDIDATE_PENDING` so a
     /// car-link reconnect (§3a, the fuel stop) resumes the *same* trip — its start, its
     /// distance — rather than a new one. Cleared on leaving the state any other way.
-    private var candidateDrive: DrivingEvidence?
+    private var candidateDrive: DrivingEvidence? {
+        get { memory.candidateDrive }
+        set { memory.candidateDrive = newValue }
+    }
+
     /// docs/05 §3a "A stop-only candidate can still be a long light" (2026-09-27). Non-nil
     /// while the pending candidate came from a transition that nothing but absence ended —
     /// entered by `movementIdle`, confirmed by a stop, no exit, no walk — and the drive's
     /// `transitionWindow` has not yet run out. While it stands `candidateDrive` keeps
     /// recording, and reported movement or `vehicle_enter` takes the candidate back.
-    private var candidateResume: CandidateResume?
-    /// What the fix this event carried did to the drive, for `applyEdge`. Set by `ingest`,
-    /// consumed by the edge after the windows have been judged, cleared per event.
-    private var lastFixVerdict: FixVerdict?
+    private var candidateResume: CandidateResume? {
+        get { memory.candidateResume }
+        set { memory.candidateResume = newValue }
+    }
+
     /// The vehicle-activity *level*. Set by `vehicleEnter`, cleared by `vehicleExit` — see
     /// `DetectionEvent` for why this is a level and not a decaying sample.
-    private var isVehicleActive = false
+    private var isVehicleActive: Bool {
+        get { memory.isVehicleActive }
+        set { memory.isVehicleActive = newValue }
+    }
+
     /// When the current stretch of vehicle activity began, as the *evidence* dates it.
     ///
     /// The promotion bar is measured from the later of this and the session start. Both
     /// halves matter: a car link opens `DRIVING_CANDIDATE` before any vehicle activity
     /// exists, so the link must not buy those 90 seconds; and Core Motion history hands
     /// iOS a sample that is already minutes old, which must not buy them either.
-    private var vehicleActiveSince: Date?
-    private var connectedCarLinks: Set<CarLinkKind> = []
-    private var pendingCandidate: ParkingCandidate?
+    private var vehicleActiveSince: Date? {
+        get { memory.vehicleActiveSince }
+        set { memory.vehicleActiveSince = newValue }
+    }
+
+    private var connectedCarLinks: Set<CarLinkKind> {
+        get { memory.connectedCarLinks }
+        set { memory.connectedCarLinks = newValue }
+    }
+
     /// §12 / §3a "One candidate per travel session". Cleared on the way back to `IDLE` and
     /// when a candidate is retired unanswered, which is what makes the fuel-stop reconnect
     /// (§17 fixture 3) able to produce the real parking later in the same trip.
-    private var hasProducedCandidateInSession = false
+    private var hasProducedCandidateInSession: Bool {
+        get { memory.hasProducedCandidateInSession }
+        set { memory.hasProducedCandidateInSession = newValue }
+    }
+
+    /// Lives in its own file (§10a); the adapter hands it to `restore`.
+    private var pendingCandidate: ParkingCandidate?
+    /// What the fix this event carried did to the drive, for `applyEdge`. Set by `ingest`,
+    /// consumed by the edge after the windows have been judged, cleared per event.
+    private var lastFixVerdict: FixVerdict?
+    /// §6 selection diagnostics. Per process: they change no decision.
     private var reliableLocationUpdateCount = 0
     private var reliableLocationRejectCount = 0
     private var lastReliableLocationRejection: ReliableLocationRejection?
@@ -102,93 +148,11 @@ actor ParkingDetectionEngine {
         checkpoint: DetectionCheckpoint? = nil,
         makeCandidateId: @escaping @Sendable () -> UUID = { UUID() }
     ) {
-        self.checkpoint = checkpoint ?? DetectionCheckpoint.initial(at: .distantPast)
+        let initial = checkpoint ?? DetectionCheckpoint.initial(at: .distantPast)
+        self.checkpoint = initial
         self.makeCandidateId = makeCandidateId
-    }
-
-    /// The drive that just ended, held while `PARKING_TRANSITION` decides what it was.
-    ///
-    /// §3a: "codes accumulate as evidence arrives and travel with the candidate."
-    /// `evidence` is that accumulation — added to as signals show up and handed to the
-    /// policy unchanged, never recomputed at the end from the final state.
-    private struct ParkingTransition {
-        let enteredAt: Date
-        let entryReason: DrivingSessionEndReason
-        /// The finished drive, **still recording**. docs/05 §3a: a fix inside the window
-        /// either confirms the parking (a location stop) or resumes the drive (movement
-        /// returns), and both need the drive's anchors; a resume hands this back as
-        /// `driving`, so the trip keeps its start, distance and confirmation.
-        var drive: DrivingEvidence
-        /// §8b: duration and distance are measured at the vehicle end — this state's entry
-        /// — and frozen there, so a walk to the lift adds neither. `nil` duration: unknown,
-        /// a transition rebuilt from a checkpoint.
-        let driveDurationAtEnd: TimeInterval?
-        let driveDistanceAtEnd: Double
-        /// §5's inheritance bound: the travel session's start. `nil` for a rebuilt
-        /// transition, where only the age bound applies.
-        let sessionStartedAt: Date?
-        /// The flags this transition earns as signals arrive — §3a "codes accumulate as
-        /// evidence arrives". Discarded with the transition when the drive resumes: that
-        /// stop was a red light, and its evidence belonged to it.
-        var evidence: ParkingEvidence
-        /// Whether the bounded capture is still running for this transition.
-        var isCapturing: Bool
-
-        init(
-            enteredAt: Date,
-            entryReason: DrivingSessionEndReason,
-            drive: DrivingEvidence,
-            driveDurationAtEnd: TimeInterval?,
-            driveDistanceAtEnd: Double? = nil,
-            sessionStartedAt: Date?,
-            vehicleExitDetected: Bool,
-            isCapturing: Bool
-        ) {
-            self.enteredAt = enteredAt
-            self.entryReason = entryReason
-            self.drive = drive
-            self.driveDurationAtEnd = driveDurationAtEnd
-            // A rebuilt transition has a fresh drive with nothing in it; the distance the
-            // real one covered survives only as the checkpoint's `travelDistanceEstimate`.
-            self.driveDistanceAtEnd = driveDistanceAtEnd ?? drive.distanceMeters
-            self.sessionStartedAt = sessionStartedAt
-            evidence = ParkingEvidence(
-                hasMeaningfulVehicleSession: true,
-                vehicleEnded: true,
-                vehicleExitDetected: vehicleExitDetected
-            )
-            self.isCapturing = isCapturing
-        }
-
-        /// docs/05 §8b `vehicle_exit_detected`: which entries *are* an exit. The iOS
-        /// adapter derives its exit from a walk (`walkingDetected`) or from Core Motion
-        /// going silent (`vehicleEvidenceExpired`) — the normalized `vehicle_exit` Android
-        /// is handed. `movementIdle` is an inference from absence and is not.
-        static func isExplicitExit(_ reason: DrivingSessionEndReason) -> Bool {
-            switch reason {
-            case .vehicleExit, .walkingDetected, .vehicleEvidenceExpired, .carLinkDisconnected:
-                true
-            case .movementIdle, .maximumDurationReached, .authorizationLost, .captureFailed,
-                 .smartDetectionDisabled, .fieldTestStopped:
-                false
-            }
-        }
-    }
-
-    /// The window in which a stop-only candidate can still turn out to be a long light.
-    ///
-    /// Exists exactly while the bounded capture the transition kept is running (§3a "The
-    /// window lives exactly as long as its capture"): it is never opened without one, and
-    /// every door that stops the capture closes it.
-    private struct CandidateResume {
-        /// The drive's end — the transition's entry. A fix older than this says nothing
-        /// about whether the car moved on.
-        let driveEndedAt: Date
-        /// `driveEndedAt + transitionWindow`: the deadline the transition itself had.
-        let deadline: Date
-        /// Fixes inside the window that reported moving speed. §7's "one event alone never
-        /// confirms": a single Doppler spike under a slab must not withdraw a parking.
-        var reportedMovingFixes = 0
+        memory = initial.engine ?? DetectionEngineRecord()
+        persisted = initial
     }
 
     /// What one accepted fix did to the drive it was folded into.
@@ -208,7 +172,7 @@ actor ParkingDetectionEngine {
 
     func snapshot() -> DetectionEngineSnapshot {
         DetectionEngineSnapshot(
-            checkpoint: checkpoint,
+            checkpoint: durableState,
             driving: driving,
             transitionDrive: transition?.drive,
             parkingTransitionEnteredAt: transition?.enteredAt,
@@ -218,19 +182,33 @@ actor ParkingDetectionEngine {
             reliableLocationUpdateCount: reliableLocationUpdateCount,
             reliableLocationRejectCount: reliableLocationRejectCount,
             lastReliableLocationRejection: lastReliableLocationRejection,
-            isLocationCaptureWanted: (driving != nil && !isDrivingCaptureLost)
-                || transition?.isCapturing == true || candidateResume != nil
+            isLocationCaptureWanted: isLocationCaptureWanted
         )
+    }
+
+    /// The engine's whole state as it stands, in the shape a checkpoint writes it.
+    private var durableState: DetectionCheckpoint {
+        var state = checkpoint
+        state.engine = memory
+        return state
+    }
+
+    /// Whether the bounded capture should be running (`DetectionEngineSnapshot`).
+    private var isLocationCaptureWanted: Bool {
+        (driving != nil && !isDrivingCaptureLost) || transition?.isCapturing == true || candidateResume != nil
     }
 
     var state: DetectionState { checkpoint.state }
 
-    /// docs/05 §16. Rebuilds what a dead process left behind.
+    /// docs/05 §16. Puts back what a dead process left behind.
     ///
-    /// A checkpoint is not a session: it says which state was current and when it was
-    /// entered, so the bounded session and the parking transition are *recreated* from it
-    /// rather than resumed. docs/04 §3 requires that, because nothing else will ever
-    /// reopen a session the previous process owned.
+    /// docs/05 §14 "Both platforms persist and reload their whole engine state": the stored
+    /// state is read back exactly as it was written — no session is rebuilt, no rule is
+    /// re-derived — and then `settleRelaunch` applies the one thing an iOS relaunch differs
+    /// in: the bounded capture did not survive the process.
+    ///
+    /// A checkpoint written before schema 3 has no engine state and is migrated first
+    /// (`migrateLegacyCheckpoint`); an absent or unreadable one starts from `IDLE`.
     ///
     /// `pendingCandidate` is passed separately because it lives in its own file (§10a) and
     /// only the adapter knows how to read it.
@@ -240,180 +218,142 @@ actor ParkingDetectionEngine {
         seedIfAbsent: Bool = true,
         now: Date
     ) -> [DetectionEffect] {
-        checkpoint = restored ?? DetectionCheckpoint.initial(at: now)
         self.pendingCandidate = pendingCandidate
-        isDrivingCaptureLost = false
-        hasProducedCandidateInSession = checkpoint.state == .candidatePending
+        checkpoint = restored ?? DetectionCheckpoint.initial(at: now)
+        memory = checkpoint.engine ?? DetectionEngineRecord()
+        persisted = restored
 
         var effects: [DetectionEffect] = []
-        if restored == nil, seedIfAbsent {
-            // First run on this install: give process death something to restore.
-            effects.append(.persistCheckpoint(checkpoint))
+        if restored == nil {
+            // First run on this install: give process death something to restore. Without a
+            // seed there is no file, and an unchanged `IDLE` is still not worth writing.
+            if seedIfAbsent {
+                effects.append(persistedCheckpoint())
+            } else {
+                persisted = durableState
+            }
+        } else if checkpoint.engine == nil {
+            effects += migrateLegacyCheckpoint(now: now)
         }
+        effects += settleRelaunch(now: now)
+        return effects + persistIfChanged()
+    }
 
-        // §10: checked before the state is consulted, because the candidate lives in its
-        // own file and the two can disagree after a process death. A candidate whose 45
-        // minutes ran out must be withdrawn whatever the checkpoint believes.
-        if let pendingCandidate, pendingCandidate.isExpired(now: now) {
-            effects += retirePendingCandidate(now: now)
-        }
-
-        switch checkpoint.state {
-        case .drivingCandidate, .driving:
-            effects += restoreDrivingSession(now: now)
-        case .parkingTransition:
-            effects += restoreParkingTransition(now: now)
-        case .candidatePending:
-            isVehicleActive = false
-        case .departureCandidate:
-            effects += restoreDeparture(now: now)
-        case .parked:
-            effects += restoreGetIn(now: now)
-        case .idle:
-            break
-        }
+    /// docs/05 §14 "The capture did not survive" — the rule Android applies after a reboot or a
+    /// package replace, and iOS after every relaunch, because Core Location's standard updates
+    /// end with the process. On the restored state, at the relaunch time:
+    ///
+    /// 1. an open session that the session timeout already ends is dropped
+    ///    (`DrivingSessionTimeoutPolicy.relaunchExpiryReason`, Android `dropsStaleSession`): a
+    ///    `PARKED` get-in goes and the parking stays; a `DRIVING_CANDIDATE` / `DRIVING` ends in
+    ///    `IDLE` with no candidate — nothing observed its stop, and a capture reopened now would
+    ///    measure wherever the phone is, not where the car stopped;
+    /// 2. §3a's windows that lapsed while the process was dead are settled, stamped at their
+    ///    deadlines — a stop-only candidate's resume window included;
+    /// 3. the capture the settled state still wants is reopened — a stop-only window's too, which
+    ///    the reopened capture then carries (§3a "The window lives exactly as long as its
+    ///    capture") — unless its session had lost it (§11 "A lost capture decides nothing").
+    ///
+    /// No edge is asked here: that waits for the next event, as it does after an Android
+    /// process death, where the capture survived and nothing runs at the relaunch at all.
+    private func settleRelaunch(now: Date) -> [DetectionEffect] {
+        var effects = dropStaleSession(now: now)
         effects += tick(now: now)
+        if isLocationCaptureWanted {
+            effects.append(.startBoundedLocationCapture)
+        }
         return effects
     }
 
-    /// A drive with a session record (docs/05 §11 "A lost capture decides nothing": one that
-    /// lost its capture) is put back exactly as it was and reopens none. Any other drive is
-    /// rebuilt from `stateEnteredAt` and reopens its capture to re-earn its anchors.
-    private func restoreDrivingSession(now: Date) -> [DetectionEffect] {
-        let isRecorded = restoreDepartureEvidence()
-        let resumed = driving ?? DrivingEvidence(
-            startedAt: checkpoint.stateEnteredAt,
-            lastVehicleEvidenceAt: checkpoint.lastAutomotiveAt
-        )
-        // A session that would end the instant it reopens is not worth the GPS. The
-        // ordinary expiry rule decides, so there is one definition of "too old".
-        if let expiry = DrivingSessionTimeoutPolicy.expiryReason(for: resumed, now: now) {
+    /// Step 1 of `settleRelaunch`.
+    private func dropStaleSession(now: Date) -> [DetectionEffect] {
+        guard let session = driving else { return [] }
+        switch checkpoint.state {
+        case .parked:
+            guard DrivingSessionTimeoutPolicy.expiryReason(for: session, now: now) != nil else { return [] }
+            return endGetIn()
+        case .drivingCandidate, .driving:
+            guard let expiry = DrivingSessionTimeoutPolicy.relaunchExpiryReason(forDrive: session, now: now)
+            else { return [] }
             driving = nil
             isDrivingCaptureLost = false
             isVehicleActive = false
             vehicleActiveSince = nil
             return [.sessionEnded(reason: expiry, at: now), .stopLocationCapture] + moveTo(.idle, now: now)
+        case .idle, .parkingTransition, .candidatePending, .departureCandidate:
+            // Their own windows settle a stale one on the relaunch's tick.
+            return []
         }
-        driving = resumed
-        if !isRecorded {
-            isVehicleActive = true
-            vehicleActiveSince = checkpoint.lastAutomotiveAt ?? checkpoint.stateEnteredAt
-        }
-        if checkpoint.state == .driving {
-            driving?.markConfirmed(at: checkpoint.stateEnteredAt)
-        }
-        return reopenedCapture()
     }
 
-    /// docs/05 §14 "A restored departure keeps its evidence" (2026-09-28).
+    /// A checkpoint written before schema 3 (docs/05 §14 "A checkpoint from before schema 3"):
+    /// the engine state the old reconstruction made of it, once. The restore that calls this
+    /// writes it back as schema 3, so it never runs twice for one file.
     ///
-    /// Android's runtime reloads its whole engine state for every batch, so a departure — or
-    /// the get-in session `PARKED` measures §11's bars on — reaches the same next event with
-    /// the same start, distance, anchors, moving samples and vehicle evidence. iOS persists
-    /// exactly that (`DetectionCheckpoint.departure`) and puts it back, so §7's guard and
-    /// §11's lapse read what they would have read without the relaunch.
-    ///
-    /// A `DEPARTURE_CANDIDATE` checkpoint without it (schema 1) is a departure nothing can
-    /// judge: it returns to `PARKED`, ending nothing. §11: leaving a record open is
-    /// recoverable, ending one wrongly is not.
-    private func restoreDeparture(now: Date) -> [DetectionEffect] {
-        guard restoreDepartureEvidence() else { return moveTo(.parked, now: now) }
-        // A departure that already lapsed goes back to `PARKED` at its lapse, as the live
-        // one would, without opening a capture it would close in the same breath.
-        let lapsed = departureWindows(now: now)
-        return lapsed.isEmpty ? reopenedCapture() : lapsed
-    }
-
-    /// `PARKED` with a get-in session open: it has no window of its own (§11's bars are an
-    /// edge), so the session and its capture simply resume — unless the session would end the
-    /// instant it reopened. The same expiry rule `restoreDrivingSession` applies decides; a
-    /// stale get-in is dropped and the parking stays (§11: an adapter-decided end never
-    /// leaves `PARKED`).
-    private func restoreGetIn(now: Date) -> [DetectionEffect] {
-        guard restoreDepartureEvidence(), let getIn = driving else { return [] }
-        guard DrivingSessionTimeoutPolicy.expiryReason(for: getIn, now: now) == nil else {
-            return endGetIn()
+    /// * `DRIVING_CANDIDATE` / `DRIVING` — schema 2's record when the drive had lost its
+    ///   capture; otherwise a drive from `stateEnteredAt`, vehicle activity since
+    ///   `lastAutomotiveAt`. One the session timeout already ends goes to `IDLE`.
+    /// * `PARKING_TRANSITION` — the drive schema 2 recorded when the transition had lost its
+    ///   capture, else an empty one; the distance from `travelDistanceEstimate`, the duration
+    ///   unknown and no exit credited — nothing here knows one was detected.
+    /// * `PARKED` / `DEPARTURE_CANDIDATE` — schema 2's session record; a departure without one
+    ///   (schema 1) returns to `PARKED`, ending nothing (§11: leaving a record open is
+    ///   recoverable, ending one wrongly is not).
+    /// * `CANDIDATE_PENDING` — the one candidate this travel session has had.
+    private func migrateLegacyCheckpoint(now: Date) -> [DetectionEffect] {
+        let record = checkpoint.legacyDeparture
+        checkpoint.legacyDeparture = nil
+        memory = DetectionEngineRecord()
+        if let record, checkpoint.state != .parkingTransition {
+            driving = record.drive
+            vehicleActiveSince = record.vehicleActiveSince
+            isVehicleActive = record.vehicleActiveSince != nil
+            isDrivingCaptureLost = record.isCaptureLost
         }
-        return reopenedCapture()
-    }
-
-    /// The capture a restored get-in or departure had, reopened — unless it had already lost
-    /// it (docs/05 §11 "A lost capture decides nothing"): a process death does not give a
-    /// session its capture back, which is also what Android does, where a lost capture stays
-    /// lost across its process deaths.
-    private func reopenedCapture() -> [DetectionEffect] {
-        isDrivingCaptureLost ? [] : [.startBoundedLocationCapture]
-    }
-
-    private func restoreDepartureEvidence() -> Bool {
-        guard let record = checkpoint.departure else { return false }
-        driving = record.drive
-        vehicleActiveSince = record.vehicleActiveSince
-        isVehicleActive = record.vehicleActiveSince != nil
-        isDrivingCaptureLost = record.isCaptureLost
-        return true
-    }
-
-    /// What `DetectionCheckpoint.departure` holds for the current state: the open session in
-    /// `PARKED` and `DEPARTURE_CANDIDATE`; in `DRIVING_CANDIDATE` and `DRIVING` only while the
-    /// drive has lost its capture (docs/05 §11 "A lost capture decides nothing", §14) — a drive
-    /// with no capture can re-earn none of its evidence after a relaunch, so it has to keep
-    /// it; in `PARKING_TRANSITION` the transition's drive, only while the transition has no
-    /// capture (§11 "A lost capture stays lost for its session"); nothing anywhere else.
-    private var departureRecord: DepartureCheckpoint? {
-        if checkpoint.state == .parkingTransition {
-            guard let transition, !transition.isCapturing else { return nil }
-            return DepartureCheckpoint(drive: transition.drive, vehicleActiveSince: vehicleActiveSince, isCaptureLost: true)
-        }
-        guard let driving else { return nil }
         switch checkpoint.state {
-        case .parked, .departureCandidate:
-            break
         case .drivingCandidate, .driving:
-            guard isDrivingCaptureLost else { return nil }
-        case .idle, .parkingTransition, .candidatePending:
-            return nil
+            if record == nil {
+                driving = DrivingEvidence(
+                    startedAt: checkpoint.stateEnteredAt,
+                    lastVehicleEvidenceAt: checkpoint.lastAutomotiveAt
+                )
+                isVehicleActive = true
+                vehicleActiveSince = checkpoint.lastAutomotiveAt ?? checkpoint.stateEnteredAt
+            }
+            if checkpoint.state == .driving {
+                driving?.markConfirmed(at: checkpoint.stateEnteredAt)
+            }
+            guard let drive = driving,
+                  let expiry = DrivingSessionTimeoutPolicy.expiryReason(for: drive, now: now)
+            else { return [] }
+            memory = DetectionEngineRecord()
+            return [.sessionEnded(reason: expiry, at: now), .stopLocationCapture] + moveTo(.idle, now: now)
+        case .parkingTransition:
+            let lostCapture = record.flatMap { $0.isCaptureLost ? $0.drive : nil }
+            var drive = lostCapture ?? DrivingEvidence(
+                startedAt: checkpoint.stateEnteredAt,
+                lastVehicleEvidenceAt: checkpoint.lastAutomotiveAt
+            )
+            drive.markConfirmed(at: checkpoint.stateEnteredAt)
+            transition = ParkingTransition(
+                enteredAt: checkpoint.stateEnteredAt,
+                entryReason: .vehicleEvidenceExpired,
+                drive: drive,
+                driveDurationAtEnd: nil,
+                driveDistanceAtEnd: checkpoint.travelDistanceEstimate,
+                sessionStartedAt: nil,
+                vehicleExitDetected: false,
+                isCapturing: lostCapture == nil
+            )
+            return []
+        case .departureCandidate:
+            return record == nil ? moveTo(.parked, now: now) : []
+        case .candidatePending:
+            hasProducedCandidateInSession = true
+            return []
+        case .idle, .parked:
+            return []
         }
-        return DepartureCheckpoint(
-            drive: driving,
-            vehicleActiveSince: vehicleActiveSince,
-            isCaptureLost: isDrivingCaptureLost
-        )
-    }
-
-    private func restoreParkingTransition(now: Date) -> [DetectionEffect] {
-        guard !ParkingTransitionPolicy.hasElapsed(enteredAt: checkpoint.stateEnteredAt, now: now) else {
-            return moveTo(.idle, now: now)
-        }
-        // docs/05 §11 "A lost capture stays lost for its session": a transition that had no
-        // capture is recorded with its drive (`departureRecord`) and reopens none — a
-        // relaunch does not give a session its capture back, on either platform.
-        let lostCapture = checkpoint.departure.flatMap { $0.isCaptureLost ? $0.drive : nil }
-        // The evidence is thinner than the original — the drive's duration, its anchors
-        // and how it ended are not checkpoint fields — and it says so rather than guessing
-        // (the distance *is* a field, written at the entry, and is kept):
-        // the duration is `nil` (unknown, which §8's short-trip penalty does not punish),
-        // and no exit is credited, because nothing here knows one was detected. A drive is
-        // still recreated, so a fix inside the window can confirm or resume it (§3a). A
-        // transition with no capture can re-earn nothing, so it keeps its recorded drive.
-        var drive = lostCapture ?? DrivingEvidence(
-            startedAt: checkpoint.stateEnteredAt,
-            lastVehicleEvidenceAt: checkpoint.lastAutomotiveAt
-        )
-        drive.markConfirmed(at: checkpoint.stateEnteredAt)
-        transition = ParkingTransition(
-            enteredAt: checkpoint.stateEnteredAt,
-            entryReason: .vehicleEvidenceExpired,
-            drive: drive,
-            driveDurationAtEnd: nil,
-            driveDistanceAtEnd: checkpoint.travelDistanceEstimate,
-            sessionStartedAt: nil,
-            vehicleExitDetected: false,
-            isCapturing: lostCapture == nil
-        )
-        // docs/05 §3a / §19: the capture runs while the transition decides, and nothing
-        // else will reopen it for a process that died mid-window.
-        return lostCapture == nil ? [.startBoundedLocationCapture] : []
     }
 
     // MARK: - The event loop
@@ -441,22 +381,22 @@ actor ParkingDetectionEngine {
         // inferring — including a window that happened to close at this instant — outranks
         // that. Android has always answered it first; iOS used to let a lapsing window
         // report `candidateRuleUnmet` on the way.
-        if case .userSavedParking = event {
-            return adoptUserSavedParking(now: now)
+        switch event {
+        case .userSavedParking, .userKeptParking:
+            return adoptUserSavedParking(now: now) + persistIfChanged()
+        default:
+            break
         }
         lastFixVerdict = nil
         var effects = ingest(event, now: now)
         effects += tick(now: now)
         effects += applyEdge(event, now: now)
         effects += tick(now: now)
-        // docs/05 §14: the departure's evidence is written whenever it changes, not only on
-        // a state change — Android writes its engine state after every batch, and a fix or a
-        // link edge that a process death then discarded would decide the departure
-        // differently on each platform.
-        if departureRecord != checkpoint.departure {
-            effects.append(persistedCheckpoint())
-        }
-        return effects
+        // docs/05 §14: whatever this event changed is written, not only a state change —
+        // Android writes its engine state after every batch, and a fix, a link edge or an
+        // accumulated flag that a process death then discarded would decide differently on
+        // each platform.
+        return effects + persistIfChanged()
     }
 
     /// Evidence that the event carries, with no state transition attached.
@@ -477,7 +417,7 @@ actor ParkingDetectionEngine {
             return []
         case .vehicleEnter, .vehicleExit, .walkingEnter, .stationaryEnter, .stationaryExit,
              .carLinkConnected, .carLinkDisconnected, .timerTick,
-             .userConfirmedParking, .userRejectedParking, .userSavedParking:
+             .userConfirmedParking, .userRejectedParking, .userSavedParking, .userKeptParking:
             return []
         }
     }
@@ -527,7 +467,7 @@ actor ParkingDetectionEngine {
         let confirmed = confirmDeparture(now: now)
         switch event {
         case .vehicleExit:
-            return confirmed + endDrivingSession(reason: .vehicleExit, now: now)
+            return confirmed + endSession(reason: .vehicleExit, now: now)
         case let .carLinkDisconnected(_, kind):
             return confirmed + handleCarLinkDisconnected(kind: kind, now: now)
         default:
@@ -554,7 +494,7 @@ actor ParkingDetectionEngine {
             return resolveCandidate(confirmed: true, now: now)
         case .userRejectedParking:
             return resolveCandidate(confirmed: false, now: now)
-        case .userSavedParking:
+        case .userSavedParking, .userKeptParking:
             // Answered in `handle` before anything else; never reaches here.
             return []
         case .location:
@@ -658,7 +598,7 @@ actor ParkingDetectionEngine {
             // ceiling is a bound on the session itself and holds either way.
             if carLinkHolds, reason == .movementIdle { return [] }
             let endedAt = stamp(deadline: Self.deadline(of: reason, for: evidence) ?? now, now: now)
-            return endDrivingSession(reason: reason, now: endedAt)
+            return endSession(reason: reason, now: endedAt)
 
         case .parkingTransition:
             guard let transition,
@@ -745,9 +685,10 @@ actor ParkingDetectionEngine {
         }
     }
 
-    /// §11 `DEPARTURE_CANDIDATE → DRIVING`, and the one effect that closes the parking.
+    /// §11 `DEPARTURE_CANDIDATE → DRIVING`, and the one effect that asks whether the parking
+    /// is over (§11a — proposed, never ended here).
     ///
-    /// The record ends when the car pulled away — `checkpoint.stateEnteredAt` is when §11's
+    /// The proposed end is when the car pulled away — `checkpoint.stateEnteredAt` is when §11's
     /// two bars were first cleared — not now, which is however long §7's guard took to be
     /// satisfied afterwards.
     ///
@@ -761,7 +702,7 @@ actor ParkingDetectionEngine {
         let departedAt = checkpoint.stateEnteredAt
         hasProducedCandidateInSession = false
         driving?.markConfirmed(at: now)
-        return [.endActiveParking(at: departedAt)] + moveTo(.driving, now: now) + [.drivingConfirmed(at: now)]
+        return [.proposeParkingEnd(departedAt: departedAt)] + moveTo(.driving, now: now) + [.drivingConfirmed(at: now)]
     }
 
     /// §11 `PARKED → DEPARTURE_CANDIDATE`: vehicle ≥ 90 s **and** movement ≥ 500 m.
@@ -853,7 +794,7 @@ actor ParkingDetectionEngine {
             return [.sessionEnded(reason: .vehicleExit, at: now), .stopLocationCapture]
                 + moveTo(.idle, now: now)
         case .driving:
-            return endDrivingSession(reason: .vehicleExit, now: now)
+            return endSession(reason: .vehicleExit, now: now)
         case .departureCandidate:
             // Android's `fromDepartureCandidate` asks §7's guard before the exit: a drive
             // that already met it has departed, and the exit is where that drive ends.
@@ -1057,13 +998,15 @@ actor ParkingDetectionEngine {
         return released + moveTo(confirmed ? .parked : .idle, now: now)
     }
 
-    /// §3a `*any* → PARKED` (§11c): the user saved a parking themselves.
+    /// §3a `*any* → PARKED` (§11c): the user saved a parking themselves — or answered a
+    /// departure proposal with 아직 주차 중 (`user_kept_parking`, §11a), which is the same row
+    /// without a new record.
     ///
     /// The user has said where the car is, and nothing the engine was inferring outranks
     /// that — so whatever was in flight is dropped without a report. No `sessionEnded`, no
     /// candidate: the user just answered the question those were building toward. And no
-    /// `endActiveParking` either, because the app's save flow has already closed any
-    /// previous record, and emitting it here would close the one just written.
+    /// `proposeParkingEnd` either: the app's save flow has already closed any previous record
+    /// (at a pending proposal's `departedAt`, §11a), and a kept parking is the answer to one.
     ///
     /// A pending candidate is withdrawn the way expiry withdraws it (§10), not the way a
     /// rejection does: the user did not say "not parked", they said "parked, here". It is
@@ -1125,8 +1068,13 @@ actor ParkingDetectionEngine {
     /// Also the entry point for the ends the *adapter* decides: a lost authorization, a
     /// capture failure, the Smart Detection opt-out, and — on iOS only — Core Motion going
     /// silent. Those describe the app losing the drive rather than the drive ending, and
-    /// `entersParkingTransition` keeps them out of the candidate path.
+    /// `entersParkingTransition` keeps them out of the candidate path. Writes whatever the end
+    /// changed, as `handle` does; the engine's own callers use `endSession`.
     func endDrivingSession(reason: DrivingSessionEndReason, now: Date) -> [DetectionEffect] {
+        endSession(reason: reason, now: now) + persistIfChanged()
+    }
+
+    private func endSession(reason: DrivingSessionEndReason, now: Date) -> [DetectionEffect] {
         if reason == .smartDetectionDisabled {
             // docs/05 §3a "Turning Smart Detection off": no link edge reaches the engine while
             // detection is off, so a latch kept here could outlive the link it stands for and
@@ -1208,7 +1156,7 @@ actor ParkingDetectionEngine {
     /// and as `endInsideTransition` does.
     ///
     /// The session records that its capture is gone (`isDrivingCaptureLost`, persisted with the
-    /// session record): a departure it then confirms drives on without one, so the
+    /// rest of the state): a departure it then confirms drives on without one, so the
     /// transition that drive ends in has no capture and a stop-only candidate there opens no
     /// resume window — as on Android, where no capture is running and the runtime closes it.
     private func releaseSessionCapture() -> [DetectionEffect] {
@@ -1242,7 +1190,7 @@ actor ParkingDetectionEngine {
             vehicleActiveSince = nil
             return abandonDeparture(now: now)
         }
-        return confirmDeparture(now: now) + endDrivingSession(reason: reason, now: now)
+        return confirmDeparture(now: now) + endSession(reason: reason, now: now)
     }
 
     /// An adapter-decided end that lands while `PARKING_TRANSITION` is already deciding.
@@ -1263,7 +1211,7 @@ actor ParkingDetectionEngine {
             guard current.isCapturing else { return [] }
             current.isCapturing = false
             transition = current
-            // Recorded (`departureRecord`) so a relaunch keeps the loss (§11).
+            // Persisted with the rest of the state, so a relaunch keeps the loss (§11).
             return [.stopLocationCapture, persistedCheckpoint()]
         case .smartDetectionDisabled, .fieldTestStopped, .maximumDurationReached:
             return [.sessionEnded(reason: reason, at: now)] + closeTransition() + moveTo(.idle, now: now)
@@ -1540,8 +1488,8 @@ actor ParkingDetectionEngine {
         guard let fix = checkpoint.lastReliableLocation else { return nil }
         guard now.timeIntervalSince(fix.capturedAt) <= ParkingCandidatePolicy.staleLocationWindow
         else { return nil }
-        // No session start to bound it against — a transition rebuilt from a checkpoint —
-        // and the age check above is the whole guard.
+        // No session start to bound it against — a transition migrated from a pre-schema-3
+        // checkpoint — and the age check above is the whole guard.
         guard let sessionStartedAt else { return fix }
         return fix.capturedAt >= sessionStartedAt ? fix : nil
     }
@@ -1668,8 +1616,17 @@ actor ParkingDetectionEngine {
     }
 
     private func persistedCheckpoint() -> DetectionEffect {
-        checkpoint.departure = departureRecord
+        checkpoint.engine = memory
         checkpoint.revision += 1
+        persisted = checkpoint
         return .persistCheckpoint(checkpoint)
+    }
+
+    /// docs/05 §14: the whole state is written whenever it differs from what is on disk, so a
+    /// process death between two events loses nothing either event changed.
+    private func persistIfChanged() -> [DetectionEffect] {
+        var current = durableState
+        current.revision = persisted?.revision ?? current.revision
+        return current == persisted ? [] : [persistedCheckpoint()]
     }
 }

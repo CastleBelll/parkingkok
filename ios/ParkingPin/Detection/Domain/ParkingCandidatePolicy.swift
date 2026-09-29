@@ -19,7 +19,7 @@ import Foundation
 ///
 /// The fourth negative, `trip below minimum`, *can* be true here — a drive of 90–120 s
 /// under 800 m promotes and can park — so it is applied (`tripBelowMinimumWeight`).
-struct ParkingEvidence: Sendable, Equatable {
+struct ParkingEvidence: Sendable, Equatable, Codable {
     /// A bounded driving session was confirmed under §7 before it ended. This is §6's
     /// "evidence of recent meaningful vehicle session".
     var hasMeaningfulVehicleSession = false
@@ -53,7 +53,7 @@ struct ParkingEvidence: Sendable, Equatable {
     /// because §4 is closed.
     var carProjectionDisconnected = false
     /// §8's duration/distance, measured at the vehicle end (§8b) and frozen there. A `nil`
-    /// duration means unknown — a transition rebuilt from a checkpoint.
+    /// duration means unknown — a transition migrated from a pre-schema-3 checkpoint.
     var driveDuration: TimeInterval?
     var driveDistanceMeters: Double?
 

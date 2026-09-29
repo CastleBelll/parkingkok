@@ -227,13 +227,12 @@ struct ManualParkingSheet: View {
         if let confirmation {
             // §7a: saving here *is* the confirmation. One path, so the record a quick pick
             // writes and the record this writes differ only in what the user typed.
-            finish(
-                succeeded: confirmation.candidates.confirm(
-                    confirmation.candidate,
-                    draft: draft,
-                    pillarPhoto: pillarPhoto
-                )
-            )
+            let candidates = confirmation.candidates
+            let saved = candidates.confirm(confirmation.candidate, draft: draft, pillarPhoto: pillarPhoto)
+            // A candidate that expired or was replaced while the form was open is gone:
+            // there is nothing left to confirm, so the form closes (Android's `Gone` exit)
+            // instead of staying open on a save that can never succeed.
+            finish(succeeded: saved || candidates.candidate(id: confirmation.candidate.id) == nil)
             return
         }
         if var editing {

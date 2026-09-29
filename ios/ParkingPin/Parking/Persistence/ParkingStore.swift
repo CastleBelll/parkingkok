@@ -33,6 +33,12 @@ protocol ParkingStoring: AnyObject {
     func update(_ session: ParkingSession) throws
     /// docs/06 §8: stamp `endedAt` on the active record, keeping the same id.
     func endSession(id: UUID, at endedAt: Date) throws
+    /// FR-004's explicit conflict resolution: ends the active record `endingId` at
+    /// `endedAt` and inserts `session` as the new active one, **in one commit**. Either both
+    /// happen or neither does — a next parking that fails to save must never leave the
+    /// previous one ended (docs/05 §11a). Throws `.notFound` if `endingId` is not the
+    /// active record.
+    func replaceActiveSession(ending endingId: UUID, at endedAt: Date, with session: ParkingSession) throws
     func delete(id: UUID) throws
     /// docs/02 §15: the settings "delete local data" action.
     func deleteAll() throws
@@ -120,6 +126,17 @@ final class SwiftDataParkingStore: ParkingStoring {
         }
         record.endedAt = endedAt
         record.updatedAt = clock.now
+        try commit()
+    }
+
+    func replaceActiveSession(ending endingId: UUID, at endedAt: Date, with session: ParkingSession) throws {
+        guard let active = try fetchActiveRecord(), active.id == endingId else {
+            throw ParkingStoreError.notFound(endingId)
+        }
+        active.endedAt = endedAt
+        active.updatedAt = clock.now
+        context.insert(ParkingRecord(session.sanitized()))
+        // One save: `commit` rolls both changes back together if it fails.
         try commit()
     }
 

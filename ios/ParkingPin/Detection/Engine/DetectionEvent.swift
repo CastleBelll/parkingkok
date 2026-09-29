@@ -53,6 +53,10 @@ enum DetectionEvent: Sendable, Equatable {
     /// state, not only `CANDIDATE_PENDING` — and it is what arms §11's departure for the
     /// records most users actually have.
     case userSavedParking(at: Date)
+    /// The user answered a departure proposal with 아직 주차 중 (docs/05 §11a, contract §2
+    /// `user_kept_parking`). The same `*any* → PARKED` row as `userSavedParking`, with no new
+    /// record: the car is still where the active parking says it is.
+    case userKeptParking(at: Date)
 
     /// When the event says it happened — never when the engine got round to it. Expiry and
     /// every §3a window are measured from this, so a wake minutes late must not buy the
@@ -70,7 +74,8 @@ enum DetectionEvent: Sendable, Equatable {
              let .timerTick(at),
              let .userConfirmedParking(at),
              let .userRejectedParking(at),
-             let .userSavedParking(at):
+             let .userSavedParking(at),
+             let .userKeptParking(at):
             at
         case let .location(fix):
             fix.timestamp

@@ -42,7 +42,7 @@ struct UserSavedParkingTests {
 
     private func endedAt(_ effects: [DetectionEffect]) -> Date? {
         effects.compactMap {
-            if case let .endActiveParking(at) = $0 {
+            if case let .proposeParkingEnd(at) = $0 {
                 return at
             }
             return nil
@@ -69,9 +69,9 @@ struct UserSavedParkingTests {
                 Issue.record("user_saved must not raise a candidate: \(effect)", sourceLocation: sourceLocation)
             case .sessionEnded:
                 Issue.record("user_saved drops the session silently: \(effect)", sourceLocation: sourceLocation)
-            case .endActiveParking:
+            case .proposeParkingEnd:
                 Issue.record(
-                    "user_saved would close the record just written: \(effect)",
+                    "user_saved must not propose ending the record just written: \(effect)",
                     sourceLocation: sourceLocation
                 )
             case .startBoundedLocationCapture:

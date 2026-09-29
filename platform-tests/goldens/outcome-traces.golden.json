@@ -1,6 +1,88 @@
 {
   "fixtures": {
     "bus_repeated_stops_no_storm.json": [],
+    "departure_proposal_kept.json": [
+      {
+        "event": 0,
+        "t": 0.0,
+        "state": "PARKED"
+      },
+      {
+        "event": 3,
+        "t": 730.0,
+        "state": "DEPARTURE_CANDIDATE"
+      },
+      {
+        "event": 4,
+        "t": 760.0,
+        "state": "DRIVING",
+        "effects": [
+          "proposeParkingEnd"
+        ]
+      },
+      {
+        "event": 6,
+        "t": 840.0,
+        "state": "PARKED"
+      }
+    ],
+    "departure_proposal_then_next_saved.json": [
+      {
+        "event": 0,
+        "t": 0.0,
+        "state": "PARKED"
+      },
+      {
+        "event": 3,
+        "t": 730.0,
+        "state": "DEPARTURE_CANDIDATE"
+      },
+      {
+        "event": 4,
+        "t": 760.0,
+        "state": "DRIVING",
+        "effects": [
+          "proposeParkingEnd"
+        ]
+      },
+      {
+        "event": 7,
+        "t": 900.0,
+        "state": "PARKING_TRANSITION"
+      },
+      {
+        "event": 8,
+        "t": 910.0,
+        "state": "PARKED"
+      }
+    ],
+    "drafts/field_0928_rejected.json": [
+      {
+        "event": 0,
+        "t": 0.0,
+        "state": "PARKED"
+      },
+      {
+        "event": 11,
+        "t": 2806.0,
+        "state": "DEPARTURE_CANDIDATE"
+      },
+      {
+        "event": 16,
+        "t": 2940.0,
+        "state": "PARKED"
+      },
+      {
+        "event": 54,
+        "t": 4589.0,
+        "state": "DEPARTURE_CANDIDATE"
+      },
+      {
+        "event": 61,
+        "t": 4715.0,
+        "state": "PARKED"
+      }
+    ],
     "drafts/field_s02_parked.json": [
       {
         "event": 3,
@@ -457,7 +539,7 @@
         "t": 760.0,
         "state": "DRIVING",
         "effects": [
-          "endActiveParking"
+          "proposeParkingEnd"
         ]
       },
       {
@@ -490,7 +572,7 @@
         "t": 740.0,
         "state": "PARKING_TRANSITION",
         "effects": [
-          "endActiveParking"
+          "proposeParkingEnd"
         ]
       },
       {

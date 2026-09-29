@@ -154,7 +154,7 @@ class CandidateHistoryTest {
     }
 
     @Test
-    fun `a confirmation refused because a session is already open records nothing`() = runTest {
+    fun `a confirmation that closes an open parking records both candidates as confirmed`() = runTest {
         val first = coordinator.create(evidence(ConfidenceBucket.HIGH), location())
         coordinator.confirm(first.id, ConfirmedCandidateDetails(floor = null))
         clock.epochMillis = start + 60_000L
@@ -162,10 +162,9 @@ class CandidateHistoryTest {
 
         val result = coordinator.confirm(second.id, ConfirmedCandidateDetails(floor = null))
 
-        assertTrue(result is ConfirmCandidateResult.AlreadyActive)
-        // The superseding of `first` is one line; `second` is still pending and has none.
+        assertTrue(result is ConfirmCandidateResult.Confirmed)
         assertEquals(
-            listOf(CandidateOutcome.CONFIRMED),
+            listOf(CandidateOutcome.CONFIRMED, CandidateOutcome.CONFIRMED),
             store.readCandidateHistoryOnce().map { it.outcome },
         )
     }

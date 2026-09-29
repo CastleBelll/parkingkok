@@ -543,10 +543,26 @@ enum DrivingSessionTimeoutPolicy {
 
     /// The reason to stop right now, or `nil` to keep going.
     ///
-    /// Both halves, for the one caller that needs both: recreating a session from a
-    /// checkpoint written by a process that has since died.
+    /// Both halves, for the callers that read a session back from a process that has since
+    /// died: a `PARKED` get-in at a relaunch, and a checkpoint from before schema 3.
     static func expiryReason(for evidence: DrivingEvidence, now: Date) -> DrivingSessionEndReason? {
         boundReason(for: evidence, now: now) ?? silenceReason(for: evidence, now: now)
+    }
+
+    /// docs/05 §14 "The capture did not survive", step 1, for a `DRIVING_CANDIDATE` or
+    /// `DRIVING` read back at a relaunch: the 2-hour ceiling, or `vehicleEvidenceTimeout` with
+    /// neither vehicle evidence nor an accepted fix. Its silence counts the drive's own fixes
+    /// as well as its vehicle evidence — Android's `IN_VEHICLE` is an edge, so a drive twenty
+    /// minutes past its only `vehicle_enter` whose fixes arrived until the process died is a
+    /// drive in progress (Android `dropsStaleSession`, the same rule).
+    static func relaunchExpiryReason(forDrive evidence: DrivingEvidence, now: Date) -> DrivingSessionEndReason? {
+        if evidence.duration(now: now) >= maximumDuration {
+            return .maximumDurationReached
+        }
+        let vehicleAnchor = evidence.lastVehicleEvidenceAt ?? evidence.startedAt
+        let lastEvidenceAt = max(vehicleAnchor, evidence.lastFix?.timestamp ?? vehicleAnchor)
+        guard now.timeIntervalSince(lastEvidenceAt) >= vehicleEvidenceTimeout else { return nil }
+        return .vehicleEvidenceExpired
     }
 
     /// The bounds `ParkingDetectionEngine` owns, because both are rules about the drive

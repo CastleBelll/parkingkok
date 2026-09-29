@@ -29,19 +29,26 @@ class EndParkingUseCase(
         val active = repository.findActive() ?: return null
         val now = clock.nowEpochMillis()
         val endedAt = endedAtMillis ?: now
-        return repository.update(active.id) { record ->
-            // Re-checked inside the transaction: a widget or a second screen may have
-            // closed it between findActive and here, and the first end is the real one.
-            if (record.endedAtMillis != null) {
-                record
-            } else {
-                record.copy(
-                    // A clock that moved backwards must not produce a negative duration.
-                    endedAtMillis = maxOf(endedAt, record.startedAtMillis),
-                    updatedAtMillis = now,
-                    revision = record.revision + 1,
-                )
-            }
-        }
+        // Re-checked inside the transaction: a widget or a second screen may have closed it
+        // between findActive and here, and the first end is the real one.
+        return repository.update(active.id) { record -> record.endedAt(endedAt, now) }
     }
 }
+
+/**
+ * This record closed at [endedAtMillis], or unchanged when it is already closed.
+ *
+ * Shared by every path that ends a parking — by hand, on `주차 종료` for a departure, and
+ * when the next parking replaces it (docs/05 §11a) — so the three stamp it the same way.
+ */
+fun ParkingRecord.endedAt(endedAtMillis: Long, nowMillis: Long): ParkingRecord =
+    if (this.endedAtMillis != null) {
+        this
+    } else {
+        copy(
+            // A clock that moved backwards must not produce a negative duration.
+            endedAtMillis = maxOf(endedAtMillis, startedAtMillis),
+            updatedAtMillis = nowMillis,
+            revision = revision + 1,
+        )
+    }

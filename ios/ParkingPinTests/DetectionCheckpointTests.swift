@@ -87,9 +87,9 @@ struct DetectionCheckpointTests {
         )
     }
 
-    @Test("Round-trips a departure's evidence through the file store")
-    func roundTripsDepartureEvidence() throws {
-        // Arrange — docs/05 §14: the evidence §7's guard reads, anchors included.
+    @Test("Round-trips the whole engine state through the file store")
+    func roundTripsEngineState() throws {
+        // Arrange — docs/05 §14: every part of the engine state, anchors included.
         let file = TemporaryCheckpointFile()
         let store = FileDetectionCheckpointStore(fileURL: file.url)
         var drive = DrivingEvidence(startedAt: TestTime.offset(0), lastVehicleEvidenceAt: TestTime.offset(0))
@@ -102,19 +102,47 @@ struct DetectionCheckpointTests {
                 speed: 12
             ))
         }
+        var transition = ParkingTransition(
+            enteredAt: TestTime.offset(100),
+            entryReason: .movementIdle,
+            drive: drive,
+            driveDurationAtEnd: 100,
+            sessionStartedAt: TestTime.offset(0),
+            vehicleExitDetected: false,
+            isCapturing: false
+        )
+        transition.evidence.walkingAfterVehicle = true
+        let engine = DetectionEngineRecord(
+            driving: drive,
+            isDrivingCaptureLost: true,
+            transition: transition,
+            candidateDrive: drive,
+            candidateResume: CandidateResume(
+                driveEndedAt: TestTime.offset(100),
+                deadline: TestTime.offset(400),
+                reportedMovingFixes: 1
+            ),
+            isVehicleActive: true,
+            vehicleActiveSince: TestTime.offset(0),
+            connectedCarLinks: [.bluetoothAudio, .projection],
+            hasProducedCandidateInSession: true
+        )
         let checkpoint = DetectionCheckpoint(
             state: .departureCandidate,
             stateEnteredAt: TestTime.offset(100),
-            departure: DepartureCheckpoint(drive: drive, vehicleActiveSince: TestTime.offset(0)),
+            engine: engine,
             revision: 3
         )
 
         // Act
         try store.save(checkpoint)
         let result = store.load()
+        let written = try String(contentsOf: file.url, encoding: .utf8)
 
         // Assert
         #expect(result == .restored(checkpoint))
+        #expect(written.contains(#""schemaVersion":3"#))
+        #expect(!written.contains(#""departure""#), "schema 2's record is never written again")
     }
 
     /// docs/05 §11 "A lost capture decides nothing": a departure record written before
@@ -158,7 +186,47 @@ struct DetectionCheckpointTests {
         // Assert
         #expect(restored?.state == .departureCandidate)
         #expect(restored?.travelDistanceEstimate == 600)
-        #expect(restored?.departure == nil)
+        #expect(restored?.legacyDeparture == nil)
+        #expect(restored?.engine == nil)
+    }
+
+    /// docs/05 §14 "A checkpoint from before schema 3": schema 2's departure record is read
+    /// under its own key, and the engine migrates it — a departure that keeps its evidence.
+    @Test("A schema 2 departure checkpoint restores its evidence and is written back as schema 3")
+    func migratesSchemaTwoDeparture() async throws {
+        // Arrange — the shape written between 2026-09-28 and 2026-09-29.
+        let file = TemporaryCheckpointFile()
+        let store = FileDetectionCheckpointStore(fileURL: file.url)
+        var drive = DrivingEvidence(startedAt: TestTime.offset(0), lastVehicleEvidenceAt: TestTime.offset(0))
+        drive.record(fix: LocationFix(
+            timestamp: TestTime.offset(90),
+            latitude: 37.5,
+            longitude: 127.0,
+            horizontalAccuracy: 8,
+            speed: 12
+        ))
+        let record = DepartureCheckpoint(drive: drive, vehicleActiveSince: TestTime.offset(0))
+        let recordJSON = try #require(String(data: JSONEncoder().encode(record), encoding: .utf8))
+        let payload = """
+        {"schemaVersion":2,"checkpoint":{"state":"DEPARTURE_CANDIDATE",\
+        "stateEnteredAt":\(TestTime.offset(100).timeIntervalSinceReferenceDate),\
+        "travelDistanceEstimate":0,"revision":4,"departure":\(recordJSON)}}
+        """
+        try Data(payload.utf8).write(to: file.url)
+        let engine = ParkingDetectionEngine()
+
+        // Act
+        let legacy = try #require(store.load().checkpoint)
+        let effects = await engine.restore(legacy, now: TestTime.offset(120))
+        let migrated = effects.compactMap { if case let .persistCheckpoint(c) = $0 { c } else { nil } }.last
+
+        // Assert
+        #expect(legacy.legacyDeparture == record)
+        #expect(await engine.state == .departureCandidate)
+        #expect(await engine.snapshot().driving == drive)
+        #expect(effects.contains(.startBoundedLocationCapture))
+        #expect(migrated?.engine?.driving == drive, "the migration is written back once")
+        #expect(migrated?.legacyDeparture == nil)
     }
 
     @Test("Overwrites in place so a crash cannot leave two checkpoints")

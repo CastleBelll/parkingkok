@@ -82,6 +82,10 @@ struct ParityFixtureOutcome {
     /// `platform-tests/goldens/outcome-traces.golden.json`, which both runners assert.
     var trace: [OutcomeTraceEntry]
 
+    /// The process death a replay injected (`ParityFixtureRunner.run(_:processDeathAfter:)`),
+    /// or `nil` for an uninterrupted replay.
+    var relaunch: ParityRelaunch?
+
     var didCreateCandidate: Bool { !candidates.isEmpty }
 
     /// Candidates each travel session produced, in order. A session opens where the
@@ -125,6 +129,19 @@ struct ParityFixtureOutcome {
     }
 }
 
+/// A process death injected into a replay, and what the relaunch made of it.
+struct ParityRelaunch {
+    let afterEvent: Int
+    /// When the new process restored the state.
+    let at: Date
+    /// The dead engine's whole state, in memory, at the moment it died.
+    let stateBeforeDeath: DetectionCheckpoint
+    /// The restored engine's whole state once `restore` returned.
+    let stateAfterRestore: DetectionCheckpoint
+    /// Outcome labels (`OutcomeTraceEntry.label(for:)`) the restore itself emitted.
+    let outcomeEffects: [String]
+}
+
 /// Replays a §8 fixture through the real `ParkingDetectionEngine`.
 ///
 /// ### The one thing the fixture format cannot express, and what this does about it
@@ -149,23 +166,72 @@ enum ParityFixtureRunner {
     /// step is exactly the distance the fixture recorded.
     private static let metersPerDegreeLatitude = 6_371_000.0 * .pi / 180
 
-    static func run(_ fixture: some ParityReplayInput, startingAt origin: Date = Date(timeIntervalSince1970: 1_700_000_000)) async throws -> ParityFixtureOutcome {
-        let engine = ParkingDetectionEngine()
-        var effects = await engine.restore(
-            try seedCheckpoint(for: fixture.initialState, at: origin),
-            seedIfAbsent: false,
-            now: origin
-        )
+    /// When the process a replay killed is launched again.
+    enum RelaunchTime {
+        /// At the instant it died — the relaunch changes nothing but the process.
+        case immediately
+        /// When the next event arrives, which is what relaunches an iOS app in the field: the
+        /// process stays dead for the whole gap, and the relaunch and that event are one wake.
+        /// A death after the last event relaunches immediately.
+        case atNextEvent
+    }
+
+    /// Replays `fixture` event by event. With `processDeathAfter`, the process dies right after
+    /// that event: a fresh engine is restored from what the dead one had persisted — its last
+    /// `persistCheckpoint` and the candidate file its effects left behind — at `relaunch` time,
+    /// and the replay carries on with it (docs/05 §14 "Both platforms persist and reload their
+    /// whole engine state"). What the relaunch itself emitted belongs to the wake it happened
+    /// in: the next event's trace entry, or an entry of its own for a relaunch with no event.
+    static func run(
+        _ fixture: some ParityReplayInput,
+        startingAt origin: Date = Date(timeIntervalSince1970: 1_700_000_000),
+        processDeathAfter deathIndex: Int? = nil,
+        relaunch relaunchTime: RelaunchTime = .immediately
+    ) async throws -> ParityFixtureOutcome {
+        var engine = ParkingDetectionEngine()
+        var effects = await engine.restore(try seedCheckpoint(for: fixture.initialState, at: origin), now: origin)
 
         var trace: [OutcomeTraceEntry] = []
+        var relaunch: ParityRelaunch?
+        var candidateFile = CandidateFile()
         var metersNorth = 0.0
+        var deadState: DetectionCheckpoint?
+
+        func relaunchEngine(at when: Date, afterEvent: Int, dead: DetectionCheckpoint) async -> [DetectionEffect] {
+            let stateBefore = await engine.state
+            engine = ParkingDetectionEngine()
+            let restored = await engine.restore(
+                lastPersistedCheckpoint(in: effects),
+                pendingCandidate: candidateFile.candidate,
+                seedIfAbsent: false,
+                now: when
+            )
+            candidateFile.apply(restored, answering: nil, stateBefore: stateBefore)
+            relaunch = ParityRelaunch(
+                afterEvent: afterEvent,
+                at: when,
+                stateBeforeDeath: dead,
+                stateAfterRestore: await engine.snapshot().checkpoint,
+                outcomeEffects: restored.compactMap(OutcomeTraceEntry.label(for:))
+            )
+            effects += restored
+            return restored
+        }
+
         for (index, event) in fixture.events.enumerated() {
             let at = origin.addingTimeInterval(event.t)
             metersNorth += event.distanceFromPreviousM ?? 0
             let normalized = try normalize(event, at: at, metersNorth: metersNorth)
             let before = await engine.state
-            let step = await engine.handle(normalized)
+            var step: [DetectionEffect] = []
+            if let dead = deadState {
+                deadState = nil
+                step += await relaunchEngine(at: at, afterEvent: index - 1, dead: dead)
+            }
+            let handled = await engine.handle(normalized)
             let after = await engine.state
+            candidateFile.apply(handled, answering: normalized, stateBefore: before)
+            step += handled
             let labels = step.compactMap(OutcomeTraceEntry.label(for:))
             if before != after || !labels.isEmpty {
                 trace.append(OutcomeTraceEntry(
@@ -175,7 +241,25 @@ enum ParityFixtureRunner {
                     effects: labels
                 ))
             }
-            effects += step
+            effects += handled
+
+            guard index == deathIndex else { continue }
+            let dead = await engine.snapshot().checkpoint
+            if relaunchTime == .atNextEvent, index + 1 < fixture.events.count {
+                deadState = dead
+                continue
+            }
+            let restored = await relaunchEngine(at: at, afterEvent: index, dead: dead)
+            let labelsAtRelaunch = restored.compactMap(OutcomeTraceEntry.label(for:))
+            let stateAtRelaunch = await engine.state
+            if stateAtRelaunch != after || !labelsAtRelaunch.isEmpty {
+                trace.append(OutcomeTraceEntry(
+                    event: index,
+                    t: event.t,
+                    state: stateAtRelaunch != after ? stateAtRelaunch.rawValue : nil,
+                    effects: labelsAtRelaunch
+                ))
+            }
         }
 
         let candidates: [ParkingCandidate] = effects.compactMap {
@@ -186,8 +270,44 @@ enum ParityFixtureRunner {
             finalState: await engine.state,
             candidates: candidates,
             effects: effects,
-            trace: trace
+            trace: trace,
+            relaunch: relaunch
         )
+    }
+
+    /// What the checkpoint file holds after `effects`: the last value written to it.
+    private static func lastPersistedCheckpoint(in effects: [DetectionEffect]) -> DetectionCheckpoint? {
+        effects.lazy.compactMap {
+            if case let .persistCheckpoint(checkpoint) = $0 { return checkpoint }
+            return nil
+        }.last
+    }
+
+    /// The candidate file (docs/05 §10a), as the adapter keeps it: written on create, cleared
+    /// on a withdrawal of that candidate and by the confirmation flow once the user answered.
+    private struct CandidateFile {
+        var candidate: ParkingCandidate?
+
+        mutating func apply(_ effects: [DetectionEffect], answering event: DetectionEvent?, stateBefore: DetectionState) {
+            if let event, stateBefore == .candidatePending {
+                switch event {
+                case .userConfirmedParking, .userRejectedParking:
+                    candidate = nil
+                default:
+                    break
+                }
+            }
+            for effect in effects {
+                switch effect {
+                case let .createCandidate(created):
+                    candidate = created
+                case let .withdrawCandidate(id) where candidate?.id == id:
+                    candidate = nil
+                default:
+                    break
+                }
+            }
+        }
     }
 
     /// `initialState` is the state the recording began in, so a fixture that starts mid-trip
@@ -198,12 +318,27 @@ enum ParityFixtureRunner {
         case .idle:
             return nil
         case .driving, .drivingCandidate:
+            // Vehicle activity and the drive both begin at the origin — Android's
+            // `DetectionEngineState.startingIn` — and a `DRIVING` recording's drive is confirmed.
+            var drive = DrivingEvidence(startedAt: origin, lastVehicleEvidenceAt: origin)
+            if initialState == .driving {
+                drive.markConfirmed(at: origin)
+            }
+            var engine = DetectionEngineRecord()
+            engine.driving = drive
+            engine.isVehicleActive = true
+            engine.vehicleActiveSince = origin
             return DetectionCheckpoint(
                 state: initialState,
                 stateEnteredAt: origin,
-                lastAutomotiveAt: origin
+                lastAutomotiveAt: origin,
+                engine: engine
             )
-        case .parkingTransition, .candidatePending, .parked, .departureCandidate:
+        case .parked:
+            // A recording made while a parking was open (the 2026-09-28 draft): no get-in yet,
+            // no vehicle activity — Android's `startingIn(PARKED)`, which seeds no session.
+            return DetectionCheckpoint(state: .parked, stateEnteredAt: origin, engine: DetectionEngineRecord())
+        case .parkingTransition, .candidatePending, .departureCandidate:
             throw ParityFixtureError.unsupportedInitialState(initialState)
         }
     }
@@ -244,6 +379,7 @@ enum ParityFixtureRunner {
         case "user_confirmed": return .userConfirmedParking(at: date)
         case "user_rejected": return .userRejectedParking(at: date)
         case "user_saved": return .userSavedParking(at: date)
+        case "user_kept_parking": return .userKeptParking(at: date)
         default:
             throw ParityFixtureError.unknownEventType(event.type)
         }
@@ -326,7 +462,7 @@ enum ParityFixtureLoader {
 /// - `event` is the index into the fixture's `events`, `t` its relative time;
 /// - `state` is the engine state after the event, present only when the event changed it;
 /// - `effects` are, in emission order, `withdraw`, `create <bucket> <sorted wire codes>` and
-///   `endActiveParking`. Checkpoints, notifications and capture requests are not outcomes.
+///   `proposeParkingEnd`. Checkpoints, notifications and capture requests are not outcomes.
 struct OutcomeTraceEntry: Codable, Equatable, CustomStringConvertible {
     let event: Int
     let t: Double
@@ -355,8 +491,8 @@ struct OutcomeTraceEntry: Codable, Equatable, CustomStringConvertible {
             return "create \(candidate.confidenceBucket.rawValue) \(codes)"
         case .withdrawCandidate:
             return "withdraw"
-        case .endActiveParking:
-            return "endActiveParking"
+        case .proposeParkingEnd:
+            return "proposeParkingEnd"
         default:
             return nil
         }

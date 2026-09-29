@@ -27,6 +27,8 @@ struct ManualParkingDraft: Sendable, Equatable {
 @MainActor
 protocol ManualParkingReporting: AnyObject {
     func userSavedParking(at date: Date) async
+    /// docs/05 §11a: the user answered a departure proposal with 아직 주차 중.
+    func userKeptParking(at date: Date) async
 }
 
 /// Application state for parking: the one place the store is read and written.
@@ -51,6 +53,9 @@ final class ParkingModel {
     /// content rather than swallowed — a history that looks empty because of an IO error
     /// is indistinguishable from one the user really has not filled yet.
     private(set) var failure: String?
+    /// docs/05 §11a: a departure the engine noticed and the user has not answered. Only ever
+    /// about `activeSession` — a proposal about any other record is retired on sight.
+    private(set) var endProposal: ParkingEndProposal?
 
     private let store: any ParkingStoring
     private let locationProvider: any ParkingLocationProviding
@@ -67,6 +72,13 @@ final class ParkingModel {
     /// The in-flight hand-off to detection. Kept so tests can await it; the save itself
     /// never does.
     private(set) var detectionReport: Task<Void, Never>?
+    /// The pending departure proposal's file and notification. `nil` when this build has no
+    /// detection; nothing is ever proposed then.
+    private let endProposals: ParkingEndProposalInbox?
+    /// The in-flight withdrawal of the proposal's notification, held so tests can await it.
+    private(set) var proposalWithdrawal: Task<Void, Never>?
+    /// Re-reads the proposal when the coordinator writes one while the app is on screen.
+    @ObservationIgnored private var proposalObservation: ParkingEndProposalObservation?
 
     init(
         store: any ParkingStoring,
@@ -75,7 +87,8 @@ final class ParkingModel {
         clock: any DateProviding = SystemDateProvider(),
         analytics: any AnalyticsRecording = DisabledAnalyticsRecorder(),
         snapshots: (any ActiveParkingSnapshotStoring)? = nil,
-        detection: (any ManualParkingReporting)? = nil
+        detection: (any ManualParkingReporting)? = nil,
+        endProposals: ParkingEndProposalInbox? = nil
     ) {
         self.store = store
         self.locationProvider = locationProvider
@@ -84,6 +97,10 @@ final class ParkingModel {
         self.analytics = analytics
         self.snapshots = snapshots
         self.detection = detection
+        self.endProposals = endProposals
+        proposalObservation = endProposals?.observeChanges { [weak self] in
+            self?.reconcileEndProposal()
+        }
     }
 
     var homePreviewSessions: [ParkingSession] {
@@ -117,6 +134,7 @@ final class ParkingModel {
             // like the gate while gating nothing.
             completedSessions = try store.completedSessions(limit: nil)
         }
+        reconcileEndProposal()
         adoptWidgetFloorChange()
         publishWidgetSnapshot()
     }
@@ -210,10 +228,10 @@ final class ParkingModel {
             createdAt: now,
             updatedAt: now
         )
-        let saved = perform {
-            try store.startSession(session)
-            refreshAfterWrite()
-        }
+        // docs/05 §11a: a proposal still pending means the car left the previous parking at
+        // `departedAt` — the user is now saving where it went. Without one, the store refuses
+        // a second active parking (FR-004).
+        let saved = startSession(session, endingActiveAt: pendingProposalEnd)
         // docs/17 §2 `parking_manual_saved`. After the write, never before: an event for a
         // save that failed would overstate the feature. The payload is the event name and
         // `platform` — floor, zone, spot and memo are §3 forbidden and `AnalyticsEvent`
@@ -258,7 +276,7 @@ final class ParkingModel {
                 #endif
                 return
             }
-            guard let self, var session = self.session(id: sessionID) else {
+            guard let self, var session = session(id: sessionID) else {
                 #if PK_DEV
                     SaveLocationDiagnostics.note("attach", "sessionGone")
                 #endif
@@ -271,7 +289,7 @@ final class ParkingModel {
                 return
             }
             session.location = fix
-            let written = self.update(session)
+            let written = update(session)
             #if PK_DEV
                 SaveLocationDiagnostics.note("attach", written ? "written" : "writeFailed")
             #endif
@@ -295,14 +313,14 @@ final class ParkingModel {
     /// that they parked somewhere else.
     ///
     /// @return the new record's id, or `nil` if it could not be written — in which case
-    /// nothing was ended either.
+    /// nothing was ended either: the end and the insert are one store write.
     @discardableResult
     func saveDetectedParking(from candidate: ParkingCandidate, draft: ManualParkingDraft) -> UUID? {
-        if let active = activeSession {
-            // Never before the record started, however far the clocks have drifted.
-            let endedAt = max(active.startedAt, candidate.detectedAt)
-            guard perform({ try store.endSession(id: active.id, at: endedAt) }) else { return nil }
-        }
+        // docs/05 §11a: a pending proposal's `departedAt` is a better answer than the end of
+        // the drive that followed. Without one, the old record ends when this drive finished,
+        // never before it started, however far the clocks have drifted.
+        let endingActiveAt = pendingProposalEnd
+            ?? activeSession.map { max($0.startedAt, candidate.detectedAt) }
         let now = clock.now
         let session = ParkingSession(
             id: UUID(),
@@ -319,13 +337,27 @@ final class ParkingModel {
             createdAt: now,
             updatedAt: now
         )
-        guard perform({
-            try store.startSession(session)
-            refreshAfterWrite()
-        }) else {
-            return nil
-        }
+        guard startSession(session, endingActiveAt: endingActiveAt) else { return nil }
         return session.id
+    }
+
+    /// Writes the next parking, ending the active one at `endingActiveAt` in the same
+    /// commit when given. A pending proposal is withdrawn only once the write has happened:
+    /// until then the previous parking is still the user's, and so is the question about it.
+    private func startSession(_ session: ParkingSession, endingActiveAt endedAt: Date?) -> Bool {
+        let ending = endedAt.flatMap { endedAt in activeSession.map { ($0.id, endedAt) } }
+        let written = perform {
+            if let (endingId, endedAt) = ending {
+                try store.replaceActiveSession(ending: endingId, at: endedAt, with: session)
+            } else {
+                try store.startSession(session)
+            }
+            refreshAfterWrite()
+        }
+        if written, ending != nil {
+            retireEndProposal()
+        }
+        return written
     }
 
     /// The `-` / `+` keys on home. FR-005: only a numerically parsed floor moves.
@@ -360,14 +392,97 @@ final class ParkingModel {
     /// the engine could be sure of it — stamping now would record the parking as ending
     /// somewhere down the road. Never earlier than the start, so a clock that moved
     /// backwards cannot produce a negative duration.
+    ///
+    /// A departure proposal pending for this record is withdrawn: the user answered it by
+    /// hand, at the time they chose (docs/05 §11a).
     @discardableResult
     func endActiveParking(at: Date? = nil) -> Bool {
         guard let session = activeSession else { return false }
         let endedAt = max(at ?? clock.now, session.startedAt)
-        return perform {
+        let ended = perform {
             try store.endSession(id: session.id, at: endedAt)
             refreshAfterWrite()
         }
+        if ended {
+            retireEndProposal()
+        }
+        return ended
+    }
+
+    // ── docs/05 §11a departure proposal ─────────────────────────────────────
+
+    /// The home card's prompt row, while a proposal about the active parking is pending.
+    var endPrompt: ParkingEndPrompt? {
+        guard let active = activeSession, pendingProposalForActive != nil else { return nil }
+        return ParkingEndPrompt(session: active)
+    }
+
+    /// `주차 종료` on the prompt: the record ends when the car left, not now.
+    ///
+    /// `parking_auto_end` (docs/17) is reported here, after the write and only for a record
+    /// this call actually closed.
+    @discardableResult
+    func acceptEndProposal() -> Bool {
+        guard let proposal = pendingProposalForActive, let session = activeSession else {
+            retireEndProposal()
+            return false
+        }
+        let ended = perform {
+            try store.endSession(id: session.id, at: proposal.endedAt(for: session))
+            refreshAfterWrite()
+        }
+        guard ended else { return false }
+        analytics.record(.parkingAutoEnd)
+        retireEndProposal()
+        return true
+    }
+
+    /// `아직 주차 중`: the record stays, the question goes, and the engine is told the car is
+    /// still parked (`user_kept_parking`) so it stops measuring a drive that was not this
+    /// parking's end.
+    func keepParking() {
+        guard endProposal != nil else { return }
+        retireEndProposal()
+        guard let detection else { return }
+        let now = clock.now
+        detectionReport = Task {
+            await detection.userKeptParking(at: now)
+        }
+    }
+
+    private var pendingProposalForActive: ParkingEndProposal? {
+        guard let proposal = endProposal, let active = activeSession, proposal.isAbout(active) else {
+            return nil
+        }
+        return proposal
+    }
+
+    /// When the active record ends if the next parking is saved now: the pending proposal's
+    /// `departedAt` (clamped to the record's start), or `nil` when nothing is pending.
+    private var pendingProposalEnd: Date? {
+        guard let proposal = pendingProposalForActive, let active = activeSession else { return nil }
+        return proposal.endedAt(for: active)
+    }
+
+    /// Reads the proposal and retires one that no longer asks about the active parking.
+    private func reconcileEndProposal() {
+        guard let endProposals else { return }
+        let proposal = endProposals.load()
+        if let proposal, let active = activeSession, proposal.isAbout(active) {
+            endProposal = proposal
+        } else {
+            endProposal = nil
+            if proposal != nil {
+                proposalWithdrawal = endProposals.retire()
+            }
+        }
+    }
+
+    private func retireEndProposal() {
+        let hadProposal = endProposal != nil
+        endProposal = nil
+        guard let endProposals, hadProposal || endProposals.load() != nil else { return }
+        proposalWithdrawal = endProposals.retire()
     }
 
     /// docs/04 §10: "remove orphan on record delete". The record goes first — a file
@@ -480,6 +595,7 @@ final class ParkingModel {
     private func refreshAfterWrite() {
         activeSession = try? store.activeSession()
         completedSessions = (try? store.completedSessions(limit: nil)) ?? []
+        reconcileEndProposal()
         // Every mutation ends here, so the projection cannot drift from the store by
         // someone forgetting to update it at one call site (docs/06 §8 steps 4–5).
         publishWidgetSnapshot()

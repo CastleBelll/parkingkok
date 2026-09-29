@@ -125,7 +125,6 @@
          "위치 기록됨" described the record instead, so a history list of floors had one
          row that read like a different kind of thing — and iOS already said 층 미입력. -->
     <string name="home_no_floor">층 미입력</string>
-    <string name="home_spot_only">%1$s번</string>
     <string name="home_floor_hint">층을 변경할 수 있어요</string>
     <string name="home_floor_hint_fixed">직접 입력한 층이라 - / + 로 바꿀 수 없어요</string>
     <string name="home_floor_decrease">한 층 아래로</string>
@@ -208,6 +207,7 @@
     <string name="manual_cancel">취소</string>
     <string name="manual_privacy_note">입력한 내용과 위치는 이 기기에만 저장돼요.</string>
     <string name="manual_already_active">이미 주차 중인 기록이 있어요. 먼저 종료해 주세요.</string>
+    <string name="manual_save_failed">저장하지 못했어요. 다시 시도해 주세요.</string>
 
     <!-- Parking detail (design-references/03-parking-detail.png) -->
     <string name="detail_title">주차 위치</string>

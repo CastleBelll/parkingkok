@@ -39,10 +39,19 @@ class RoomParkingRepository(private val dao: ParkingRecordDao) : ParkingReposito
         mutate(entity.toDomain()).toEntity()
     }?.toDomain()
 
+    override suspend fun replaceActive(
+        endingId: String,
+        end: (ParkingRecord) -> ParkingRecord,
+        next: ParkingRecord,
+    ): ParkingRecord? = dao.endActiveAndInsert(
+        endingId = endingId,
+        end = { entity -> end(entity.toDomain()).toEntity() },
+        next = next.toEntity(),
+    )?.toDomain()
+
     override suspend fun delete(id: String) = dao.delete(id)
 
     override suspend fun photoPaths(): Set<String> = dao.photoPaths().toSet()
-
 
     override suspend fun deleteCompleted() = dao.deleteCompleted()
 }

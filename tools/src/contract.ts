@@ -68,6 +68,7 @@ export const EVENT_TYPES = [
   'user_confirmed',
   'user_rejected',
   'user_saved',
+  'user_kept_parking',
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

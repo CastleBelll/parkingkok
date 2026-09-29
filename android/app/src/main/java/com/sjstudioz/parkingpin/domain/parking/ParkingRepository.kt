@@ -40,6 +40,17 @@ interface ParkingRepository {
      */
     suspend fun update(id: String, mutate: (ParkingRecord) -> ParkingRecord): ParkingRecord?
 
+    /**
+     * Ends the open record [endingId] with [end] and inserts [next] as one write: both land
+     * or neither does (docs/05 §11a). Returns the ended record, or null — nothing written —
+     * when [endingId] is not the open record.
+     */
+    suspend fun replaceActive(
+        endingId: String,
+        end: (ParkingRecord) -> ParkingRecord,
+        next: ParkingRecord,
+    ): ParkingRecord?
+
     suspend fun delete(id: String)
 
     /**

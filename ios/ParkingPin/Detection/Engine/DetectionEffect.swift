@@ -29,15 +29,16 @@ enum DetectionEffect: Sendable, Equatable {
     /// a rising count with no candidates is visible in diagnostics rather than silent.
     case candidateRuleUnmet
 
-    /// §11 departure, confirmed: close the open parking record.
+    /// §11 departure, confirmed: **ask** whether the open parking is over (docs/05 §11a,
+    /// DECIDED BY THE USER 2026-09-29). The engine never ends a parking itself; the adapter
+    /// persists the proposal, posts the prompt and ends the record only if the user says so.
     ///
-    /// `at` is when the car **started moving**, not when the engine finished deciding.
+    /// `departedAt` is when the car **started moving**, not when the engine finished deciding.
     /// `DEPARTURE_CANDIDATE → DRIVING` is guarded by §7's confirmation in full, which needs
     /// minutes of real driving, so stamping "now" would put the end of the parking somewhere
     /// down the road. The value is the moment §11's two bars were first cleared.
     ///
-    /// Only the confirmed transition emits it. §11's "if uncertain → suggestion, not
-    /// destructive silent end" is honoured by the state below: reaching
-    /// `DEPARTURE_CANDIDATE` and never confirming ends nothing and says nothing.
-    case endActiveParking(at: Date)
+    /// Only the confirmed transition emits it: reaching `DEPARTURE_CANDIDATE` and never
+    /// confirming proposes nothing and says nothing.
+    case proposeParkingEnd(departedAt: Date)
 }

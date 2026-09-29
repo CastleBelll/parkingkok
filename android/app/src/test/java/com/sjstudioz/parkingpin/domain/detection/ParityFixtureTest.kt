@@ -1,9 +1,18 @@
 package com.sjstudioz.parkingpin.domain.detection
 
 import com.sjstudioz.parkingpin.analytics.DetectionProperties
+import com.sjstudioz.parkingpin.domain.detection.ParityFixtureFiles.EPOCH
+import com.sjstudioz.parkingpin.domain.detection.ParityFixtureFiles.METERS_PER_DEGREE_LATITUDE
+import com.sjstudioz.parkingpin.domain.detection.ParityFixtureFiles.ORIGIN_LATITUDE
+import com.sjstudioz.parkingpin.domain.detection.ParityFixtureFiles.ORIGIN_LONGITUDE
+import com.sjstudioz.parkingpin.domain.detection.ParityFixtureFiles.allReplayInputs
+import com.sjstudioz.parkingpin.domain.detection.ParityFixtureFiles.detectionEvents
+import com.sjstudioz.parkingpin.domain.detection.ParityFixtureFiles.draftFiles
+import com.sjstudioz.parkingpin.domain.detection.ParityFixtureFiles.fixtureDirectory
+import com.sjstudioz.parkingpin.domain.detection.ParityFixtureFiles.fixtureFiles
+import com.sjstudioz.parkingpin.domain.detection.ParityFixtureFiles.json
 import com.sjstudioz.parkingpin.domain.location.LocationSample
 import com.sjstudioz.parkingpin.domain.parking.ConfidenceBucket
-import com.sjstudioz.parkingpin.domain.trace.LocationQualityBucket
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -13,7 +22,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
-import kotlin.math.PI
 
 /**
  * Replays the JSON fixtures in `platform-tests` through [ParkingDetectionEngine] and
@@ -28,9 +36,8 @@ import kotlin.math.PI
  *
  * ### The files are read, not copied
  * The directory is read straight off disk so the Swift suite and this one can never
- * drift onto two versions of the same contract. [fixtureDirectory] walks up from the
- * module rather than hard-coding a depth, because Gradle's working directory for a test
- * task is not something a contract should depend on.
+ * drift onto two versions of the same contract; [ParityFixtureFiles] is the one reading of
+ * them, shared with the runtime's restore property (`ParkingDetectionRuntimeRestoreTest`).
  *
  * ### Coordinates are reconstructed, and this is the honest part
  * The fixture schema has no latitude or longitude, by design (§8 "좌표 금지"): a file that
@@ -47,8 +54,6 @@ import kotlin.math.PI
  */
 class ParityFixtureTest {
 
-    private val json = Json { ignoreUnknownKeys = true }
-
     @OptIn(ExperimentalSerializationApi::class)
     private val goldenJson = Json {
         prettyPrint = true
@@ -64,6 +69,11 @@ class ParityFixtureTest {
             "the whole committed suite must run — a renamed fixture must fail loudly, not vanish",
             setOf(
                 "bus_repeated_stops_no_storm.json",
+                // docs/05 §11a (DECIDED 2026-09-29): a departure is proposed, never ended —
+                // `user_kept_parking` after the proposal returns the engine to PARKED, and a
+                // hand save in the next car park while it is pending parks the engine again.
+                "departure_proposal_kept.json",
+                "departure_proposal_then_next_saved.json",
                 // Real iPhone drives the user confirmed ended in a parking (promoted 2026-09-27).
                 "field_s03_parked.json",
                 "field_s04_parked.json",
@@ -93,10 +103,14 @@ class ParityFixtureTest {
 
     @Test
     fun `every committed draft is replayed`() {
-        // Arrange — the iOS runner lists the same eleven names (`ParityFixtureTests`), so a
+        // Arrange — the iOS runner lists the same twelve names (`ParityFixtureTests`), so a
         // draft deleted together with its golden entry fails here too rather than vanishing
         // from the golden gate on one platform.
         val expected = setOf(
+            // iPhone, 2026-09-28 08:46–08:51: a departure from a parking saved the evening
+            // before, then a candidate the user rejected. Labelled car / not parked, started
+            // in PARKED (the record was open); analysed under docs/05 §11a.
+            "field_0928_rejected.json",
             "field_s02_parked.json",
             "field_s05_unknown.json",
             "field_s06_parked.json",
@@ -214,11 +228,9 @@ class ParityFixtureTest {
     @Test
     fun `every fixture and draft replays to its golden outcome trace`() {
         // Arrange
-        val actual = (fixtureFiles().map { it.name to it } + draftFiles().map { "drafts/${it.name}" to it })
-            .associate { (key, file) ->
-                val input = json.decodeFromString<ReplayInput>(file.readText())
-                key to replay(input.name, DetectionState.valueOf(input.initialState), input.events).trace
-            }
+        val actual = allReplayInputs().mapValues { (_, input) ->
+            replay(input.name, DetectionState.valueOf(input.initialState), input.events).trace
+        }
         val goldenFile = goldenTraceFile()
         if (System.getenv(UPDATE_GOLDEN_ENV) == "1") {
             goldenFile.absoluteFile.parentFile?.mkdirs()
@@ -259,7 +271,7 @@ class ParityFixtureTest {
         val perSession = candidatesPerTravelSession(effects)
 
         // Assert
-        assertTrue(effects.any { it is DetectionEffect.EndActiveParking })
+        assertTrue(effects.any { it is DetectionEffect.ProposeParkingEnd })
         assertEquals(listOf(1, 0), perSession)
     }
 
@@ -285,12 +297,10 @@ class ParityFixtureTest {
         var state = DetectionEngineState.startingIn(initialState, EPOCH)
         val effects = mutableListOf<DetectionEffect>()
         val trace = mutableListOf<OutcomeTraceEntry>()
-        var northMeters = 0.0
 
-        events.forEachIndexed { index, event ->
-            val atMillis = EPOCH + (event.t * MILLIS_PER_SECOND).toLong()
-            if (event.type == "location") northMeters += event.distanceFromPreviousM ?: 0.0
-            val step = engine.handle(state, event.toDetectionEvent(atMillis, northMeters))
+        detectionEvents(events).forEachIndexed { index, detectionEvent ->
+            val event = events[index]
+            val step = engine.handle(state, detectionEvent)
             val labels = step.effects.mapNotNull(::outcomeLabel)
             val stateChanged = step.state.state != state.state
             if (stateChanged || labels.isNotEmpty()) {
@@ -365,61 +375,8 @@ class ParityFixtureTest {
         return problems.takeIf { it.isNotEmpty() }?.joinToString("; ")
     }
 
-    private fun FixtureEvent.toDetectionEvent(atMillis: Long, northMeters: Double): DetectionEvent = when (type) {
-        "vehicle_enter" -> DetectionEvent.VehicleEnter(atMillis)
-        "vehicle_exit" -> DetectionEvent.VehicleExit(atMillis)
-        "walking_enter" -> DetectionEvent.WalkingEnter(atMillis)
-        "stationary_enter" -> DetectionEvent.StationaryEnter(atMillis)
-        "stationary_exit" -> DetectionEvent.StationaryExit(atMillis)
-        "location" -> DetectionEvent.Location(
-            LocationSample(
-                atMillis = atMillis,
-                latitude = ORIGIN_LATITUDE + northMeters / METERS_PER_DEGREE_LATITUDE,
-                longitude = ORIGIN_LONGITUDE,
-                horizontalAccuracyM = checkNotNull(accuracy) { "a location fixture event needs an accuracy" },
-                speedMps = speed,
-            ),
-        )
-
-        // The buckets are the event's meaning: §8b credits only a fall into `poor`, so a
-        // good→fair drop replayed without them would read as a drop to `poor` and earn a
-        // weight iOS — whose runner passes them — does not give (field draft s17).
-        "location_quality_degraded" -> DetectionEvent.LocationQualityDegraded(
-            atMillis = atMillis,
-            fromBucket = fromBucket,
-            toBucket = toBucket,
-        )
-        // §2's four link spellings and no others. Android's engine does not distinguish
-        // projection from Bluetooth — §3a treats them as one signal — but the *names* are
-        // the contract, and accepting a fifth here would let a fixture pass on this
-        // platform and throw on iOS, which is the one thing a parity gate must not do.
-        // This used to also take `car_projection_connected`/`_disconnected` and
-        // `user_confirmed_parking`/`user_rejected_parking`; neither is in §2.
-        "projection_connected", "bluetooth_car_connected" ->
-            DetectionEvent.CarLinkConnected(atMillis)
-
-        "projection_disconnected", "bluetooth_car_disconnected" ->
-            DetectionEvent.CarLinkDisconnected(atMillis)
-
-        "timer_tick" -> DetectionEvent.TimerTick(atMillis)
-        "user_confirmed" -> DetectionEvent.UserConfirmedParking(atMillis)
-        "user_rejected" -> DetectionEvent.UserRejectedParking(atMillis)
-        "user_saved" -> DetectionEvent.UserSavedParking(atMillis)
-        else -> error("unknown fixture event type '$type' — the §2 vocabulary is the contract")
-    }
-
 
     // ── the files ───────────────────────────────────────────────────────────────────
-
-    private fun fixtureFiles(): List<File> =
-        checkNotNull(fixtureDirectory().listFiles { file -> file.extension == "json" }) {
-            "platform-tests holds no fixtures"
-        }.sortedBy { it.name }
-
-    private fun draftFiles(): List<File> =
-        checkNotNull(File(fixtureDirectory(), DRAFT_DIRECTORY_NAME).listFiles { file -> file.extension == "json" }) {
-            "platform-tests/$DRAFT_DIRECTORY_NAME is missing"
-        }.sortedBy { it.name }
 
     /**
      * The one shared golden under `platform-tests/`, the same file the iOS runner asserts.
@@ -428,16 +385,6 @@ class ParityFixtureTest {
      */
     private fun goldenTraceFile(): File = File(fixtureDirectory(), GOLDEN_TRACE_PATH).also {
         check(it.isFile || System.getenv(UPDATE_GOLDEN_ENV) == "1") { "no golden at ${it.absolutePath}" }
-    }
-
-    private fun fixtureDirectory(): File {
-        var directory: File? = File("").absoluteFile
-        while (directory != null) {
-            val candidate = File(directory, FIXTURE_DIRECTORY_NAME)
-            if (candidate.isDirectory) return candidate
-            directory = directory.parentFile
-        }
-        error("no '$FIXTURE_DIRECTORY_NAME' directory above ${File("").absolutePath}")
     }
 
     // ── §8 fixture schema ───────────────────────────────────────────────────────────
@@ -453,26 +400,6 @@ class ParityFixtureTest {
     }
 
     @Serializable
-    private data class FixtureEvent(
-        val type: String,
-        val t: Double,
-        val accuracy: Float? = null,
-        val speed: Float? = null,
-        val distanceFromPreviousM: Double? = null,
-        val confidence: String? = null,
-        val fromBucket: LocationQualityBucket? = null,
-        val toBucket: LocationQualityBucket? = null,
-    )
-
-    /** A fixture or a draft, read for its events alone: a draft may have no `expected`. */
-    @Serializable
-    private data class ReplayInput(
-        val name: String,
-        val initialState: String,
-        val events: List<FixtureEvent>,
-    )
-
-    @Serializable
     private data class FixtureExpectation(
         val candidate: Boolean,
         val finalState: String,
@@ -481,23 +408,8 @@ class ParityFixtureTest {
     )
 
     private companion object {
-        const val FIXTURE_DIRECTORY_NAME = "platform-tests"
-        const val DRAFT_DIRECTORY_NAME = "drafts"
         const val GOLDEN_TRACE_PATH = "goldens/outcome-traces.golden.json"
         const val UPDATE_GOLDEN_ENV = "UPDATE_PARITY_GOLDEN"
-        const val EPOCH = 1_700_000_000_000L
-        const val MILLIS_PER_SECOND = 1_000.0
-
-        const val ORIGIN_LATITUDE = 37.5
-        const val ORIGIN_LONGITUDE = 127.0
-        /**
-         * Metres per degree on the sphere [com.sjstudioz.parkingpin.domain.location.GeoDistance]
-         * measures on, so a rebuilt step is exactly the `distanceFromPreviousM` the file
-         * recorded — as iOS's runner does against its own sphere. The 111 320 m this used to
-         * be under-read every step by 0.11 %, enough to move a leg across the noise floor
-         * or a drive across 800 m that iOS replays on the other side.
-         */
-        const val METERS_PER_DEGREE_LATITUDE = 6_371_008.8 * PI / 180
     }
 }
 
@@ -546,7 +458,7 @@ internal fun candidatesPerTravelSession(effects: List<DetectionEffect>): List<In
             }
 
             is DetectionEffect.MarkParkingActive,
-            is DetectionEffect.EndActiveParking,
+            is DetectionEffect.ProposeParkingEnd,
             -> Unit
         }
     }
@@ -561,7 +473,7 @@ internal fun candidatesPerTravelSession(effects: List<DetectionEffect>): List<In
  * - [event] is the index into the fixture's `events`, [t] its relative time;
  * - [state] is the engine state after the event, present only when the event changed it;
  * - [effects] are, in emission order, `withdraw`, `create <bucket> <sorted wire codes>` and
- *   `endActiveParking` — the §15 effects contract §8 compares. Checkpoints, notifications and
+ *   `proposeParkingEnd` — the §15 effects contract §8 compares. Checkpoints, notifications and
  *   capture requests are not outcomes and are not recorded.
  */
 @Serializable
@@ -580,7 +492,7 @@ internal fun outcomeLabel(effect: DetectionEffect): String? = when (effect) {
     is DetectionEffect.CreateCandidate ->
         "create ${effect.confidence.name.lowercase()} ${effect.reasons.map { it.wire }.sorted().joinToString(",")}"
     is DetectionEffect.RetireCandidate -> "withdraw"
-    is DetectionEffect.EndActiveParking -> "endActiveParking"
+    is DetectionEffect.ProposeParkingEnd -> "proposeParkingEnd"
     is DetectionEffect.MarkParkingActive,
     is DetectionEffect.PersistCheckpoint,
     -> null

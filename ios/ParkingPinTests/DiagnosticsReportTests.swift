@@ -54,15 +54,15 @@ struct DiagnosticsReportTests {
         #expect(!json.lowercased().contains("lastreliablelocation"))
     }
 
-    /// docs/05 §14: `DetectionCheckpoint.departure` holds the get-in or departure session's
-    /// anchor fixes, so a checkpoint in `DEPARTURE_CANDIDATE` carries coordinates the
+    /// docs/05 §14: `DetectionCheckpoint.engine` is the whole engine state, and its drives —
+    /// the open session, a transition's, a pending candidate's — hold anchor fixes the
     /// `lastReliableLocation` guard above never seeds. The checkpoint file is local-only and
     /// may hold them; the export may not — neither through the current checkpoint nor through
     /// the load result that restored it.
-    @Test("No departure anchor survives into the encoded report")
-    func encodedReportCarriesNoDepartureAnchor() throws {
+    @Test("No engine-state anchor survives into the encoded report")
+    func encodedReportCarriesNoEngineStateAnchor() throws {
         // Arrange
-        let departing = departureCheckpoint()
+        let departing = engineStateCheckpoint()
         var snapshot = RehydrationSnapshot()
         snapshot.checkpointLoad = .restored(departing)
         snapshot.currentCheckpoint = departing
@@ -85,7 +85,9 @@ struct DiagnosticsReportTests {
         let json = try #require(String(data: encoder.encode(exported), encoding: .utf8))
 
         // Assert
-        #expect(departing.departure?.drive.lastFix != nil, "the seed must actually hold anchors")
+        #expect(departing.engine?.driving?.lastFix != nil, "the seed must actually hold anchors")
+        #expect(departing.engine?.transition?.drive.lastFix != nil)
+        #expect(departing.engine?.candidateDrive?.lastFix != nil)
         #expect(!json.contains("37.123"))
         #expect(!json.contains("127.987"))
         #expect(!json.lowercased().contains("latitude"))
@@ -94,14 +96,14 @@ struct DiagnosticsReportTests {
     }
 
     /// The one checkpoint string that reaches a log (`BackgroundCoordinator.rehydrate` logs a
-    /// failed load's `diagnosticDescription`) and the report: a corrupt departure record must
-    /// not echo its coordinates through it.
-    @Test("A corrupt departure checkpoint is reported without its coordinates")
+    /// failed load's `diagnosticDescription`) and the report: a corrupt engine state must not
+    /// echo its coordinates through it.
+    @Test("A corrupt engine-state checkpoint is reported without its coordinates")
     func corruptDepartureCheckpointLeaksNoCoordinate() throws {
         // Arrange — a real departure checkpoint whose first latitude is made a string.
         let file = TemporaryCheckpointFile()
         let store = FileDetectionCheckpointStore(fileURL: file.url)
-        try store.save(departureCheckpoint())
+        try store.save(engineStateCheckpoint())
         let written = try String(contentsOf: file.url, encoding: .utf8)
         let latitude = try #require(written.range(of: #""latitude":37\.123[0-9]*"#, options: .regularExpression))
         let value = written[latitude].dropFirst(#""latitude":"#.count)
@@ -120,8 +122,9 @@ struct DiagnosticsReportTests {
         #expect(!failure.diagnosticDescription.contains("127.987"))
     }
 
-    /// A departure with two anchor fixes at distinctive coordinates.
-    private func departureCheckpoint() -> DetectionCheckpoint {
+    /// A whole engine state whose every drive holds two anchor fixes at distinctive
+    /// coordinates — more than any one real state holds at once, so no drive goes unchecked.
+    private func engineStateCheckpoint() -> DetectionCheckpoint {
         var drive = DrivingEvidence(startedAt: TestTime.offset(-120), lastVehicleEvidenceAt: TestTime.offset(-120))
         // 60 m apart, so every anchor the evidence keeps starts with the same digits.
         for (offset, north) in [(-110.0, 0.0), (-20.0, 60.0)] {
@@ -133,10 +136,24 @@ struct DiagnosticsReportTests {
                 speed: 12
             ))
         }
+        var engine = DetectionEngineRecord()
+        engine.driving = drive
+        engine.vehicleActiveSince = TestTime.offset(-120)
+        engine.isVehicleActive = true
+        engine.candidateDrive = drive
+        engine.transition = ParkingTransition(
+            enteredAt: TestTime.offset(-20),
+            entryReason: .movementIdle,
+            drive: drive,
+            driveDurationAtEnd: 100,
+            sessionStartedAt: TestTime.offset(-120),
+            vehicleExitDetected: false,
+            isCapturing: true
+        )
         return DetectionCheckpoint(
             state: .departureCandidate,
             stateEnteredAt: TestTime.offset(-20),
-            departure: DepartureCheckpoint(drive: drive, vehicleActiveSince: TestTime.offset(-120)),
+            engine: engine,
             revision: 9
         )
     }

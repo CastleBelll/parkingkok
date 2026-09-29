@@ -44,11 +44,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.sjstudioz.parkingpin.R
-import com.sjstudioz.parkingpin.ui.format.bayLabel
 import com.sjstudioz.parkingpin.data.photo.ParkingPhotoImage
 import com.sjstudioz.parkingpin.domain.parking.ElapsedTime
 import com.sjstudioz.parkingpin.domain.parking.FloorParser
 import com.sjstudioz.parkingpin.domain.parking.ParkingLocation
+import com.sjstudioz.parkingpin.domain.parking.ParkingPlaceText
 import com.sjstudioz.parkingpin.domain.parking.ParkingRecord
 import com.sjstudioz.parkingpin.domain.parking.ParkingSource
 import com.sjstudioz.parkingpin.domain.photo.PhotoSource
@@ -289,19 +289,10 @@ private fun SummaryCard(record: ParkingRecord, nowMillis: Long) {
 
             // Same rule as home: a spot with no zone needs the word, or it reads as an
             // unexplained numeral at hero weight.
-            val zone = record.zone
-            val spot = record.spot
-            val supporting = listOfNotNull(
-                when {
-                    zone != null && spot != null -> "$zone · $spot"
-                    zone != null -> zone
-                    spot != null -> bayLabel(spot)
-                    else -> null
-                },
-            )
-            if (supporting.isNotEmpty()) {
+            val supporting = ParkingPlaceText.zoneAndSpot(record.zone, record.spot)
+            if (supporting != null) {
                 Text(
-                    text = supporting.joinToString(" · "),
+                    text = supporting,
                     style = MaterialTheme.typography.headlineSmall,
                     color = MaterialTheme.colorScheme.onSurface,
                 )

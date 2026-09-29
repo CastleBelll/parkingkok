@@ -1,0 +1,20 @@
+{
+  "name": "departure_proposal_kept",
+  "initialState": "IDLE",
+  "events": [
+    {"type":"user_saved","t":0},
+    {"type":"vehicle_enter","t":600,"confidence":"high"},
+    {"type":"location","t":610,"accuracy":8,"speed":12,"distanceFromPreviousM":0},
+    {"type":"location","t":730,"accuracy":8,"speed":12,"distanceFromPreviousM":1000},
+    {"type":"location","t":760,"accuracy":8,"speed":12,"distanceFromPreviousM":300},
+    {"type":"location","t":820,"accuracy":8,"speed":12,"distanceFromPreviousM":600},
+    {"type":"user_kept_parking","t":840},
+    {"type":"location","t":850,"accuracy":8,"speed":12,"distanceFromPreviousM":300},
+    {"type":"vehicle_exit","t":900},
+    {"type":"walking_enter","t":920}
+  ],
+  "expected": {
+    "candidate": false,
+    "finalState": "PARKED"
+  }
+}

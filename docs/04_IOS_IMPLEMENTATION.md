@@ -185,7 +185,7 @@ struct MotionSample: Sendable {
 
 ## 6. Background Rehydration
 
-Persist `DetectionCheckpoint` locally after meaningful transition:
+Persist `DetectionCheckpoint` locally:
 
 ```text
 state
@@ -195,9 +195,12 @@ lastReliableLocation
 lastLocationAt
 travelDistanceEstimate
 candidateId
-departure   // schema 2 (2026-09-28): PARKED / DEPARTURE_CANDIDATE session, docs/05 §14
+engine      // schema 3 (2026-09-29): the rest of the engine state, restored verbatim — docs/05 §14
 revision
 ```
+
+Written whenever the engine state changed, not only on a transition (docs/05 §14 "Both
+platforms persist and reload their whole engine state").
 
 On launch due to location:
 1. read checkpoint
@@ -224,8 +227,15 @@ Categories:
 - text input `ENTER_FLOOR`
 - destructive-ish `NOT_PARKING`
 
-`PARKING_ENDED`
-- optional `UNDO_END`
+`PARKING_DEPARTURE` (docs/05 §11a, DECIDED 2026-09-29 — replaces the planned `PARKING_ENDED` /
+`UNDO_END`: a departure is asked about, never ended first and undone after)
+- `END_PARKING` (주차 종료) — ends the record at the proposal's `departedAt`
+- `KEEP_PARKING` (아직 주차 중) — keeps it and sends `user_kept_parking` to the engine
+- neither is `.foreground`; one request identifier (`PARKING_DEPARTURE.pending`), so a later
+  proposal replaces the earlier on the lock screen
+- the proposal is `Detection/departure-proposal.json` beside `candidate.json`, written by
+  `BackgroundCoordinator` before the notification is posted; the place text comes from the App
+  Group widget projection, so a background wake never opens SwiftData (§7)
 
 Response handler must complete quickly.
 Text action updates local active session, writes snapshot atomically, reloads widgets.

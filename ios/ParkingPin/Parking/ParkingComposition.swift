@@ -29,6 +29,12 @@ struct ParkingComposition {
         CandidateNotificationResponder(model: candidates)
     }
 
+    /// The lock screen's half of the departure proposal (docs/05 §11a). Built on demand for
+    /// the same reason `candidateResponder` is.
+    var proposalResponder: ParkingEndProposalResponder {
+        ParkingEndProposalResponder(model: model)
+    }
+
     static let volatileStorageWarning = "기기에 저장할 수 없어 이번 실행에서만 기록이 유지됩니다."
 
     /// The process's one composition, built on first use.
@@ -66,7 +72,8 @@ struct ParkingComposition {
                 analytics: AnalyticsComposition.recorder,
                 snapshots: snapshots,
                 // docs/05 §11c: a parking saved by hand arms the departure.
-                detection: DetectionRuntime.shared
+                detection: DetectionRuntime.shared,
+                endProposals: liveProposalInbox()
             )
             return ParkingComposition(
                 model: model,
@@ -86,7 +93,8 @@ struct ParkingComposition {
             photoStore: photoStore,
             analytics: AnalyticsComposition.recorder,
             snapshots: snapshots,
-            detection: DetectionRuntime.shared
+            detection: DetectionRuntime.shared,
+            endProposals: liveProposalInbox()
         )
         return ParkingComposition(
             model: fallbackModel,
@@ -110,6 +118,16 @@ struct ParkingComposition {
             analytics: AnalyticsComposition.recorder,
             parking: parking,
             resolver: DetectionRuntime.shared
+        )
+    }
+
+    /// docs/05 §11a: the file the coordinator writes a departure proposal to, and the
+    /// notification it posted. A missing directory proposes nothing, and every parking then
+    /// stays active until the user ends it.
+    private static func liveProposalInbox() -> ParkingEndProposalInbox {
+        ParkingEndProposalInbox(
+            store: DetectionRuntime.shared.parkingEndProposalStore ?? UnavailableParkingEndProposalStore(),
+            notifier: UserNotificationParkingEndProposalDelivery()
         )
     }
 

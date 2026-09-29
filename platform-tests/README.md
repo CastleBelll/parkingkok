@@ -228,7 +228,7 @@ trace까지 왔다면 어댑터 결함이므로 변환기가 거부한다 — `p
 | 4 | taxi → walk → candidate 가능/알려진 한계 | `taxi` | ⬜ |
 | 5 | 버스 반복 정차 → 알림 폭주 없음 | `bus` / `parked: false` | ✅ `bus_repeated_stops_no_storm.json` (+ 양 러너의 travel session당 후보 1개 검사) |
 | 6 | 터널 GPS 소실 → candidate 없음 | `car` / `parked: false` | ✅ `tunnel_no_parking.json` |
-| 7 | 프로세스 사망/재시작 → 중복 candidate 없음 | — | ⬜ ⚠️ (fixture 없음. `restore` 의미론은 테스트가 고정: docs/05 §3a 창 규칙은 엔진 단위 테스트, §14 "A restored departure keeps its evidence"는 iOS `DepartureTests` ↔ Android `ParkingDetectionRuntimeTest`의 같은 이름·같은 이벤트 twin) |
+| 7 | 프로세스 사망/재시작 → 중복 candidate 없음 | — | ⬜ ⚠️ (fixture 없음. `restore` 의미론은 테스트가 고정: docs/05 §3a 창 규칙은 엔진 단위 테스트, §14 "Both platforms persist and reload their whole engine state"는 모든 fixture·draft의 모든 이벤트 뒤 프로세스 사망을 주입하는 twin — iOS `ParityRestoreTests` ↔ Android `ParkingDetectionRuntimeRestoreTest` — 이 고정, 출발 복원은 iOS `DepartureTests` ↔ Android `ParkingDetectionRuntimeTest`의 같은 이름·같은 이벤트 twin) |
 | 8 | 이동 중 권한 회수 | — | ⬜ ⚠️ (fixture 없음. docs/05 §11 "A lost capture decides nothing" — 회수는 capture만 멈추고 상태·세션은 그대로 — 를 양 플랫폼 같은 이름 twin이 고정: `DRIVING`/`DRIVING_CANDIDATE`는 iOS `ParkingTransitionEvidenceTests` ↔ Android `ParkingDetectionRuntimeTest` "A drive that loses its capture still parks on the next exit", 출발은 iOS `DepartureTests` ↔ 같은 Android 파일의 "…lost its capture…" twin들. 권한이 돌아와도 그 세션의 capture는 다시 열리지 않는다 — §11 "A lost capture stays lost for its session" (N1): iOS `ParkingTransitionEvidenceTests` "A drive whose permission returns before the exit decides as it would without a capture", "A transition that lost its capture reopens none after a process death", "A transition that lost its capture resumes its drive without one". 같은 이름의 Android twin(실제 `TransitionEventIngestor` 경유)은 아직 커밋되지 않았다 — 그 전까지 Android 쪽은 증명되지 않음) |
 | 9 | 절전 모드 저하 동작 | — | ⬜ ⚠️ |
 | 10 | 앱이 기록을 갱신하는 중 위젯 편집 | — | ⬜ ⚠️ |
@@ -291,7 +291,7 @@ M3에서 필드 데이터로 튜닝된다. 지금 박으면 튜닝을 막는다.
 손으로 저장한 주차(`user_saved`) → 다시 탑승 → t=730 한 fix가 §11의 두 기준(90 s, 500 m)을
 넘기면서 §7 guard도 이미 충족하는 순간 → 이어지는 주행 → 하차·도보로 다음 주차.
 docs/05 §11 "Departure rows are edges": 출발을 연 이벤트는 그것을 확정하지 않는다.
-golden이 고정하는 순서는 event 3 `DEPARTURE_CANDIDATE`, event 4 `DRIVING` + `endActiveParking`
+golden이 고정하는 순서는 event 3 `DEPARTURE_CANDIDATE`, event 4 `DRIVING` + `proposeParkingEnd`
 이다. 예전 iOS는 event 3 하나에서 둘 다 했고, 그 차이를 잡는 fixture가 이것 전에는 없었다.
 주차 종료 시각(= `DEPARTURE_CANDIDATE` 진입 시각)은 golden에 없으므로 양 플랫폼 엔진 단위
 테스트("A departure is confirmed on a later event than the one that opened it")가 고정한다.
@@ -306,7 +306,7 @@ golden이 고정하는 순서는 event 3 `DEPARTURE_CANDIDATE`, event 4 `DRIVING
 t=740 `vehicle_exit`, 경과 시간만으로 guard 충족(140 s) → t=760 도보.
 docs/05 §11 "An event that confirms a departure is also read in `DRIVING`": 하차는 출발을
 확정하고, 같은 이벤트가 `DRIVING`에서 다시 읽혀 그 주행을 끝낸다. golden이 고정하는 순서는
-event 3 `DEPARTURE_CANDIDATE`, event 4 `PARKING_TRANSITION` + `endActiveParking`, event 5
+event 3 `DEPARTURE_CANDIDATE`, event 4 `PARKING_TRANSITION` + `proposeParkingEnd`, event 5
 후보다. 이 규칙 전에는 하차가 확정에 삼켜져 `DRIVING`에 남았고, 이전 주차만 끝난 채
 다음 주차가 사라졌다. `expected`의 `confidence: medium`과 `requiredReasons`는 양 엔진이
 golden에서 같이 내는 값이고, §8로 다시 계산하면 25 + 15(exit) + 30(walk) = 70 → `medium`
@@ -348,10 +348,43 @@ s17 55·s16 45·s33 45·s03 40 → `low`).
 `field_s*_unknown.json` 8개는 결과 라벨이 없어(`expected: null`) 승격하지 않는다. 양
 엔진이 같은 결과를 내는지는 `goldens/`가 이벤트 단위로 고정한다.
 
+## 출발은 묻는다 — `proposeParkingEnd` (DECIDED BY THE USER 2026-09-29)
+
+docs/05 §11a. 확정된 출발은 더 이상 주차를 끝내지 않고 **종료를 제안**한다. 위 두
+`manual_save_then_*` fixture의 golden은 같은 자리에서 `endActiveParking` 대신
+`proposeParkingEnd`를 고정한다(설계 변경이며 `expected`는 그대로다). 종료 시각
+(`departedAt` = `DEPARTURE_CANDIDATE` 진입 시각)과 세 가지 응답은 golden 밖이므로 양 플랫폼의
+모델/어댑터 테스트가 고정한다.
+
+### `departure_proposal_kept` — 아직 주차 중
+
+`manual_save_then_departure`와 같은 출발, t=760 제안 → t=840 `user_kept_parking`(계약 §2):
+엔진은 `PARKED`로 돌아가고 진행 중이던 주행 증거를 조용히 버린다. 그 뒤 같은 주행의 fix,
+하차, 도보는 새 출발의 증거가 아니므로(새 `vehicle_enter` 없음) 후보를 만들지 않는다.
+`expected`: 후보 없음, `PARKED`.
+
+### `departure_proposal_then_next_saved` — 제안이 걸린 채 다음 주차를 손으로 저장
+
+같은 출발, t=760 제안 → 주행 → t=900 하차(`PARKING_TRANSITION`) → t=910 `user_saved`:
+엔진은 `PARKED`, 후보 없음. 이전 기록이 제안의 `departedAt`(t=730)에 끝나는 것은 앱 쪽
+규칙이라 fixture 어휘로 표현할 수 없고, iOS `ParkingEndProposalModelTests` "A hand save while a
+proposal is pending ends the old record at departedAt"와 Android 쌍둥이가 고정한다.
+
+### `drafts/field_0928_rejected` — 2026-09-28 08:51 거절된 후보 (분석, 수정 없음)
+
+iPhone trace `C857F31C`, 라벨 car / 주차 아님, `--repair`로 변환(08:32:40 하차·정지 두
+이벤트가 08:40:43 뒤에 기록됨). 열린 주차에서 시작(`PARKED`). 현재 두 엔진은 이 기록에서
+**후보를 만들지 않는다**: 08:46 재탑승 뒤 첫 fix들은 정확도 1.4 km라 노이즈 바닥(§7)에 막히고,
+08:49:21에 `DEPARTURE_CANDIDATE`가 열리지만 08:51:28 하차 시점에 §7 guard가 미충족이라
+`PARKED`로 돌아간다. 기기에서의 08:48 종료와 08:51 후보는 기록이 담지 못한 입력(깨어날 때마다
+다시 읽는 Core Motion 차량 증거, wake 시각 기준 `now`) 또는 이전 빌드의 결과로 본다. spec 위반을
+재현하지 못했으므로 엔진은 고치지 않았고 draft로 남긴다. 같은 상황은 이제 §11a대로 **묻고**,
+후보를 거절해도 제안은 남는다.
+
 ## `goldens/outcome-traces.golden.json` — 이벤트 단위 parity
 
 계약 §8 "Outcome traces". 양 러너가 `platform-tests/*.json`과 `drafts/*.json` **전부**를
-`expected`를 무시하고 재생해서, state를 바꾸거나 candidate를 만들고·거두고·주차를 끝낸
+`expected`를 무시하고 재생해서, state를 바꾸거나 candidate를 만들고·거두고·주차 종료를 제안한
 이벤트마다 한 줄씩 이 파일과 비교한다. 초안이 한쪽 플랫폼에서만 조용히 바뀔 수 없다.
 
 - 키 집합이 디스크의 파일과 같아야 한다. fixture나 draft를 추가·삭제·개명하면 이 파일도

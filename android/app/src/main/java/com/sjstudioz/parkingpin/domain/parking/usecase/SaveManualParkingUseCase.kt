@@ -26,7 +26,14 @@ data class ManualParkingInput(
 /** Outcome of [SaveManualParkingUseCase]. */
 sealed interface SaveManualParkingResult {
 
-    data class Saved(val record: ParkingRecord) : SaveManualParkingResult
+    /**
+     * [endedPrevious] is the asked-about parking this save closed at its departure time
+     * (docs/05 §11a), in the same write; null for an ordinary save.
+     */
+    data class Saved(
+        val record: ParkingRecord,
+        val endedPrevious: ParkingRecord? = null,
+    ) : SaveManualParkingResult
 
     /**
      * A parking session is already open, so nothing was written.
@@ -64,8 +71,17 @@ class SaveManualParkingUseCase(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
 ) {
 
-    suspend operator fun invoke(input: ManualParkingInput): SaveManualParkingResult {
-        repository.findActive()?.let { return SaveManualParkingResult.AlreadyActive(it) }
+    /**
+     * [ending] is the open parking a pending departure allows this save to close
+     * (docs/05 §11a); without it an open parking refuses the save.
+     */
+    suspend operator fun invoke(
+        input: ManualParkingInput,
+        ending: ActiveParkingEnd? = null,
+    ): SaveManualParkingResult {
+        repository.findActive()
+            ?.takeIf { it.id != ending?.recordId }
+            ?.let { return SaveManualParkingResult.AlreadyActive(it) }
 
         val now = clock.nowEpochMillis()
         val record = ParkingRecord(
@@ -84,13 +100,16 @@ class SaveManualParkingUseCase(
             updatedAtMillis = now,
             revision = 1,
         )
-        repository.insert(record)
+        val opened = when (val result = repository.openParkingRecord(record, ending, now)) {
+            is OpenParkingResult.Blocked -> return SaveManualParkingResult.AlreadyActive(result.active)
+            is OpenParkingResult.Opened -> result
+        }
         // After the write, never before: an event for a save that failed would overstate
         // the feature. The payload is the event name and `platform` — floor, zone, spot and
         // memo are §3 forbidden and `AnalyticsEvent` gives them nowhere to go.
         analytics.record(AnalyticsEvent.ParkingManualSaved)
         attachCurrentFix(record.id, record.location)
-        return SaveManualParkingResult.Saved(record)
+        return SaveManualParkingResult.Saved(record, endedPrevious = opened.endedPrevious)
     }
 
     /**

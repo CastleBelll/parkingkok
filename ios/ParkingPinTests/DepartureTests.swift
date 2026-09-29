@@ -2,7 +2,9 @@ import Foundation
 import Testing
 @testable import ParkingPin
 
-/// `docs/05_PARKING_DETECTION_ENGINE.md` §11 and §11a: driving away ends the parking.
+/// `docs/05_PARKING_DETECTION_ENGINE.md` §11 and §11a: driving away proposes the end of the
+/// parking (`proposeParkingEnd`, 2026-09-29 — the engine asks, the user ends). Test names that
+/// say "ends the parking" are kept for their Android twins and mean "proposes the end".
 ///
 /// The mirror of Android's `AutoEndParkingTest`. Both platforms had the same gap in
 /// different shapes — Android had the states with no effect behind them, iOS had neither —
@@ -27,7 +29,7 @@ struct DepartureTests {
 
     private func endedAt(_ effects: [DetectionEffect]) -> Date? {
         effects.compactMap {
-            if case let .endActiveParking(at) = $0 { return at }
+            if case let .proposeParkingEnd(at) = $0 { return at }
             return nil
         }.first
     }
@@ -296,7 +298,7 @@ struct DepartureTests {
         let effects = await engine.handle(.carLinkDisconnected(at: at(740), kind: .bluetoothAudio))
 
         // Assert — the end first, then the new parking, on the same event.
-        let endIndex = try #require(effects.firstIndex { if case .endActiveParking = $0 { true } else { false } })
+        let endIndex = try #require(effects.firstIndex { if case .proposeParkingEnd = $0 { true } else { false } })
         let createIndex = try #require(effects.firstIndex { if case .createCandidate = $0 { true } else { false } })
         #expect(endedAt(effects) == at(700))
         #expect(endIndex < createIndex, "the parking ends before the next one is raised")
@@ -745,7 +747,7 @@ struct DepartureTests {
 
     // MARK: - §14: a process death inside PARKED or DEPARTURE_CANDIDATE (2026-09-28)
 
-    // docs/05 §14 "A restored departure keeps its evidence". A test naming an Android twin
+    // docs/05 §14 "Both platforms persist and reload their whole engine state". A test naming an Android twin
     // shares its sentence and its events with that `ParkingDetectionRuntimeTest`; the only
     // iOS-only step is `restore(_:now:)`, which Android does not have — its runtime reloads
     // the engine state for every batch — and which is taken no later than the next event.
@@ -863,8 +865,8 @@ struct DepartureTests {
         #expect(candidate.confidenceBucket == .medium, "the fixture's expected confidence")
     }
 
-    /// The stale-restore rule `restoreDrivingSession` applies, for `PARKED`'s get-in. A get-in
-    /// whose vehicle evidence is hours old reopens no GPS; the parking stays. Android twin:
+    /// docs/05 §14 "A relaunch that lost the capture", rule 1: a get-in whose vehicle evidence
+    /// is hours old reopens no GPS; the parking stays. Android twin:
     /// `ParkingDetectionRuntimeTest` `a get-in restored with stale evidence reopens no capture
     /// and keeps the parking`.
     @Test("A get-in restored with stale evidence reopens no capture and keeps the parking")
@@ -885,7 +887,7 @@ struct DepartureTests {
         #expect(await engine.snapshot().isVehicleActive == false)
         #expect(!effects.contains(.startBoundedLocationCapture))
         #expect(endedAt(effects) == nil)
-        #expect(try lastPersisted(effects).departure == nil, "the dropped get-in is not restored again")
+        #expect(try lastPersisted(effects).engine?.driving == nil, "the dropped get-in is not restored again")
     }
 
     /// Android twin: `a departure restored with stale evidence returns to PARKED and ends
@@ -978,7 +980,8 @@ struct DepartureTests {
         #expect(await engine.state == .departureCandidate)
     }
 
-    /// iOS only: a checkpoint written before schema 2 has no departure evidence, and nothing
+    /// iOS only: a checkpoint written before schema 2 has no departure evidence (docs/05 §14 "A
+    /// checkpoint from before schema 3"), and nothing
     /// is invented in its place — the departure is not decided on a relaunch (§11: leaving a
     /// record open is recoverable, ending one wrongly is not).
     @Test("A departure checkpoint without its evidence returns to PARKED and ends nothing")

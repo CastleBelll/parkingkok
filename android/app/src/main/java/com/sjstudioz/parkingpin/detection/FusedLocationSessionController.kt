@@ -80,12 +80,11 @@ class FusedLocationSessionController(
      *
      * Use after reboot or app update ([RegistrationRecoveryReceiver]): Play services no longer
      * holds the request, but the record survives in DataStore, and [reconcile] would trust it —
-     * a dead capture reported live, and with it a stop-only resume window kept open with
-     * nothing feeding it (docs/05 §3a "The window lives exactly as long as its capture"). The
-     * removal is issued anyway, so a request that did survive an update is not orphaned.
-     * Nothing is restarted here: whether a capture is wanted is the engine's answer, given on
-     * its next batch — [ParkingDetectionRuntime.resumeAfterSystemReset], which the recovery
-     * receiver sends at once, so a restored departure or drive gets its capture back
+     * a dead capture reported live. The removal is issued anyway, so a request that did
+     * survive an update is not orphaned. Nothing is restarted here: whether a capture is
+     * wanted is the engine's answer, given on its next batch —
+     * [ParkingDetectionRuntime.resumeAfterSystemReset], which the recovery receiver sends at
+     * once, so a restored departure, drive or stop-only resume window gets its capture back
      * (docs/05 §14) without waiting for a motion edge.
      */
     suspend fun reconcileAfterSystemReset(): LocationSessionState = mutex.withLock {

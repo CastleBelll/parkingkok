@@ -540,8 +540,50 @@ final class StubCandidateResolver: CandidateResolving {
 final class StubManualParkingReporter: ManualParkingReporting {
     private(set) var savedAt: [Date] = []
 
+    private(set) var keptAt: [Date] = []
+
     func userSavedParking(at date: Date) async {
         savedAt.append(date)
+    }
+
+    func userKeptParking(at date: Date) async {
+        keptAt.append(date)
+    }
+}
+
+/// The departure proposal's file, in memory (docs/05 §11a).
+final class InMemoryParkingEndProposalStore: ParkingEndProposalStoring, @unchecked Sendable {
+    private let lock = NSLock()
+    private var proposal: ParkingEndProposal?
+
+    init(_ proposal: ParkingEndProposal? = nil) {
+        self.proposal = proposal
+    }
+
+    func load() -> ParkingEndProposal? {
+        lock.withLock { proposal }
+    }
+
+    func save(_ proposal: ParkingEndProposal) throws {
+        lock.withLock { self.proposal = proposal }
+    }
+
+    func clear() throws {
+        lock.withLock { proposal = nil }
+    }
+}
+
+/// Records what the departure prompt was asked to do.
+actor RecordingParkingEndProposalNotifier: ParkingEndProposalNotifying {
+    private(set) var posted: [(proposal: ParkingEndProposal, placeText: String?)] = []
+    private(set) var withdrawCount = 0
+
+    func post(_ proposal: ParkingEndProposal, placeText: String?) async {
+        posted.append((proposal, placeText))
+    }
+
+    func withdraw() async {
+        withdrawCount += 1
     }
 }
 
