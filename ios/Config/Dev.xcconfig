@@ -15,3 +15,7 @@ PK_DISPLAY_NAME = 주차핀
 PK_APP_ENV = dev
 
 SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) DEBUG PK_DEV
+
+// Firebase project per environment (docs/18 §13): DEV and STAGING use parkingpin-dev.
+// The Prod options file is excluded so it can never ship in a non-production build.
+EXCLUDED_SOURCE_FILE_NAMES = $(inherited) */Firebase/Environments/Prod/GoogleService-Info.plist

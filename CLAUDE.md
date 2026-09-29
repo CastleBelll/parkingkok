@@ -120,7 +120,8 @@ internal.
 | iOS bundle id — **every configuration, DEV included** | `com.sjstudioz.parkingpin` |
 | iOS widget extension | `com.sjstudioz.parkingpin.widget` |
 | iOS App Group | `group.com.sjstudioz.parkingpin` |
-| Firebase project | `parkingpin-51147` |
+| Firebase project (prod) | `parkingpin-51147` |
+| Firebase project (DEV/STAGING, Android debug) | `parkingpin-dev` (docs/18 §13) |
 
 **`com.sjstudioz.` is a studio namespace, and that is the point.** Two earlier attempts were
 wrong in different ways: `com.parkingkok.app` was the old brand, and `kr.parkingpin.app`
