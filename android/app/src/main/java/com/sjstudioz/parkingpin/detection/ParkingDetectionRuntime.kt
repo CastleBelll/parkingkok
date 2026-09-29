@@ -345,7 +345,7 @@ class ParkingDetectionRuntime(
     /**
      * docs/05 §3a "The window lives exactly as long as its capture", made durable the moment
      * the follow shows the capture is not there: a stop-only candidate whose transition had no
-     * capture (a drive that lost it, docs/05 §11 "The kept session stays without a capture")
+     * capture (a drive that lost it, docs/05 §11 "A lost capture stays lost for its session")
      * opens no window. Closing it only at the next batch's [current] is too late on Android:
      * `TransitionEventIngestor` shapes the capture before the engine takes the event, so the
      * `vehicle_enter` of a new journey opens a capture first and would find the window it
@@ -426,7 +426,7 @@ data class MotionCaptureAnswer(
     val wanted: LocationSessionMode?,
     /**
      * Whether the engine is still on the session it was on before the event — the one a lost
-     * capture belongs to (docs/05 §11 "The kept session stays without a capture"). False when
+     * capture belongs to (docs/05 §11 "A lost capture stays lost for its session"). False when
      * the event opens a new journey or ends the session.
      */
     val continuesSession: Boolean,

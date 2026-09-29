@@ -404,7 +404,7 @@ class FusedLocationSessionControllerTest {
 
     @Test
     fun `a regranted permission reopens nothing for the session that lost the capture`() = runTest {
-        // Arrange — docs/05 §11 "The kept session stays without a capture".
+        // Arrange — docs/05 §11 "A lost capture stays lost for its session".
         val f = fixture()
         f.controller.onMotionEvent(motion(MotionEventKind.ENTERED_VEHICLE, startMillis))
         f.registrar.foregroundGranted = false

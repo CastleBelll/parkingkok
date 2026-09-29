@@ -12,6 +12,9 @@ class FakeTransitionRegistrar(
     var unregisterCalls: Int = 0
         private set
 
+    /** Suspends inside unregister, so a test can interleave another caller at that point. */
+    var yieldOnUnregister: Boolean = false
+
     override fun hasPermission(): Boolean = permissionGranted
 
     override suspend fun register(): String? {
@@ -21,6 +24,7 @@ class FakeTransitionRegistrar(
 
     override suspend fun unregister(): String? {
         unregisterCalls++
+        if (yieldOnUnregister) kotlinx.coroutines.yield()
         return null
     }
 }

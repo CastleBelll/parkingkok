@@ -99,7 +99,7 @@ class LocationCaptureModePolicyTest {
 
     @Test
     fun `no motion edge reopens a capture the engine's session lost`() {
-        // docs/05 §11 "The kept session stays without a capture": the permission came back,
+        // docs/05 §11 "A lost capture stays lost for its session": the permission came back,
         // but the session that lost the capture is still the engine's.
         // Act
         val modes = MotionEventKind.entries.associateWith {

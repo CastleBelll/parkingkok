@@ -275,7 +275,7 @@ private fun SessionCard(session: LocationSessionState, onCaptureModeChange: (Loc
         LabelledValue(
             stringResource(R.string.diagnostics_session_other_drops),
             "${session.counters.staleDropCount}/${session.counters.poorAccuracyDropCount}/" +
-                "${session.counters.notNewerDropCount}",
+                "${session.counters.notNewerDropCount}/${session.counters.lessAccurateDropCount}",
         )
         LabelledValue(
             stringResource(R.string.diagnostics_session_driving_confirmed),

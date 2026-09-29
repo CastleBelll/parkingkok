@@ -3,6 +3,7 @@ package com.sjstudioz.parkingpin.detection
 import com.sjstudioz.parkingpin.data.DetectionStateStore
 import com.sjstudioz.parkingpin.data.InMemoryPreferencesDataStore
 import com.sjstudioz.parkingpin.domain.registration.TransitionRegistrationSpec
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -153,6 +154,30 @@ class DetectionRegistrationCoordinatorTest {
 
         // Assert
         assertEquals(listOf(clock.epochMillis, clock.epochMillis), optOuts)
+    }
+
+    @Test
+    fun optInRacingAnOptOut_endsNothing() = runTest {
+        // Arrange — docs/05 §3a "Turning Smart Detection off": the opt-out ends the session
+        // only while the user still wants detection off. The flag and the opt-out used to be
+        // two steps with the lock released between them, so switching back on in that gap
+        // ended the session of a user who had just opted back in.
+        val optOuts = mutableListOf<Long>()
+        val racing = DetectionRegistrationCoordinator(store, registrar, clock, optOut = { optOuts += it })
+        racing.setDetectionEnabled(true)
+        // The off call suspends inside its locked section, which is where the on call
+        // arrives and queues for the lock.
+        registrar.yieldOnUnregister = true
+
+        // Act — off, and on again before the opt-out has run.
+        val off = launch { racing.setDetectionEnabled(false) }
+        val on = launch { racing.setDetectionEnabled(true) }
+        off.join()
+        on.join()
+
+        // Assert
+        assertTrue(store.readDesiredEnabledOnce())
+        assertEquals(emptyList<Long>(), optOuts)
     }
 
     @Test
