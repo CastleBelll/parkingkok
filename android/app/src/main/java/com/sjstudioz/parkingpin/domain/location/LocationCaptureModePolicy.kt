@@ -38,7 +38,7 @@ object LocationCaptureModePolicy {
      *
      * [sessionLostCapture] is whether the engine's session, carried on through this event, is
      * one whose capture a revoked location permission took. No edge reopens it, whatever the
-     * permission is now (docs/05 §11 "The kept session stays without a capture"): iOS records
+     * permission is now (docs/05 §11 "A lost capture stays lost for its session"): iOS records
      * the loss on the session and reopens nothing for it, so a kerb capture here fed a moving
      * fix that resumed `DRIVING` on Android while the same drive parked on an iPhone. A new
      * session — one the event opens — is not lost, and captures as usual.

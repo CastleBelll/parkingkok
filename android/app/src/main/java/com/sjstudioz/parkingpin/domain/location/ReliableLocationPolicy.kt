@@ -109,7 +109,9 @@ object ReliableLocationSelector {
             !LocationFreshnessPolicy.isFreshForSession(quality, sessionReferenceMillis) ->
                 LocationDropReason.STALE_FOR_SESSION
             quality.horizontalAccuracyM > MAX_ACCURACY_METERS -> LocationDropReason.ACCURACY_TOO_POOR
-            current != null && !isImprovement(current, sample) -> LocationDropReason.NOT_NEWER
+            current != null && sample.atMillis <= current.capturedAtMillis -> LocationDropReason.NOT_NEWER
+            current != null && isFreshAndMoreAccurate(current, sample, nowMillis) ->
+                LocationDropReason.LESS_ACCURATE_THAN_FRESH_INCUMBENT
             else -> null
         }
         if (rejection != null) return ReliableLocationDecision.Rejected(rejection)
@@ -117,9 +119,14 @@ object ReliableLocationSelector {
         return ReliableLocationDecision.Accepted(location = sample.toReliableLocation())
     }
 
-    private fun isImprovement(current: ReliableLocation, sample: LocationSample): Boolean = when {
-        sample.atMillis > current.capturedAtMillis -> true
-        sample.atMillis < current.capturedAtMillis -> false
-        else -> sample.horizontalAccuracyM < current.horizontalAccuracyM
+    /**
+     * docs/05 §6 (DECIDED 2026-09-27), as iOS `ReliableLocationPolicy.evaluate` applies it: a
+     * newer fix wins unless the incumbent is still within the session freshness window and
+     * strictly more accurate. Android used to take any newer fix, and on a timestamp tie the
+     * more accurate one; both differed from iOS and the spec.
+     */
+    private fun isFreshAndMoreAccurate(current: ReliableLocation, sample: LocationSample, nowMillis: Long): Boolean {
+        val incumbentIsFresh = nowMillis - current.capturedAtMillis <= LocationFreshnessPolicy.SESSION_FRESHNESS_MILLIS
+        return incumbentIsFresh && sample.horizontalAccuracyM > current.horizontalAccuracyM
     }
 }

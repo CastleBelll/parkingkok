@@ -666,10 +666,14 @@ hand save (§11c) and the user's answer to a pending candidate still reach it: t
 iOS: `BackgroundCoordinator.setSmartDetectionEnabled` (set before `rehydrate` on every launch)
 gates `rehydrate`'s motion replay, `handleSignificantChange`, `handleCarLink` and
 `handleDrivingFix`, and forgets the observed links so the first route sample after switching back
-on is a fresh edge. Android: `CarLinkReceiver` and `LocationUpdateReceiver` drop their input
-while `readDesiredEnabledOnce()` is false (the reboot path already refuses to reopen a capture
-the user switched off), and `DetectionRegistrationCoordinator.setDetectionEnabled(false)` feeds
-the opt-out event and stops the location session, releasing the foreground service. Android
+on is a fresh edge. Android: one gate in `ParkingDetectionRuntime.handle(sensor = true)` drops
+every sensor batch — motion transitions, location batches, car links and ticks — while
+detection is off, and `TransitionEventIngestor.ingest` returns before touching the capture (the
+receivers themselves hold no gate; the reboot path already refuses to reopen a capture the user
+switched off). `DetectionRegistrationCoordinator.setDetectionEnabled(false)` feeds the opt-out
+event and stops the location session, releasing the foreground service, under the same lock as
+the toggle and only while detection is still off, so switching back on in between ends nothing
+(`optInRacingAnOptOut_endsNothing`). Android
 has no route to sample, so a link still connected when detection comes back on is heard at its
 next edge — an OS difference, not an engine one.
 

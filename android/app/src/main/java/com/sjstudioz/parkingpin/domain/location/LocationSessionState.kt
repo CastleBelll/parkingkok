@@ -23,6 +23,8 @@ data class LocationDiagnosticsCounters(
     val staleDropCount: Int = 0,
     val poorAccuracyDropCount: Int = 0,
     val notNewerDropCount: Int = 0,
+    /** docs/05 §6: newer, but a fresh incumbent was more accurate. */
+    val lessAccurateDropCount: Int = 0,
     /** Age of the most recent rejected cached fix, so the threshold can be judged, not guessed. */
     val lastCachedFixAgeMillis: Long? = null,
     val lastSampleAccuracyM: Float? = null,
@@ -51,6 +53,7 @@ data class LocationDiagnosticsCounters(
         LocationDropReason.STALE_FOR_SESSION -> copy(staleDropCount = staleDropCount + 1)
         LocationDropReason.ACCURACY_TOO_POOR -> copy(poorAccuracyDropCount = poorAccuracyDropCount + 1)
         LocationDropReason.NOT_NEWER -> copy(notNewerDropCount = notNewerDropCount + 1)
+        LocationDropReason.LESS_ACCURATE_THAN_FRESH_INCUMBENT -> copy(lessAccurateDropCount = lessAccurateDropCount + 1)
     }
 }
 

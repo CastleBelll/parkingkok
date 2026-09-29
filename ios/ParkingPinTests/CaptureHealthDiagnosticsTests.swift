@@ -62,3 +62,46 @@ struct CaptureHealthDiagnosticsTests {
         )
     }
 }
+
+/// docs/05 §3a "Turning Smart Detection off": a watchdog tick already dispatched when the
+/// user switched off must not feed the engine afterwards. Every other entry point was gated
+/// and this one is now too (review, 2026-09-28). The opt-out has already ended the session,
+/// so this pins an outcome that holds with or without the guard.
+@Suite("Opt-out gates the watchdog")
+struct OptOutWatchdogTests {
+    private let reference = Date(timeIntervalSinceReferenceDate: 800_000_000)
+
+    @Test("A watchdog tick after opting out writes nothing and opens nothing")
+    func watchdogTickAfterOptOutIsIgnored() async {
+        // Arrange
+        let capture = StubBoundedLocationCapture()
+        let checkpoints = StubCheckpointStore(loadResult: .absent)
+        let clock = MutableDateProvider(reference)
+        let automotive = MotionSample(
+            timestamp: reference.addingTimeInterval(-30),
+            automotive: true,
+            stationary: false,
+            confidence: .high
+        )
+        let coordinator = BackgroundCoordinator(
+            checkpointStore: checkpoints,
+            motionHistory: StubMotionHistoryProvider(result: .success([automotive])),
+            locationCapture: capture,
+            dateProvider: clock
+        )
+        await coordinator.rehydrate(launchReason: .significantLocationChange)
+        await coordinator.setSmartDetectionEnabled(false)
+        let stateAfterOptOut = await coordinator.currentSnapshot().currentCheckpoint?.state
+        let writesAfterOptOut = checkpoints.savedCheckpoints.count
+        let startsAfterOptOut = capture.startCount
+
+        // Act — the tick that was already on its way.
+        clock.advance(by: 400)
+        await coordinator.evaluateDrivingTimeouts()
+
+        // Assert
+        #expect(await coordinator.currentSnapshot().currentCheckpoint?.state == stateAfterOptOut)
+        #expect(checkpoints.savedCheckpoints.count == writesAfterOptOut)
+        #expect(capture.startCount == startsAfterOptOut)
+    }
+}

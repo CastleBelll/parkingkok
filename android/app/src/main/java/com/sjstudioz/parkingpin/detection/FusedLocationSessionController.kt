@@ -132,8 +132,8 @@ class FusedLocationSessionController(
      * [continuesEngineSession] is whether the engine, having taken this event, is still on the
      * session it was on before it. Such a session keeps a loss: after a
      * [LocationSessionStopReason.PERMISSION_LOST] stop, no edge of it reopens a capture, even
-     * with the permission granted again (docs/05 §11 "The kept session stays without a
-     * capture"). False — no engine, or a new session — captures as usual.
+     * with the permission granted again (docs/05 §11 "A lost capture stays lost for its
+     * session"). False — no engine, or a new session — captures as usual.
      */
     suspend fun onMotionEvent(
         event: MotionDomainEvent,

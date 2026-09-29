@@ -82,7 +82,7 @@ class DetectionRegistrationCoordinator(
      * the stored state is already what it leaves), so running it on every start costs nothing.
      */
     private suspend fun endWhatAnInterruptedOptOutLeft() {
-        if (!store.readDesiredEnabledOnce()) runOptOut()
+        runOptOut()
     }
 
     /**
@@ -90,14 +90,24 @@ class DetectionRegistrationCoordinator(
      * has done what the user asked; a DataStore or capture failure here is logged, and the
      * next relaunch sweeps again ([endWhatAnInterruptedOptOutLeft]).
      */
+    /**
+     * Ends the session, but only while the user still wants detection off, and under the
+     * same lock as the toggle. The flag and the opt-out used to be two steps with the lock
+     * released between them, so switching back on in that gap ended the session of a user
+     * who had just opted back in. Holding the lock here cannot deadlock: the handler is the
+     * runtime's, which takes only its own lock and never calls back into this coordinator.
+     */
     private suspend fun runOptOut() {
         val handler = optOut ?: return
-        try {
-            handler(clock.nowEpochMillis())
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (failure: Exception) {
-            Log.w(TAG, "opt-out did not complete: ${failure.javaClass.simpleName}")
+        mutex.withLock {
+            if (store.readDesiredEnabledOnce()) return
+            try {
+                handler(clock.nowEpochMillis())
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                Log.w(TAG, "opt-out did not complete: ${failure.javaClass.simpleName}")
+            }
         }
     }
 

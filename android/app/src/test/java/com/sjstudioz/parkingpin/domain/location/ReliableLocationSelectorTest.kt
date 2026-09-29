@@ -109,9 +109,11 @@ class ReliableLocationSelectorTest {
     }
 
     @Test
-    fun `a newer but less accurate fix still wins, because it is closer to where we stopped`() {
-        // Arrange — the deliberate choice over "newer AND at least as accurate": keeping a
-        // 5m motorway fix over a 30m kerbside one would invert the product goal.
+    fun `a newer but less accurate fix loses to a fresh incumbent`() {
+        // Arrange — docs/05 §6 (DECIDED 2026-09-27), the rule iOS
+        // ReliableLocationPolicy.evaluate applies: a newer fix wins unless the incumbent is
+        // still fresh (<= 20 s) and more accurate. The hold lasts only the freshness window,
+        // so the fix where the car stopped still takes over once the incumbent ages out.
         val held = ReliableLocation(
             latitude = 37.5,
             longitude = 127.0,
@@ -124,13 +126,49 @@ class ReliableLocationSelectorTest {
         val decision = ReliableLocationSelector.select(held, newer, now)
 
         // Assert
+        assertEquals(LocationDropReason.LESS_ACCURATE_THAN_FRESH_INCUMBENT, rejectionOf(decision))
+    }
+
+    @Test
+    fun `a newer but less accurate fix wins once the incumbent is past the freshness window`() {
+        // Arrange — the same pair, the incumbent one millisecond past 20 s.
+        val held = ReliableLocation(
+            latitude = 37.5,
+            longitude = 127.0,
+            horizontalAccuracyM = 5f,
+            capturedAtMillis = now - LocationFreshnessPolicy.SESSION_FRESHNESS_MILLIS - 1L,
+        )
+        val newer = sample(ageMillis = 1_000L, accuracyM = 30f)
+
+        // Act
+        val decision = ReliableLocationSelector.select(held, newer, now)
+
+        // Assert
         val accepted = decision as ReliableLocationDecision.Accepted
         assertEquals(30f, accepted.location.horizontalAccuracyM, 0f)
     }
 
     @Test
-    fun `an identically timed fix is admitted only when it is more accurate`() {
-        // Arrange — the timestamp tiebreak.
+    fun `a newer fix as accurate as a fresh incumbent wins`() {
+        // Arrange — iOS admits ties on accuracy (`<=`).
+        val held = ReliableLocation(
+            latitude = 37.5,
+            longitude = 127.0,
+            horizontalAccuracyM = 10f,
+            capturedAtMillis = now - 5_000L,
+        )
+
+        // Act
+        val decision = ReliableLocationSelector.select(held, sample(ageMillis = 1_000L, accuracyM = 10f), now)
+
+        // Assert
+        assertTrue(decision is ReliableLocationDecision.Accepted)
+    }
+
+    @Test
+    fun `an identically timed fix is never newer, however accurate`() {
+        // Arrange — §6 "a newer one wins": a tie in time is not newer, as on iOS
+        // (`candidate.timestamp > incumbent.capturedAt`).
         val held = ReliableLocation(
             latitude = 37.5,
             longitude = 127.0,
@@ -140,10 +178,8 @@ class ReliableLocationSelectorTest {
 
         // Act
         val better = ReliableLocationSelector.select(held, sample(ageMillis = 1_000L, accuracyM = 9f), now)
-        val worse = ReliableLocationSelector.select(held, sample(ageMillis = 1_000L, accuracyM = 21f), now)
 
         // Assert
-        assertTrue(better is ReliableLocationDecision.Accepted)
-        assertEquals(LocationDropReason.NOT_NEWER, rejectionOf(worse))
+        assertEquals(LocationDropReason.NOT_NEWER, rejectionOf(better))
     }
 }

@@ -75,4 +75,11 @@ enum class LocationDropReason {
 
     /** Admitted, but not an improvement on the reliable fix we already hold. */
     NOT_NEWER,
+
+    /**
+     * Newer, but the fix already held is still fresh (docs/05 §6) and more accurate. The
+     * hold lasts only the freshness window; iOS reports the same case as
+     * `lessAccurateThanFreshIncumbent`.
+     */
+    LESS_ACCURATE_THAN_FRESH_INCUMBENT,
 }

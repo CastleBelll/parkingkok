@@ -366,6 +366,10 @@ actor BackgroundCoordinator {
     /// authorization, a Core Location stall. Without it a session could stay open with no
     /// fixes to close it.
     func evaluateDrivingTimeouts() async {
+        // docs/05 §3a "Turning Smart Detection off": a tick already dispatched when the user
+        // switched off feeds nothing, like every other entry. The opt-out has already ended
+        // the session, so this is the same outcome made explicit rather than incidental.
+        guard isSmartDetectionEnabled else { return }
         let now = dateProvider.now
         await apply(engine.handle(.timerTick(at: now)), now: now)
         await applySilenceBound(now: now)

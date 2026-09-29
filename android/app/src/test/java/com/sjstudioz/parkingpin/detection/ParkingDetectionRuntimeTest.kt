@@ -824,7 +824,7 @@ class ParkingDetectionRuntimeTest {
 
     // ── docs/05 §11: the permission comes back while a session is capture-lost ─────────
     //
-    // "The kept session stays without a capture": nothing reopens a capture the engine's
+    // "A lost capture stays lost for its session": nothing reopens a capture the engine's
     // current session lost, and that includes the motion edges `TransitionEventIngestor`
     // shapes the capture on before the engine takes them. These go through the real ingestor
     // for exactly that reason. iOS twins, same names and events: `ParkingTransitionEvidenceTests`.
@@ -1497,7 +1497,7 @@ class ParkingDetectionRuntimeTest {
     }
 
     /**
-     * docs/05 §11 "The kept session stays without a capture" / §14: the departure confirms on
+     * docs/05 §11 "A lost capture stays lost for its session" / §14: the departure confirms on
      * elapsed time with no capture, the process dies, and the permission comes back. The
      * vehicle_enter that follows opens a new journey's capture before the engine takes it
      * (TransitionEventIngestor's order), and that capture must not revive a stop-only window
