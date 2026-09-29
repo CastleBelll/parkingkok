@@ -395,6 +395,13 @@ struct PillarAutoSaveTests {
 /// the model is there.
 @Suite("Vision pillar reader")
 struct VisionPillarTextReaderTests {
+    /// These tests ask whether the reader reads, not how fast. With the product's 6 s
+    /// deadline the first recognition on a CI runner — the model load, measured at over
+    /// 5 s even on a local simulator (docs/02 §6a) — was cancelled and read nothing, which
+    /// failed PR #30's CI on a change that never touched OCR. The deadline itself is pinned
+    /// by `timeoutIsSilent` below.
+    static let readingTimeout: Duration = .seconds(60)
+
     @Test("Korean is a supported recognition language at the level the reader uses")
     func koreanIsSupported() {
         // Arrange — `.fast` recognises six Latin languages and no Korean at all, so this
@@ -421,7 +428,7 @@ struct VisionPillarTextReaderTests {
         let data = try #require(TestPillarImage.jpeg(text: "B3"))
 
         // Act
-        let reading = await VisionPillarTextReader().read(data)
+        let reading = await VisionPillarTextReader(timeout: Self.readingTimeout).read(data)
 
         // Assert
         #expect(reading.floorText == "B3")
@@ -433,7 +440,7 @@ struct VisionPillarTextReaderTests {
         let data = try #require(TestPillarImage.jpeg(text: "지하 3층"))
 
         // Act
-        let reading = await VisionPillarTextReader().read(data)
+        let reading = await VisionPillarTextReader(timeout: Self.readingTimeout).read(data)
 
         // Assert — the whole reason the reader is pinned to `.accurate`.
         #expect(FloorValue.parse(reading.floorText ?? "")?.kind == .basement)
@@ -446,7 +453,7 @@ struct VisionPillarTextReaderTests {
         let data = try #require(TestPillarImage.jpeg(text: "142"))
 
         // Act
-        let reading = await VisionPillarTextReader().read(data)
+        let reading = await VisionPillarTextReader(timeout: Self.readingTimeout).read(data)
 
         // Assert — `FloorValue.parse` would read `142` as the 142nd storey, which is the
         // right answer for someone typing into a field labelled 층 and the wrong one for a
@@ -458,7 +465,7 @@ struct VisionPillarTextReaderTests {
     @Test("Preparing leaves the reader usable, and repeating it is harmless")
     func prepareIsSafeAndIdempotent() async throws {
         // Arrange — the model load moved off the path the user waits on.
-        let reader = VisionPillarTextReader()
+        let reader = VisionPillarTextReader(timeout: Self.readingTimeout)
         let data = try #require(TestPillarImage.jpeg(text: "B3"))
 
         // Act
@@ -489,7 +496,7 @@ struct VisionPillarTextReaderTests {
         let data = Data("not an image".utf8)
 
         // Act
-        let reading = await VisionPillarTextReader().read(data)
+        let reading = await VisionPillarTextReader(timeout: Self.readingTimeout).read(data)
 
         // Assert
         #expect(reading == .none)
