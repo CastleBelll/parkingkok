@@ -20,13 +20,29 @@ struct ParkingMapCard: View {
 
     private let point: ParkingMapPoint
     private let floorText: String?
+    private let onTap: (() -> Void)?
 
-    init(point: ParkingMapPoint, floorText: String?) {
+    /// `onTap`: what a tap on the card does — on the detail screen the same as `길찾기`,
+    /// because a map reads as the way to a map. `nil` keeps it inert.
+    init(point: ParkingMapPoint, floorText: String?, onTap: (() -> Void)? = nil) {
         self.point = point
         self.floorText = floorText
+        self.onTap = onTap
     }
 
     var body: some View {
+        if let onTap {
+            card
+                .contentShape(.rect(cornerRadius: PKRadius.card))
+                .onTapGesture(perform: onTap)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityHint("지도 앱에서 걸어가는 길을 엽니다")
+        } else {
+            card
+        }
+    }
+
+    private var card: some View {
         map
             .frame(height: Self.height)
             .clipShape(.rect(cornerRadius: PKRadius.card))
@@ -35,8 +51,8 @@ struct ParkingMapCard: View {
                 RoundedRectangle(cornerRadius: PKRadius.card)
                     .strokeBorder(PKColor.divider, lineWidth: PKSize.hairline)
             }
-            // Inert on purpose. A live map inside a `ScrollView` steals the drag, and
-            // panning it has no product meaning — 길찾기 is what opens a real map.
+            // The map itself is inert: a live map inside a `ScrollView` steals the drag, and
+            // panning it has no product meaning. A tap on the card is `onTap`'s.
             .allowsHitTesting(false)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(accessibilityText)

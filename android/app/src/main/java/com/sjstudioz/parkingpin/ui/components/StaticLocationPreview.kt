@@ -219,6 +219,7 @@ fun LocationPreviewCard(
     zoneLabel: String?,
     caption: String,
     modifier: Modifier = Modifier,
+    onMapClick: (() -> Unit)? = null,
 ) {
     ParkingpinCard(modifier = modifier, contentPadding = MaterialTheme.spacing.medium) {
         ParkingLocationMap(
@@ -229,6 +230,7 @@ fun LocationPreviewCard(
             pinLabel = pinLabel,
             zoneLabel = zoneLabel,
             pinSize = 36.dp,
+            onClick = onMapClick,
         )
         Text(
             text = caption,

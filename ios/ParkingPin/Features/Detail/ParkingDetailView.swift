@@ -4,9 +4,10 @@ import UIKit
 
 /// One parking in full (`design-references/03-parking-detail.png`).
 ///
-/// Order follows the mock: map, summary, facts, the two secondary calls to action
-/// (`길찾기` · `사진 보기`), the photo panel, then `주차 종료`. docs/19 §3 fixes those
-/// three as the primary CTAs of this screen.
+/// Order follows the mock: map, summary, facts, `길찾기`, the photo panel, then `주차 종료`.
+/// The mock's `사진 보기` beside `길찾기` is dropped: the photo panel directly below already
+/// adds, opens and replaces the photo, and two controls for one thing read as a bug on the
+/// device (2026-10-01).
 ///
 /// Two things the mock shows that this cannot honestly reproduce:
 /// - Its map pin claims a spot. FR-008 forbids wording or imagery that asserts the exact
@@ -25,6 +26,8 @@ struct ParkingDetailView: View {
     @State private var isEditing = false
     @State private var isConfirmingDelete = false
     @State private var displayNow = Date()
+    /// The map apps `길찾기` is choosing between; non-empty while the chooser is up.
+    @State private var directionApps: [ParkingDirections.MapApp] = []
 
     @State private var photoPhase: ParkingPhotoPhase = .empty
     @State private var isChoosingPhotoSource = false
@@ -54,7 +57,11 @@ struct ParkingDetailView: View {
             if let session {
                 Group {
                     if let point = ParkingMapPoint(session) {
-                        ParkingMapCard(point: point, floorText: session.floor?.displayText)
+                        ParkingMapCard(
+                            point: point,
+                            floorText: session.floor?.displayText,
+                            onTap: { startDirections(to: point) }
+                        )
                     } else {
                         ParkingMapUnavailableCard()
                     }
@@ -122,6 +129,20 @@ struct ParkingDetailView: View {
             Button("취소", role: .cancel) {}
         } message: {
             Text("삭제한 기록은 되돌릴 수 없어요. 저장된 사진도 함께 삭제돼요.")
+        }
+        .confirmationDialog(
+            "길찾기 앱 선택",
+            isPresented: Binding(get: { !directionApps.isEmpty }, set: { if !$0 { directionApps = [] } }),
+            titleVisibility: .visible
+        ) {
+            ForEach(directionApps) { app in
+                Button(app.title) {
+                    if let session, let point = ParkingMapPoint(session) {
+                        ParkingDirections.open(point, in: app)
+                    }
+                }
+            }
+            Button("취소", role: .cancel) {}
         }
         .confirmationDialog("사진 추가", isPresented: $isChoosingPhotoSource, titleVisibility: .visible) {
             ForEach(ParkingPhotoSource.available) { source in
@@ -257,27 +278,21 @@ struct ParkingDetailView: View {
 
     /// The mock's pair: `길찾기` and `사진 보기`, side by side under the facts.
     @ViewBuilder
+    /// `길찾기` alone, full width. The photo has one home — the photo card below, which adds,
+    /// opens and replaces it — so this row no longer repeats it (device feedback 2026-10-01:
+    /// "사진이 아래에 있는데 사진보기 버튼은 왜 있어").
     private func secondaryActions(_ session: ParkingSession) -> some View {
         let point = ParkingMapPoint(session)
         VStack(spacing: PKSpacing.s) {
-            HStack(spacing: PKSpacing.m) {
-                Button {
-                    if let point {
-                        ParkingDirections.open(point)
-                    }
-                } label: {
-                    Label("길찾기", systemImage: "location.fill")
-                }
-                .buttonStyle(PKSoftButtonStyle())
-                .disabled(point == nil)
-                .opacity(point == nil ? 0.4 : 1)
-                .accessibilityHint("지도 앱에서 걸어가는 길을 엽니다")
-
-                Button(action: openOrAddPhoto) {
-                    Label(photoActionTitle, systemImage: "camera.fill")
-                }
-                .buttonStyle(PKSoftButtonStyle())
+            Button {
+                if let point { startDirections(to: point) }
+            } label: {
+                Label("길찾기", systemImage: "location.fill")
             }
+            .buttonStyle(PKSoftButtonStyle())
+            .disabled(point == nil)
+            .opacity(point == nil ? 0.4 : 1)
+            .accessibilityHint("지도 앱에서 걸어가는 길을 엽니다")
             if point == nil {
                 // Same reasoning as the home screen's floor-stepper hint: a dimmed button
                 // with no explanation reads as a bug.
@@ -286,13 +301,6 @@ struct ParkingDetailView: View {
                     .foregroundStyle(PKColor.textSecondary)
             }
         }
-    }
-
-    private var photoActionTitle: String {
-        if case .loaded = photoPhase {
-            return "사진 보기"
-        }
-        return "사진 추가"
     }
 
     @ViewBuilder
@@ -309,19 +317,28 @@ struct ParkingDetailView: View {
                 dismiss()
             }
         }
-        Button("기록 삭제", role: .destructive) { isConfirmingDelete = true }
-            .font(PKTypography.row)
-            .tint(PKColor.danger)
-            .frame(maxWidth: .infinity, minHeight: PKSize.minimumTouchTarget)
+        Button(role: .destructive) {
+            isConfirmingDelete = true
+        } label: {
+            // The frame inside the label, so the whole row is the button, not the glyphs.
+            Text("기록 삭제")
+                .font(PKTypography.row)
+                .frame(maxWidth: .infinity, minHeight: PKSize.minimumTouchTarget)
+                .contentShape(.rect)
+        }
+        .tint(PKColor.danger)
     }
 
     // ── Photo ───────────────────────────────────────────────────────────────
 
-    private func openOrAddPhoto() {
-        if case .loaded = photoPhase {
-            isViewingPhoto = true
+    /// `길찾기`, from the button or the map: straight to the one map app there is, or a
+    /// chooser when Kakao Map or Naver Map is installed beside Apple Maps.
+    private func startDirections(to point: ParkingMapPoint) {
+        let apps = ParkingDirections.MapApp.installed
+        if apps.count == 1, let only = apps.first {
+            ParkingDirections.open(point, in: only)
         } else {
-            beginAddingPhoto()
+            directionApps = apps
         }
     }
 

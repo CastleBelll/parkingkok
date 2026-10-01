@@ -3,6 +3,7 @@ package com.sjstudioz.parkingpin.ui.components
 import android.content.Context
 import android.content.pm.PackageManager
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
@@ -57,11 +58,18 @@ fun ParkingLocationMap(
     pinLabel: String? = null,
     zoneLabel: String? = null,
     pinSize: Dp = 28.dp,
+    /** What a tap on the map does; `null` keeps it inert (the home thumbnail opens detail itself). */
+    onClick: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val configured = remember(context) { MapsKey.isConfigured(context) }
     if (point == null || !configured || LocalInspectionMode.current) {
-        StaticLocationArtwork(modifier, pinLabel, zoneLabel, pinSize)
+        StaticLocationArtwork(
+            if (onClick != null) modifier.clickable(onClick = onClick) else modifier,
+            pinLabel,
+            zoneLabel,
+            pinSize,
+        )
         return
     }
 
@@ -85,8 +93,8 @@ fun ParkingLocationMap(
             cameraPositionState = camera,
             uiSettings = LITE_UI_SETTINGS,
             // Lite mode opens Google Maps itself on a tap unless a listener takes it. The
-            // app's own `주차 위치 보기` is the one way out to a map, so this swallows it.
-            onMapClick = {},
+            // caller's action takes it instead (detail: the same as 길찾기), or nothing.
+            onMapClick = { onClick?.invoke() },
         )
         MapPinOverlay(pinLabel, zoneLabel, pinSize, tipAtCenter = true)
     }

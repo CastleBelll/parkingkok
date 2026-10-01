@@ -137,7 +137,8 @@ fun ParkingDetailScreen(
             return@ParkingpinScreen
         }
 
-        item("map") { LocationBlock(record) }
+        // A tap on the map does what 길찾기 does: the map looks like the way to a map.
+        item("map") { LocationBlock(record, onMapClick = onDirections.takeIf { state.canOpenMap }) }
         item("summary") { SummaryCard(record = record, nowMillis = state.nowMillis) }
         // docs/02 §6a. Directly under the summary it is offering to fill, so the map and
         // the text still lead the screen (docs/10 §11a).
@@ -153,13 +154,7 @@ fun ParkingDetailScreen(
         }
 
         item("actions") {
-            PrimaryActions(
-                canOpenMap = state.canOpenMap,
-                hasPhoto = state.hasPhoto,
-                photoBusy = state.photoBusy,
-                onDirections = onDirections,
-                onPhoto = { if (state.hasPhoto) viewingPhoto = true else pickingPhoto = true },
-            )
+            DirectionsAction(canOpenMap = state.canOpenMap, onDirections = onDirections)
         }
 
         val notice = state.notice
@@ -167,14 +162,17 @@ fun ParkingDetailScreen(
             item("notice") { NoticeCard(notice = notice, onDismiss = onNoticeShown) }
         }
 
-        if (state.hasPhoto) {
-            item("photo") {
-                PhotoCard(
-                    photo = state.photo,
-                    onOpen = { viewingPhoto = true },
-                    onReplace = { pickingPhoto = true },
-                )
-            }
+        // The photo's one home (device feedback 2026-10-01: a 사진 보기 button beside 길찾기
+        // repeated the card below it). Shown with or without a photo, as on iOS, so adding
+        // one has a place too.
+        item("photo") {
+            PhotoCard(
+                hasPhoto = state.hasPhoto,
+                photo = state.photo,
+                busy = state.photoBusy,
+                onOpen = { viewingPhoto = true },
+                onPick = { pickingPhoto = true },
+            )
         }
 
         if (record.isActive) {
@@ -237,7 +235,7 @@ fun ParkingDetailScreen(
  * for it would invent a place.
  */
 @Composable
-private fun LocationBlock(record: ParkingRecord) {
+private fun LocationBlock(record: ParkingRecord, onMapClick: (() -> Unit)?) {
     val location = record.location
     if (location == null) {
         ParkingpinCard {
@@ -267,6 +265,7 @@ private fun LocationBlock(record: ParkingRecord) {
         } else {
             stringResource(R.string.detail_map_caption)
         },
+        onMapClick = onMapClick,
     )
 }
 
@@ -278,7 +277,7 @@ private fun SummaryCard(record: ParkingRecord, nowMillis: Long) {
     ParkingpinCard(contentPadding = 0.dp) {
         Column(Modifier.padding(MaterialTheme.spacing.card)) {
             Text(
-                text = stringResource(R.string.home_active_title),
+                text = stringResource(if (record.isActive) R.string.home_active_title else R.string.detail_past_title),
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.semantics { heading() },
@@ -386,34 +385,17 @@ private fun Facts(record: ParkingRecord, nowMillis: Long) {
  * `길찾기` is disabled, not hidden, when the record has no coordinate: the mockup's shape
  * survives, and the caption below says why rather than leaving the grey to be guessed at.
  */
+/** `길찾기`, full width — the screen's one secondary action. */
 @Composable
-private fun PrimaryActions(
-    canOpenMap: Boolean,
-    hasPhoto: Boolean,
-    photoBusy: Boolean,
-    onDirections: () -> Unit,
-    onPhoto: () -> Unit,
-) {
+private fun DirectionsAction(canOpenMap: Boolean, onDirections: () -> Unit) {
     Column {
-        Row(horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.medium)) {
-            ActionButton(
-                iconRes = R.drawable.ic_place,
-                label = stringResource(R.string.detail_directions),
-                enabled = canOpenMap,
-                onClick = onDirections,
-                modifier = Modifier.weight(1f),
-            )
-            ActionButton(
-                iconRes = R.drawable.ic_photo,
-                label = stringResource(
-                    if (hasPhoto) R.string.detail_photo_view else R.string.detail_photo_add,
-                ),
-                enabled = !photoBusy,
-                busy = photoBusy,
-                onClick = onPhoto,
-                modifier = Modifier.weight(1f),
-            )
-        }
+        ActionButton(
+            iconRes = R.drawable.ic_place,
+            label = stringResource(R.string.detail_directions),
+            enabled = canOpenMap,
+            onClick = onDirections,
+            modifier = Modifier.fillMaxWidth(),
+        )
         if (!canOpenMap) {
             Text(
                 text = stringResource(R.string.detail_directions_unavailable),
@@ -461,9 +443,11 @@ private fun ActionButton(
 /** `주차 사진` — one photo per record (FR-007), with when it was stored. */
 @Composable
 private fun PhotoCard(
+    hasPhoto: Boolean,
     photo: ParkingPhotoImage?,
+    busy: Boolean,
     onOpen: () -> Unit,
-    onReplace: () -> Unit,
+    onPick: () -> Unit,
 ) {
     ParkingpinCard(contentPadding = MaterialTheme.spacing.medium) {
         Row(
@@ -496,7 +480,14 @@ private fun PhotoCard(
             }
         }
 
-        if (photo == null) {
+        if (!hasPhoto) {
+            Text(
+                text = stringResource(R.string.detail_photo_empty),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(MaterialTheme.spacing.small),
+            )
+        } else if (photo == null) {
             // The row still says there is a photo; the file behind it could not be read.
             Text(
                 text = stringResource(R.string.detail_photo_missing),
@@ -518,10 +509,11 @@ private fun PhotoCard(
         }
 
         TextButton(
-            onClick = onReplace,
+            onClick = onPick,
+            enabled = !busy,
             modifier = Modifier.padding(top = MaterialTheme.spacing.tiny),
         ) {
-            Text(stringResource(R.string.detail_photo_replace))
+            Text(stringResource(if (hasPhoto) R.string.detail_photo_replace else R.string.detail_photo_add))
         }
     }
 }
