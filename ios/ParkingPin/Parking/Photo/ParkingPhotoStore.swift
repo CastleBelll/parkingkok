@@ -30,8 +30,13 @@ protocol ParkingPhotoStoring: Sendable {
     func load(_ relativePath: String) async throws -> ParkingPhoto
     func remove(_ relativePath: String) async throws
     /// docs/04 §10 "remove orphan on record delete" / "periodic orphan cleanup": drops
-    /// every stored file that no record still points at.
+    /// every stored file that no record still points at — except one written so recently
+    /// that its record may still be on the way.
     func removeOrphans(keeping keptPaths: Set<String>) async throws
+    /// docs/02 §15 전체 삭제: every photo, however new. Not `removeOrphans(keeping: [])`,
+    /// whose grace period would leave the last ten minutes' photos behind a delete that
+    /// promised all of them.
+    func removeAll() async throws
 }
 
 /// FR-007's storage, at `Application Support/ParkingPhotos/{recordId}.heic`
@@ -57,6 +62,8 @@ struct FileSystemParkingPhotoStore: ParkingPhotoStoring {
     static let stagingDirectoryName = ".staging"
 
     let root: URL
+    /// The sweep's notion of now, injectable so the grace period is testable.
+    var now: @Sendable () -> Date = { Date() }
 
     /// The directory the running app uses.
     static func applicationSupport() throws -> FileSystemParkingPhotoStore {
@@ -126,27 +133,52 @@ struct FileSystemParkingPhotoStore: ParkingPhotoStoring {
         }
     }
 
+    /// How long a file is left alone however unreferenced it looks.
+    ///
+    /// The sweep reads which paths the records keep, then lists the directory — and a photo
+    /// being attached right then is a file whose row is not written yet. Swept, it was the
+    /// photo the user had just taken (audit 2026-10-01 L5). An orphan that is truly one
+    /// is still there at the next launch.
+    static let orphanGracePeriod: TimeInterval = 10 * 60
+
     func removeOrphans(keeping keptPaths: Set<String>) async throws {
         let manager = FileManager.default
         guard let entries = try? manager.contentsOfDirectory(
             at: root,
-            includingPropertiesForKeys: nil,
+            includingPropertiesForKeys: [.contentModificationDateKey],
             options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants]
         ) else {
             // No directory yet is the ordinary state before the first photo, not a failure.
             return
         }
-        for entry in entries where !keptPaths.contains(entry.lastPathComponent) {
+        let cutoff = now().addingTimeInterval(-Self.orphanGracePeriod)
+        for entry in entries where !keptPaths.contains(entry.lastPathComponent) && Self.isOlder(entry, than: cutoff) {
             try? manager.removeItem(at: entry)
         }
         // Staging is hidden, so the sweep above skipped it. A file left there means a
-        // move that died between write and publish; nothing will ever claim it.
+        // move that died between write and publish; nothing will ever claim it — unless it
+        // is a save in progress, which the same grace period protects.
         let staging = root.appending(path: Self.stagingDirectoryName, directoryHint: .isDirectory)
-        if let stale = try? manager.contentsOfDirectory(at: staging, includingPropertiesForKeys: nil) {
-            for entry in stale {
+        if let stale = try? manager.contentsOfDirectory(
+            at: staging,
+            includingPropertiesForKeys: [.contentModificationDateKey]
+        ) {
+            for entry in stale where Self.isOlder(entry, than: cutoff) {
                 try? manager.removeItem(at: entry)
             }
         }
+    }
+
+    func removeAll() async throws {
+        let manager = FileManager.default
+        guard manager.fileExists(atPath: root.path(percentEncoded: false)) else { return }
+        try manager.removeItem(at: root)
+    }
+
+    /// A file whose date cannot be read is treated as old: the sweep's job is to collect.
+    private static func isOlder(_ entry: URL, than cutoff: Date) -> Bool {
+        let modified = try? entry.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        return (modified ?? .distantPast) < cutoff
     }
 
     /// Resolves a stored path inside `root`, and only inside it.
@@ -206,4 +238,6 @@ struct UnavailableParkingPhotoStore: ParkingPhotoStoring {
     func remove(_: String) async throws {}
 
     func removeOrphans(keeping _: Set<String>) async throws {}
+
+    func removeAll() async throws {}
 }

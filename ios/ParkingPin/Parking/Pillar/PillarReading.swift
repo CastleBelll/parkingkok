@@ -390,8 +390,12 @@ enum PillarFloorSuggestion {
         heights: [String: Double] = [:]
     ) -> (String?, String?) {
         let words = lines.flatMap { $0.split(whereSeparator: \.isWhitespace) }.map(String.init)
+        // Without the floor badge: `B1` has a pillar label's shape, and counting it made the
+        // wall look labelled — dropping the lone `A` beside it as a zone and reading bay `85`
+        // as a misread `B5` (audit 2026-10-01 L12, both platforms).
         let labelShapes = Set(
-            words.compactMap { $0.wholeMatch(of: pillarLabelPattern) != nil ? shape(of: $0) : nil }
+            words.filter { !used.contains($0) }
+                .compactMap { $0.wholeMatch(of: pillarLabelPattern) != nil ? shape(of: $0) : nil }
         )
         var bays: [(digits: String, height: Double)] = []
         for word in words where !used.contains(word) && !readsAsAPillarLabel(word, shapes: labelShapes) {

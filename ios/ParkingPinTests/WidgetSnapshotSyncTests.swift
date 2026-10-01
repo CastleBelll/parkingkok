@@ -21,7 +21,7 @@ struct WidgetSnapshotSyncTests {
         let directory: TemporaryWidgetDirectory
     }
 
-    private func makeHarness() throws -> Harness {
+    private func makeHarness(photoStore: any ParkingPhotoStoring = UnavailableParkingPhotoStore()) throws -> Harness {
         let directory = TemporaryWidgetDirectory()
         let snapshots = FileActiveParkingSnapshotStore(directory: directory.url)
         let clock = MutableDateProvider(Self.start)
@@ -30,7 +30,7 @@ struct WidgetSnapshotSyncTests {
             clock: clock
         )
         return Harness(
-            model: ParkingModel(store: store, clock: clock, snapshots: snapshots),
+            model: ParkingModel(store: store, photoStore: photoStore, clock: clock, snapshots: snapshots),
             snapshots: snapshots,
             store: store,
             clock: clock,
@@ -177,6 +177,26 @@ struct WidgetSnapshotSyncTests {
         // Assert — in memory, and in the canonical store behind it.
         #expect(harness.model.activeSession?.floor?.displayText == "B2")
         #expect(try harness.store.activeSession()?.floor?.displayText == "B2")
+    }
+
+    /// Audit 2026-10-01 L2: a write from the app's cached record published over a floor
+    /// the widget had stepped while the app was in the background.
+    @Test("Attaching a photo keeps a floor the widget stepped in the meantime")
+    func photoAttachKeepsWidgetStep() async throws {
+        // Arrange
+        let harness = try makeHarness(photoStore: SpyParkingPhotoStore())
+        await harness.model.saveManualParking(draft())
+        let sessionId = try #require(harness.model.activeSession?.id)
+        harness.clock.advance(by: 60)
+        harness.snapshots.step(by: 1, expecting: sessionId, at: harness.clock.now)
+        harness.clock.advance(by: 60)
+
+        // Act — no activation in between: the photo is attached from the cached record.
+        #expect(try await harness.model.attachPhoto(TestImage.jpegData(width: 40, height: 30), to: sessionId))
+
+        // Assert
+        #expect(try harness.store.activeSession()?.floor?.displayText == "B2")
+        #expect(harness.snapshots.read()?.floorValue?.displayText == "B2")
     }
 
     @Test("Two widget taps are adopted as two floors, not one")

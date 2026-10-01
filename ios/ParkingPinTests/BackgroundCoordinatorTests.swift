@@ -245,8 +245,8 @@ struct BackgroundCoordinatorTests {
         // Arrange — an idle checkpoint last touched twenty minutes ago.
         let checkpoint = DetectionCheckpoint(
             state: .idle,
-            stateEnteredAt: TestTime.offset(-1_200),
-            lastLocationAt: TestTime.offset(-1_200),
+            stateEnteredAt: TestTime.offset(-1200),
+            lastLocationAt: TestTime.offset(-1200),
             revision: 2
         )
         let motion = StubMotionHistoryProvider()
@@ -382,5 +382,88 @@ struct BackgroundCoordinatorTests {
         // process death included.
         #expect(store.savedCheckpoints.last?.state == .parked)
         #expect(store.savedCheckpoints.last?.stateEnteredAt == savedAt)
+    }
+
+    /// Audit 2026-10-01 M3: the watermark that stops a replay was memory-only, so a relaunch
+    /// within five minutes of parking replayed the drive that had just ended as a new one.
+    @Test("A relaunch does not replay the drive that ended in the restored parking")
+    func relaunchDoesNotReplayTheDriveIntoTheParking() async {
+        // Arrange — parked 120 s ago; the last automotive sample is from just before that,
+        // with no walk recorded after it (the phone stayed in a pocket, or Core Motion
+        // missed it).
+        let checkpoint = DetectionCheckpoint(
+            state: .parked,
+            stateEnteredAt: TestTime.offset(-120),
+            lastAutomotiveAt: TestTime.offset(-150),
+            revision: 7
+        )
+        let store = StubCheckpointStore(loadResult: .restored(checkpoint))
+        let motion = StubMotionHistoryProvider(result: .success([
+            MotionSample(timestamp: TestTime.offset(-150), automotive: true, confidence: .high)
+        ]))
+        let coordinator = makeCoordinator(store: store, motion: motion)
+
+        // Act
+        await coordinator.rehydrate(launchReason: .userInitiated)
+        let snapshot = await coordinator.currentSnapshot()
+
+        // Assert — §11 opens a capture on getting back in; the drive *into* this parking
+        // is not getting back in, and must not cost a GPS session.
+        #expect(snapshot.captureRequestedAt == nil)
+        #expect(store.savedCheckpoints.last.map(\.state) ?? .parked == .parked)
+    }
+
+    @Test("A drive that starts after the restored parking is still seen")
+    func relaunchStillSeesANewDrive() async {
+        // Arrange — the same parking, and a fresh automotive sample after it.
+        let checkpoint = DetectionCheckpoint(
+            state: .parked,
+            stateEnteredAt: TestTime.offset(-600),
+            lastAutomotiveAt: TestTime.offset(-650),
+            revision: 7
+        )
+        let store = StubCheckpointStore(loadResult: .restored(checkpoint))
+        let motion = StubMotionHistoryProvider(result: .success([
+            MotionSample(timestamp: TestTime.offset(-30), automotive: true, confidence: .high)
+        ]))
+        let coordinator = makeCoordinator(store: store, motion: motion)
+
+        // Act
+        await coordinator.rehydrate(launchReason: .userInitiated)
+        let snapshot = await coordinator.currentSnapshot()
+
+        // Assert — §11's getting-back-in capture opens.
+        #expect(snapshot.captureRequestedAt != nil)
+    }
+
+    @Test("A relaunch onto an unanswered candidate does not reopen the drive that produced it")
+    func relaunchDoesNotReplayTheDriveBehindACandidate() async {
+        // Arrange — the audit's case: a candidate 120 s old, the app relaunched from its
+        // notification, and the automotive sample from just before the stop replayed.
+        let candidate = TestCandidate.make(detectedAt: TestTime.offset(-120))
+        let checkpoint = DetectionCheckpoint(
+            state: .candidatePending,
+            stateEnteredAt: TestTime.offset(-120),
+            lastAutomotiveAt: TestTime.offset(-150),
+            candidateId: candidate.id,
+            revision: 7
+        )
+        let store = StubCheckpointStore(loadResult: .restored(checkpoint))
+        let motion = StubMotionHistoryProvider(result: .success([
+            MotionSample(timestamp: TestTime.offset(-150), automotive: true, confidence: .high)
+        ]))
+        let coordinator = BackgroundCoordinator(
+            checkpointStore: store,
+            motionHistory: motion,
+            dateProvider: FixedDateProvider(TestTime.offset(0)),
+            candidateStore: StubParkingCandidateStore(current: candidate)
+        )
+
+        // Act
+        await coordinator.rehydrate(launchReason: .userInitiated)
+
+        // Assert — the question is still the one being asked.
+        #expect(!store.savedCheckpoints.map(\.state).contains(.drivingCandidate))
+        #expect(store.savedCheckpoints.last.map(\.state) ?? .candidatePending == .candidatePending)
     }
 }

@@ -313,7 +313,22 @@ struct ManualParkingSheet: View {
             editing.zone = draft.zone
             editing.spot = draft.spot
             editing.memo = draft.memo
-            finish(succeeded: model.update(editing))
+            guard model.update(editing) else {
+                finish(succeeded: false)
+                return
+            }
+            // A pillar photo opened this editor when a parking was already active by the
+            // time it was read: it belongs to that parking, not to nowhere (audit
+            // 2026-10-01 L3). The edit is saved either way; the photo is the extra.
+            if let pillarPhoto {
+                let id = editing.id
+                Task {
+                    _ = await model.attachPhoto(pillarPhoto, to: id)
+                    finish(succeeded: true)
+                }
+                return
+            }
+            finish(succeeded: true)
             return
         }
         // Creating needs the location lookup, which is async and best-effort.

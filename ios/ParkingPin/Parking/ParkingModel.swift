@@ -139,6 +139,16 @@ final class ParkingModel {
         await locationProvider.storedLocation()
     }
 
+    /// [session(id:)] after taking in a floor the widget stepped while the app was away.
+    ///
+    /// For the writes that start from the cached record without the user looking at it — a
+    /// fix or a photo landing seconds later. Read straight from the cache, they published
+    /// the app's old floor over the widget's newer one (audit 2026-10-01 L2).
+    private func currentSession(id: UUID) -> ParkingSession? {
+        adoptWidgetFloorChange()
+        return session(id: id)
+    }
+
     /// Re-reads everything. Cheap enough to run on every appearance; the store is local.
     ///
     /// Also the app's side of the widget contract, and the reason `RootView` calls it on
@@ -311,7 +321,7 @@ final class ParkingModel {
                 #endif
                 return
             }
-            guard let self, var session = session(id: sessionID) else {
+            guard let self, var session = currentSession(id: sessionID) else {
                 #if PK_DEV
                     SaveLocationDiagnostics.note("attach", "sessionGone")
                 #endif
@@ -548,7 +558,7 @@ final class ParkingModel {
         }) else {
             return false
         }
-        try? await photoStore.removeOrphans(keeping: [])
+        try? await photoStore.removeAll()
         return true
     }
 
@@ -580,7 +590,7 @@ final class ParkingModel {
         }
         // Deleted while the file was being written: the file is now an orphan, which
         // `removeOrphanPhotos` sweeps.
-        guard var session = session(id: sessionID) else {
+        guard var session = currentSession(id: sessionID) else {
             failure = Self.message(for: ParkingStoreError.notFound(sessionID))
             return false
         }

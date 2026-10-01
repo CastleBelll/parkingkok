@@ -212,8 +212,8 @@ struct ParkingPhotoStoreTests {
         let kept = try await store.save(source, for: UUID())
         let orphan = try await store.save(source, for: UUID())
 
-        // Act
-        try await store.removeOrphans(keeping: [kept])
+        // Act — at the next launch, past the grace period.
+        try await store.later().removeOrphans(keeping: [kept])
 
         // Assert
         _ = try await store.load(kept)
@@ -237,10 +237,25 @@ struct ParkingPhotoStoreTests {
         try Data("half a photo".utf8).write(to: stale)
 
         // Act
-        try await store.removeOrphans(keeping: [kept])
+        try await store.later().removeOrphans(keeping: [kept])
 
         // Assert
         #expect(!FileManager.default.fileExists(atPath: stale.path(percentEncoded: false)))
+    }
+
+    /// Audit 2026-10-01 L5: the sweep listed a photo whose row was still being written.
+    @Test("A photo written moments ago is not swept, though nothing references it yet")
+    func sweepSparesAPhotoBeingAttached() async throws {
+        // Arrange
+        let directory = try TemporaryDirectory()
+        let store = directory.makePhotoStore()
+        let justWritten = try await store.save(TestImage.jpegData(width: 800, height: 600), for: UUID())
+
+        // Act — the row naming it has not been written yet.
+        try await store.removeOrphans(keeping: [])
+
+        // Assert
+        _ = try await store.load(justWritten)
     }
 
     @Test("Sweeping a directory that does not exist yet is not an error")

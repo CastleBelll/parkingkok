@@ -164,6 +164,10 @@ final class SpyParkingPhotoStore: ParkingPhotoStoring, @unchecked Sendable {
             saved = saved.filter { keptPaths.contains(FileSystemParkingPhotoStore.relativePath(for: $0.key)) }
         }
     }
+
+    func removeAll() async throws {
+        lock.withLock { saved = [:] }
+    }
 }
 
 /// A photo store whose `save` waits until the test lets it finish.
@@ -223,4 +227,15 @@ final class GatedParkingPhotoStore: ParkingPhotoStoring, @unchecked Sendable {
     func remove(_ relativePath: String) async throws {}
 
     func removeOrphans(keeping keptPaths: Set<String>) async throws {}
+
+    func removeAll() async throws {}
+}
+
+extension FileSystemParkingPhotoStore {
+    /// The same store, sweeping as if the grace period had passed.
+    func later() -> FileSystemParkingPhotoStore {
+        var store = self
+        store.now = { Date().addingTimeInterval(FileSystemParkingPhotoStore.orphanGracePeriod + 60) }
+        return store
+    }
 }
