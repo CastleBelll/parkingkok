@@ -77,6 +77,9 @@ detector that as of the same day had never produced a candidate on a real drive.
 location. It answers *tell them where I parked* rather than *we all see where the car is*,
 and it needs none of the above.
 
+**Built 2026-10-01** as `위치 보내기` on the detail screen of an active parking, both
+platforms. What it sends and what it never sends: docs/06 §1a.
+
 ## 6. Functional Requirements
 
 ### FR-001 Manual Parking

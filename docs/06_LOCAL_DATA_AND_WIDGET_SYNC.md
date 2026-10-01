@@ -13,6 +13,17 @@ Backend-safe:
 - reward ledger
 - feature flags
 
+### 1a. The user may send their own parking (DECIDED 2026-10-01)
+"Local-only" means the app never puts these fields on a server, in a log or in analytics.
+It does not forbid the user handing their own parking to someone. `위치 보내기` (docs/01 §5a)
+puts the **place** (floor · zone · spot), the **start time** and a **map link** built from the
+coordinate into the OS share sheet, on the user's tap, on an active parking only. The app
+does not know where it went and keeps no copy.
+
+The **memo** and the **photo** are never included: the memo is a note to self, and a photo
+carries EXIF GPS. One message format on both platforms (`ParkingShareText`), pinned by the
+same rows in each suite.
+
 ## 2. Common Record Schema
 Logical fields must match across platforms:
 ```text

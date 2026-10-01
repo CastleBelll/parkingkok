@@ -19,6 +19,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -58,14 +59,14 @@ import com.sjstudioz.parkingpin.ui.UiNotice
 import com.sjstudioz.parkingpin.ui.components.DetailHeader
 import com.sjstudioz.parkingpin.ui.components.IconChip
 import com.sjstudioz.parkingpin.ui.components.LocationPreviewCard
-import com.sjstudioz.parkingpin.ui.components.toMapPoint
 import com.sjstudioz.parkingpin.ui.components.ParkingpinCard
 import com.sjstudioz.parkingpin.ui.components.ParkingpinScreen
 import com.sjstudioz.parkingpin.ui.components.PrimaryCtaButton
-import com.sjstudioz.parkingpin.ui.motion.pressScale
+import com.sjstudioz.parkingpin.ui.components.toMapPoint
 import com.sjstudioz.parkingpin.ui.format.dayText
 import com.sjstudioz.parkingpin.ui.format.elapsedText
 import com.sjstudioz.parkingpin.ui.format.timeOfDayText
+import com.sjstudioz.parkingpin.ui.motion.pressScale
 import com.sjstudioz.parkingpin.ui.photo.ParkingPhotoPicker
 import com.sjstudioz.parkingpin.ui.photo.PillarSuggestionCard
 
@@ -81,9 +82,10 @@ import com.sjstudioz.parkingpin.ui.photo.PillarSuggestionCard
  * claim the app can make honestly when the car is three floors underground
  * (docs/04_IOS_IMPLEMENTATION.md §9).
  *
- * The mockup's share affordance in the header is absent. Sharing a parking would mean
- * handing a coordinate, a floor and a photo to another app, and docs/06 §1 classifies all
- * three as local-only.
+ * The mockup's share affordance in the header is `위치 보내기` (docs/01 §5a, DECIDED
+ * 2026-10-01): the user hands the place, the time and a map link to an app of their choice.
+ * The memo and the photo stay behind (docs/06 §1a), and only an active parking offers it —
+ * where the car was last week is nobody's errand.
  */
 @Composable
 fun ParkingDetailScreen(
@@ -99,6 +101,7 @@ fun ParkingDetailScreen(
     onDismissPillarSuggestion: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    onShare: () -> Unit = {},
 ) {
     var confirmingDelete by remember { mutableStateOf(false) }
     var pickingPhoto by remember { mutableStateOf(false) }
@@ -106,7 +109,17 @@ fun ParkingDetailScreen(
 
     ParkingpinScreen(
         modifier = modifier,
-        header = { DetailHeader(title = stringResource(R.string.detail_title), onBack = onBack) },
+        header = {
+            DetailHeader(
+                title = stringResource(R.string.detail_title),
+                onBack = onBack,
+                trailing = if (state.record?.isActive == true) {
+                    { ShareButton(onShare) }
+                } else {
+                    null
+                },
+            )
+        },
     ) {
         if (!state.loaded) return@ParkingpinScreen
 
@@ -666,6 +679,18 @@ private fun FactDivider() {
 }
 
 private const val HERO_MAX_CHARS = 4
+
+/** A header icon, secondary to the screen's one primary button (CLAUDE.md design harness). */
+@Composable
+private fun ShareButton(onShare: () -> Unit) {
+    IconButton(onClick = onShare, modifier = Modifier.size(MaterialTheme.spacing.touchTarget)) {
+        Icon(
+            painter = painterResource(R.drawable.ic_share),
+            contentDescription = stringResource(R.string.detail_share),
+            tint = MaterialTheme.colorScheme.onBackground,
+        )
+    }
+}
 
 private val PHOTO_CARD_HEIGHT = 180.dp
 
