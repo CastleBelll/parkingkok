@@ -105,19 +105,42 @@ struct VisionPillarTextReader: PillarTextReading {
     }
 
     /// Races the read against §6a's deadline, returning `nil` if the deadline wins.
+    ///
+    /// Unstructured on purpose. A task group waits for every child before it returns, so if
+    /// Vision does not honour cancellation the "timeout" only discarded a result the user had
+    /// already waited the full recognition for (audit 2026-10-01). Here the deadline answers
+    /// at the deadline; a recognition still running finishes in the background and is dropped.
     private func withTimeout(
         _ duration: Duration,
         _ work: @escaping @Sendable () async -> [PillarLine]
     ) async -> [PillarLine]? {
-        await withTaskGroup(of: [PillarLine]?.self) { group in
-            group.addTask { await work() }
-            group.addTask {
+        let gate = FirstAnswer<[PillarLine]?>()
+        return await withCheckedContinuation { continuation in
+            gate.waiting(continuation)
+            let worker = Task { gate.answer(await work()) }
+            Task {
                 try? await Task.sleep(for: duration)
-                return nil
+                worker.cancel()
+                gate.answer(nil)
             }
-            let first = await group.next() ?? nil
-            group.cancelAll()
-            return first
         }
+    }
+}
+
+/// Resumes a continuation with whichever answer arrives first, exactly once.
+private final class FirstAnswer<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Value, Never>?
+
+    func waiting(_ continuation: CheckedContinuation<Value, Never>) {
+        lock.withLock { self.continuation = continuation }
+    }
+
+    func answer(_ value: Value) {
+        let pending: CheckedContinuation<Value, Never>? = lock.withLock {
+            defer { continuation = nil }
+            return continuation
+        }
+        pending?.resume(returning: value)
     }
 }

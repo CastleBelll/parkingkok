@@ -769,4 +769,17 @@ struct PillarPhotoCrossReaderFixtureTests {
 
         #expect(reading == PillarReading(floorText: "B1"))
     }
+
+    /// Audit 2026-10-01: the floor was the first plausible line Vision returned.
+    @Test("The largest painted plausible floor wins, whatever order Vision returns")
+    func largestPlausibleFloorWins() {
+        let heights = ["B5": 0.03, "B2": 0.12]
+        #expect(PillarFloorSuggestion.floorText(fromLines: ["B5", "B2"], heights: heights) == "B2")
+        #expect(PillarFloorSuggestion.floorText(fromLines: ["B2", "B5"], heights: heights) == "B2")
+    }
+
+    @Test("With no sizes the first plausible floor still wins")
+    func firstWinsWithoutSizes() {
+        #expect(PillarFloorSuggestion.floorText(fromLines: ["B5", "B2"]) == "B5")
+    }
 }

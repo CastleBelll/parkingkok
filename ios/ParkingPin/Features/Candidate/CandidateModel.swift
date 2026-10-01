@@ -159,6 +159,10 @@ final class CandidateModel {
         guard let candidate = self.candidate(id: candidate.id) else {
             return false
         }
+        // A process woken only by the notification's 층 입력 has never read the store: with
+        // no active parking or pending departure known, a save beside an open parking threw
+        // `activeSessionExists` from the lock screen (audit 2026-10-01).
+        parking.refresh()
         guard let recordId = parking.saveDetectedParking(from: candidate, draft: draft) else {
             return false
         }

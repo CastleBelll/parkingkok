@@ -133,6 +133,9 @@ struct RehydrationSnapshot: Sendable, Equatable {
 /// Departure (`PARKED → DEPARTURE_CANDIDATE`, §11) is not implemented yet on either side.
 actor BackgroundCoordinator {
     private let checkpointStore: any DetectionCheckpointStoring
+    /// Set by an `upgradeCandidate` the store refused, so the notification the engine
+    /// paired with it is dropped too. Reset by that notification, or by the next upgrade.
+    private var skipsUpgradeNotification = false
     private let motionHistory: any MotionHistoryProviding
     private let locationCapture: (any BoundedLocationCapturing)?
     private let dateProvider: any DateProviding
@@ -304,6 +307,12 @@ actor BackgroundCoordinator {
         }
 
         snapshot.significantChangeCount += 1
+        // The motion replay is anchored on what the checkpoint held *before* this wake.
+        // Read after the note below, it was this sample's own time, and the replay window
+        // shrank to the seconds since — losing the drive's automotive evidence and the walk
+        // that ended it (audit 2026-10-01). `rehydrate` anchors on the restored one for the
+        // same reason.
+        let replayAnchor = snapshot.currentCheckpoint?.latestTimestamp
         // The trace records what arrived either way: it describes what the device saw,
         // and its own watermark decides what to keep.
         recordTrace { $0.record(qualitySample: sample) }
@@ -324,7 +333,7 @@ actor BackgroundCoordinator {
         snapshot.lastLocationAccuracy = sample.horizontalAccuracy
         await apply(effects, now: now)
 
-        await reconstructMotionHistory(now: now, anchor: snapshot.currentCheckpoint?.latestTimestamp)
+        await reconstructMotionHistory(now: now, anchor: replayAnchor)
         guard isSmartDetectionEnabled else { return }
         await evaluateMotionEvidence(now: now)
     }
@@ -342,7 +351,7 @@ actor BackgroundCoordinator {
     /// the window to zero right after a seed, `samples(in:)` would return early without
     /// touching Core Motion, and the prompt would never appear.
     func requestMotionHistoryAccess() async {
-        await reconstructMotionHistory(now: dateProvider.now, anchor: nil)
+        await reconstructMotionHistory(now: dateProvider.now, anchor: nil, mayPrompt: true)
     }
 
     // MARK: - Bounded driving session
@@ -653,6 +662,8 @@ actor BackgroundCoordinator {
     // MARK: - Performing the effects (docs/05 §15)
 
     private func apply(_ effects: [DetectionEffect], now: Date) async {
+        // The upgrade/notification pairing never spans two batches.
+        skipsUpgradeNotification = false
         for effect in effects {
             await perform(effect, now: now)
         }
@@ -691,6 +702,14 @@ actor BackgroundCoordinator {
         case let .upgradeCandidate(candidate):
             // Same id, re-scored: the store takes the new evidence. Not `saveCandidate` —
             // that counts and reports a creation, and this parking was already reported.
+            //
+            // Only while the stored candidate is still this one: the user may have answered
+            // it a moment ago, and the engine hears that after the store does. Rewriting it
+            // then brought an answered prompt back for 45 minutes (audit 2026-10-01).
+            guard candidateStore?.load()?.id == candidate.id else {
+                skipsUpgradeNotification = true
+                break
+            }
             do {
                 try candidateStore?.save(candidate)
                 snapshot.candidateStoreFailure = nil
@@ -704,6 +723,11 @@ actor BackgroundCoordinator {
             )
 
         case let .issueCandidateNotification(candidate):
+            // The notification for an upgrade the store refused (above) is not posted either.
+            if skipsUpgradeNotification {
+                skipsUpgradeNotification = false
+                break
+            }
             await candidateNotifier?.post(candidate)
 
         case let .withdrawCandidate(id):
@@ -828,7 +852,15 @@ actor BackgroundCoordinator {
 
     // MARK: - Shared helpers
 
-    private func reconstructMotionHistory(now: Date, anchor: Date?) async {
+    /// `mayPrompt`: Core Motion's first query *is* its permission prompt. Only the opt-in's
+    /// ladder may raise it; a launch or a wake that queried an unasked permission put the
+    /// Motion & Fitness prompt on screen before 자동 기록 켜기 had been answered (audit
+    /// 2026-10-01), and a "no" there is final until Settings.app.
+    private func reconstructMotionHistory(now: Date, anchor: Date?, mayPrompt: Bool = false) async {
+        if !mayPrompt, !isSmartDetectionEnabled || motionHistory.authorization == .notDetermined {
+            snapshot.motionSamples = []
+            return
+        }
         let window = MotionHistoryWindowPolicy.window(now: now, checkpointDate: anchor)
         snapshot.motionWindow = window
 

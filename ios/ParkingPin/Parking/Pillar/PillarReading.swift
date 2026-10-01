@@ -165,7 +165,18 @@ enum PillarFloorSuggestion {
     /// What separates them is not position but size — of the number, not of the text. See
     /// [isPlausibleFloor].
     static func floorText(fromLines lines: [String], heights: [String: Double] = [:]) -> String? {
-        lines.lazy.compactMap(candidate(in:)).first ?? badge(in: lines, heights: heights)
+        // The largest painted plausible floor, the first one on a tie (or with no sizes at
+        // all). It used to be simply the first that parsed — exactly the order this comment
+        // says is no signal; on a B2 garage with B1–B9 bay labels Vision returning `B5`
+        // first made `B5` the floor (audit 2026-10-01). Android chooses by size already.
+        var best: (text: String, height: Double)?
+        for text in lines.compactMap(candidate(in:)) {
+            let height = heights[text] ?? 0
+            if best == nil || height > best!.height {
+                best = (text, height)
+            }
+        }
+        return best?.text ?? badge(in: lines, heights: heights)
     }
 
     /// The floor badge that every pillar carries, when the recogniser turned its `B` into an
