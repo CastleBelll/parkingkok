@@ -10,6 +10,7 @@ import com.sjstudioz.parkingpin.domain.detection.ParkingEndProposal
 import com.sjstudioz.parkingpin.domain.parking.ParkingRecord
 import com.sjstudioz.parkingpin.domain.parking.usecase.AdjustParkingFloorUseCase
 import com.sjstudioz.parkingpin.domain.parking.usecase.ApplyPillarSuggestionUseCase
+import com.sjstudioz.parkingpin.domain.parking.usecase.SuggestUsualSpotUseCase
 import com.sjstudioz.parkingpin.domain.parking.usecase.AttachParkingPhotoResult
 import com.sjstudioz.parkingpin.domain.parking.usecase.AttachParkingPhotoUseCase
 import com.sjstudioz.parkingpin.domain.parking.usecase.EndParkingUseCase
@@ -27,7 +28,11 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
@@ -39,6 +44,8 @@ private data class HomeChrome(
     val photoBusy: Boolean,
     /** What the last attached photo read, until it is applied or waved away (docs/02 §6a). */
     val pillarSuggestion: PillarSuggestion?,
+    /** Last time's floor and zone at this car park, for the open parking (docs/02 §18). */
+    val usualSpot: PillarSuggestion?,
 )
 
 /** What `01-home-main.png` renders. */
@@ -78,6 +85,11 @@ data class HomeUiState(
      */
     val pillarSuggestion: PillarSuggestion? = null,
     /**
+     * docs/02 §18: what was parked here before, for the blanks of the open parking, or null.
+     * Offered and applied exactly like [pillarSuggestion], and shown only when that is not.
+     */
+    val usualSpot: PillarSuggestion? = null,
+    /**
      * The departure the user has not answered yet, about the parking on screen (docs/05 §11a),
      * or null. Drives the compact `출발한 것 같아요` row on the active card; see
      * [pendingEndProposalOf].
@@ -98,6 +110,9 @@ data class HomeUiState(
  */
 fun pendingEndProposalOf(active: ParkingRecord?, proposal: ParkingEndProposal?): ParkingEndProposal? =
     proposal?.takeIf { active != null && active.isActive && it.recordId == active.id }
+
+/** A §18 offer, tied to the record it was computed for. */
+private data class UsualSpotOffer(val recordId: String, val suggestion: PillarSuggestion)
 
 /** The two pending questions home can ask, paired to keep the outer combine typed. */
 private data class HomeQuestions(
@@ -130,11 +145,26 @@ class HomeViewModel(
     private val suggestFromPillarPhoto: SuggestFromPillarPhotoUseCase,
     private val applyPillarSuggestion: ApplyPillarSuggestionUseCase,
     private val clock: Clock,
+    /** docs/02 §18. Never throws; null when there is nothing to offer. */
+    private val suggestUsualSpot: suspend (ParkingRecord) -> PillarSuggestion? = { null },
 ) : ViewModel() {
 
     private val notice = MutableStateFlow<UiNotice?>(null)
     private val photoBusy = MutableStateFlow(false)
     private val pillarSuggestion = MutableStateFlow<PillarSuggestion?>(null)
+
+    /** The record whose §18 offer was applied or waved away; it is not asked again. */
+    private val usualSpotAnsweredFor = MutableStateFlow<String?>(null)
+
+    // Recomputed when the open record changes — a new parking, or a floor typed since —
+    // so an offer never outlives the blanks it was for.
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val usualSpot: Flow<UsualSpotOffer?> =
+        combine(observeActive(), usualSpotAnsweredFor) { active, answered ->
+            active?.takeIf { it.isActive && it.id != answered }
+        }
+            .distinctUntilChanged()
+            .mapLatest { record -> record?.let { r -> suggestUsualSpot(r)?.let { UsualSpotOffer(r.id, it) } } }
 
     val uiState: StateFlow<HomeUiState> =
         combine(
@@ -144,7 +174,9 @@ class HomeViewModel(
             // Paired so the combine stays on the five-argument typed overload. A sixth
             // source would fall onto the `Array<*>` one, where every field becomes an
             // unchecked cast and the compiler stops catching a reordered argument.
-            combine(notice, photoBusy, pillarSuggestion, ::HomeChrome),
+            combine(notice, photoBusy, pillarSuggestion, usualSpot) { notice, busy, pillar, usual ->
+                HomeChrome(notice, busy, pillar, usual?.suggestion)
+            },
             combine(observePendingCandidate(), observeEndProposal(), ::HomeQuestions),
         ) { active, recent, nowMillis, chrome, questions ->
             val candidate = questions.candidate
@@ -156,6 +188,7 @@ class HomeViewModel(
                 photoBusy = chrome.photoBusy,
                 notice = chrome.notice,
                 pillarSuggestion = chrome.pillarSuggestion,
+                usualSpot = chrome.usualSpot.takeIf { chrome.pillarSuggestion == null },
                 pendingCandidateId = candidate?.id,
                 pendingCandidateAtMillis = candidate?.parkedAtMillis,
                 endProposal = pendingEndProposalOf(active, questions.endProposal),
@@ -227,6 +260,18 @@ class HomeViewModel(
 
     fun onDismissPillarSuggestion() {
         pillarSuggestion.value = null
+    }
+
+    /** §18: written on the tap, through the same blanks-only write as §6a's offer. */
+    fun onApplyUsualSpot() {
+        val suggestion = uiState.value.usualSpot ?: return
+        val recordId = uiState.value.active?.id ?: return
+        usualSpotAnsweredFor.value = recordId
+        viewModelScope.launch { applyPillarSuggestion(recordId, suggestion) }
+    }
+
+    fun onDismissUsualSpot() {
+        usualSpotAnsweredFor.value = uiState.value.active?.id
     }
 
     fun onCameraUnavailable() {
@@ -301,6 +346,12 @@ class HomeViewModel(
                         container.clock,
                     ),
                     clock = container.clock,
+                    suggestUsualSpot = { record ->
+                        // An offer that fails to compute is simply not shown (FR-001 spirit).
+                        runCatching { SuggestUsualSpotUseCase(container.parkingRepository).forRecord(record) }
+                            .onFailure { if (it is CancellationException) throw it }
+                            .getOrNull()
+                    },
                 ) as T
             }
     }

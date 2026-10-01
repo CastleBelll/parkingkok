@@ -352,6 +352,8 @@ private fun HomeRoute(container: AppContainer, onNavigate: (ParkingpinRoute) -> 
         onNoticeShown = viewModel::onNoticeShown,
         onApplyPillarSuggestion = viewModel::onApplyPillarSuggestion,
         onDismissPillarSuggestion = viewModel::onDismissPillarSuggestion,
+        onApplyUsualSpot = viewModel::onApplyUsualSpot,
+        onDismissUsualSpot = viewModel::onDismissUsualSpot,
         onStepFloor = viewModel::onStepFloor,
         onEndParking = viewModel::onEndParking,
         onAcceptParkingEnd = viewModel::onAcceptParkingEnd,
@@ -418,6 +420,7 @@ private fun ManualEntryRoute(
         onZoneChange = viewModel::onZoneChange,
         onSpotChange = viewModel::onSpotChange,
         onMemoChange = viewModel::onMemoChange,
+        onApplyUsualSpot = viewModel::onApplyUsualSpot,
         onSave = viewModel::onSave,
         onBack = onBack,
     )

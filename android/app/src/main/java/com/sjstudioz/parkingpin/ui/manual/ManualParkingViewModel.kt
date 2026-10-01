@@ -13,12 +13,15 @@ import com.sjstudioz.parkingpin.detection.ConfirmedCandidateDetails
 import com.sjstudioz.parkingpin.detection.ParkingCandidateCoordinator
 import com.sjstudioz.parkingpin.detection.ParkingDetectionRuntime
 import com.sjstudioz.parkingpin.detection.ParkingEndProposalCoordinator
+import com.sjstudioz.parkingpin.detection.toParkingLocation
 import com.sjstudioz.parkingpin.domain.parking.FloorParser
 import com.sjstudioz.parkingpin.domain.parking.ParkingFieldLimits
 import com.sjstudioz.parkingpin.domain.parking.usecase.AttachParkingPhotoUseCase
 import com.sjstudioz.parkingpin.domain.parking.usecase.ManualParkingInput
 import com.sjstudioz.parkingpin.domain.parking.usecase.SaveManualParkingResult
 import com.sjstudioz.parkingpin.domain.parking.usecase.SaveManualParkingUseCase
+import com.sjstudioz.parkingpin.domain.parking.usecase.SuggestUsualSpotUseCase
+import com.sjstudioz.parkingpin.domain.parking.usecase.UsualSpotLookup
 import com.sjstudioz.parkingpin.domain.photo.PhotoSource
 import com.sjstudioz.parkingpin.domain.photo.PillarSuggestion
 import com.sjstudioz.parkingpin.domain.photo.ReadPillarSuggestionUseCase
@@ -65,6 +68,11 @@ data class ManualParkingUiState(
     val pillarSuggestionOffered: Boolean = false,
     /** `사진으로 입력` found no camera app; the form says so instead of opening silently. */
     val cameraUnavailable: Boolean = false,
+    /**
+     * Last time's floor and zone where the car is now (docs/02 §18), until it is applied or
+     * the fields it would fill are typed. Null is the ordinary state.
+     */
+    val usualSpot: PillarSuggestion? = null,
 )
 
 /**
@@ -142,10 +150,40 @@ class ManualParkingViewModel(
      * that writes nothing ends nothing. Null in compositions with no detection.
      */
     private val endProposals: ParkingEndProposalCoordinator? = null,
+    /**
+     * docs/02 §18: where the car is now — the candidate's fix on a confirmation, the last
+     * known fix on a manual save — and what was parked there before. Null in compositions
+     * that do not offer it; the form is complete without it.
+     */
+    private val usualSpotNear: (suspend () -> PillarSuggestion?)? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ManualParkingUiState())
     val uiState: StateFlow<ManualParkingUiState> = _uiState.asStateFlow()
+
+    init {
+        usualSpotNear?.let { lookup ->
+            viewModelScope.launch {
+                // A lookup failure costs the offer and nothing else (FR-001).
+                val usual = runCatching { lookup() }
+                    .onFailure { if (it is CancellationException) throw it }
+                    .getOrNull()
+                _uiState.update { it.copy(usualSpot = usual?.takeIf { s -> it.offersSomething(s) }) }
+            }
+        }
+    }
+
+    /** §18: fills the blanks last time's parking answers, and nothing the user typed. */
+    fun onApplyUsualSpot() {
+        _uiState.update {
+            val usual = it.usualSpot ?: return@update it
+            it.copy(
+                floorRaw = it.floorRaw.ifEmpty { usual.floorRaw.orEmpty() },
+                zone = it.zone.ifEmpty { usual.zone.orEmpty() },
+                usualSpot = null,
+            )
+        }
+    }
 
     /**
      * Whether the camera still has to be opened for this screen (docs/02 §6a).
@@ -227,9 +265,9 @@ class ManualParkingViewModel(
             .onFailure { Log.w(TAG, "pillar photo not attached: ${it.javaClass.simpleName}") }
     }
 
-    fun onFloorChange(value: String) = _uiState.update { it.copy(floorRaw = value) }
+    fun onFloorChange(value: String) = _uiState.update { it.copy(floorRaw = value).withoutSpentUsualSpot() }
 
-    fun onZoneChange(value: String) = _uiState.update { it.copy(zone = value) }
+    fun onZoneChange(value: String) = _uiState.update { it.copy(zone = value).withoutSpentUsualSpot() }
 
     fun onSpotChange(value: String) = _uiState.update { it.copy(spot = value) }
 
@@ -324,6 +362,17 @@ class ManualParkingViewModel(
     companion object {
         private const val TAG = "ManualParking"
 
+        /** True when [usual] would fill at least one field the form still has blank. */
+        private fun ManualParkingUiState.offersSomething(usual: PillarSuggestion): Boolean {
+            // A floor typed that differs from last time's makes last time's zone wrong too.
+            if (!UsualSpotLookup.agrees(FloorParser.parse(floorRaw), usual.floorRaw)) return false
+            return (floorRaw.isEmpty() && usual.floorRaw != null) || (zone.isEmpty() && usual.zone != null)
+        }
+
+        // Once the user has typed what the offer would fill, it has nothing left to say.
+        private fun ManualParkingUiState.withoutSpentUsualSpot(): ManualParkingUiState =
+            if (usualSpot != null && !offersSomething(usualSpot)) copy(usualSpot = null) else this
+
 
         fun factory(
             container: AppContainer,
@@ -352,6 +401,16 @@ class ManualParkingViewModel(
                         pillarPhoto = if (fromPillarPhoto) container.pillarPhotoEntry() else null,
                         clock = container.clock,
                         endProposals = container.parkingEndProposalCoordinator,
+                        usualSpotNear = {
+                            val suggest = SuggestUsualSpotUseCase(container.parkingRepository)
+                            val here = if (candidateId != null) {
+                                container.parkingCandidateCoordinator.pending(candidateId)
+                                    ?.lastReliableLocation?.toParkingLocation()
+                            } else {
+                                container.parkingLocationProvider.lastReliableLocation()
+                            }
+                            suggest.forLocation(here)
+                        },
                     ) as T
             }
     }

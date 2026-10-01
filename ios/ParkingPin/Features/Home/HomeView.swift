@@ -37,6 +37,8 @@ struct HomeView: View {
     /// Ticks once a minute so the elapsed line ages while the screen is open, without a
     /// timer that survives the screen.
     @State private var displayNow = Date()
+    /// The parking whose §18 offer was applied or waved away; it is not asked again.
+    @State private var usualSpotAnsweredFor: UUID?
 
     init(
         model: ParkingModel,
@@ -93,6 +95,14 @@ struct HomeView: View {
                         }
                     )
                     .pkEntrance(1)
+                    if usualSpotAnsweredFor != active.id, let offer = model.usualSpot(for: active) {
+                        UsualSpotCard(
+                            offer: offer,
+                            onApply: { applyUsualSpot(offer, to: active) },
+                            onDismiss: { usualSpotAnsweredFor = active.id }
+                        )
+                        .pkEntrance(1)
+                    }
                     HomeActionRow(
                         icon: "map",
                         title: "주차 위치 보기",
@@ -216,6 +226,19 @@ struct HomeView: View {
 }
 
 private extension HomeView {
+    /// docs/02 §18: written on the tap, and only into what the parking left blank.
+    func applyUsualSpot(_ offer: PillarReading, to session: ParkingSession) {
+        usualSpotAnsweredFor = session.id
+        var updated = session
+        if updated.floor == nil, let floorText = offer.floorText {
+            updated.floor = FloorValue.parse(floorText)
+        }
+        if (updated.zone ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let zone = offer.zone {
+            updated.zone = zone
+        }
+        _ = model.update(updated)
+    }
+
     /// `사진으로 입력` on the empty card (docs/02 §6a).
     ///
     /// The album stays on offer beside the camera: the pillar may already have been
@@ -438,6 +461,36 @@ enum ClockTicker {
                 continuation.finish()
             }
             continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+}
+
+/// docs/02 §18 on home: last time's floor and zone at this car park, for the blanks of the
+/// open parking. Nothing changes until `적용`; `아니요` retires it for this parking.
+///
+/// A soft button, not the primary style: home's one primary is `주차 종료`.
+private struct UsualSpotCard: View {
+    let offer: PillarReading
+    let onApply: () -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
+        PKCard(radius: PKRadius.row) {
+            VStack(alignment: .leading, spacing: PKSpacing.s) {
+                Text("지난번 이 주차장에선 여기였어요")
+                    .font(PKTypography.supporting)
+                    .foregroundStyle(PKColor.textSecondary)
+                Text(offer.floorAndZoneLabel)
+                    .font(PKTypography.sectionTitle)
+                    .foregroundStyle(PKColor.textPrimary)
+                HStack(spacing: PKSpacing.m) {
+                    Button("아니요", action: onDismiss)
+                        .buttonStyle(PKOutlineButtonStyle())
+                    Button("적용", action: onApply)
+                        .buttonStyle(PKSoftButtonStyle())
+                }
+            }
+            .padding(PKSpacing.l)
         }
     }
 }

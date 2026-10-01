@@ -384,6 +384,9 @@
     <!-- ══ Reading the pillar (docs/02 §6a) ════════════════════════════════════════════
          A suggestion, never a saved value. There is no failure string on purpose: a read
          that found nothing leaves the screen exactly as it was. -->
+    <string name="usual_spot_title">지난번 이 주차장</string>
+    <string name="usual_spot_fill">채우기</string>
+    <string name="usual_spot_card_title">지난번 이 주차장에선 여기였어요</string>
     <string name="pillar_suggestion_title">사진에서 이렇게 읽었어요</string>
     <string name="pillar_suggestion_apply">적용</string>
     <string name="pillar_suggestion_dismiss">아니요</string>

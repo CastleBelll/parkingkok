@@ -79,10 +79,24 @@ enum GeoDistance {
     private static let earthRadiusMeters = 6_371_000.0
 
     static func meters(from origin: LocationFix, to destination: LocationFix) -> Double {
-        let lat1 = origin.latitude * .pi / 180
-        let lat2 = destination.latitude * .pi / 180
-        let deltaLat = (destination.latitude - origin.latitude) * .pi / 180
-        let deltaLon = (destination.longitude - origin.longitude) * .pi / 180
+        meters(
+            fromLatitude: origin.latitude,
+            fromLongitude: origin.longitude,
+            toLatitude: destination.latitude,
+            toLongitude: destination.longitude
+        )
+    }
+
+    static func meters(
+        fromLatitude: Double,
+        fromLongitude: Double,
+        toLatitude: Double,
+        toLongitude: Double
+    ) -> Double {
+        let lat1 = fromLatitude * .pi / 180
+        let lat2 = toLatitude * .pi / 180
+        let deltaLat = (toLatitude - fromLatitude) * .pi / 180
+        let deltaLon = (toLongitude - fromLongitude) * .pi / 180
 
         let haversine = sin(deltaLat / 2) * sin(deltaLat / 2)
             + cos(lat1) * cos(lat2) * sin(deltaLon / 2) * sin(deltaLon / 2)

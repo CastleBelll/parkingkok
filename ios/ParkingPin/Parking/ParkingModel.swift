@@ -121,6 +121,21 @@ final class ParkingModel {
         return completedSessions.first { $0.id == id }
     }
 
+    /// docs/02 §18: last time's floor and zone near `here`, from the loaded history.
+    func usualSpot(near here: ParkedLocation?) -> PillarReading? {
+        UsualSpotLookup.find(near: here, in: completedSessions)
+    }
+
+    /// docs/02 §18 for a saved parking: only what it left blank.
+    func usualSpot(for session: ParkingSession) -> PillarReading? {
+        UsualSpotLookup.find(for: session, in: completedSessions)
+    }
+
+    /// Where a manual save would put the car right now, without waiting (FR-001).
+    func storedLocation() async -> ParkedLocation? {
+        await locationProvider.storedLocation()
+    }
+
     /// Re-reads everything. Cheap enough to run on every appearance; the store is local.
     ///
     /// Also the app's side of the widget contract, and the reason `RootView` calls it on

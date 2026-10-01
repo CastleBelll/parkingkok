@@ -128,6 +128,21 @@ final class ControlSmokeTests: XCTestCase {
         XCTAssertTrue(app.textFields["예: B3, 지하 3층, 3F"].waitForExistence(timeout: 5))
     }
 
+    func testLastTimesFloorFillsTheFormOnTheTap() {
+        // docs/02 §18: the seed's newest past parking (B2 · C구역) is at the candidate's spot.
+        launch(route: "confirm")
+        tapWhenReady("직접 입력")
+        let floor = app.textFields["예: B3, 지하 3층, 3F"]
+        XCTAssertTrue(floor.waitForExistence(timeout: 5))
+        XCTAssertTrue(element("지난번 이 주차장").waitForExistence(timeout: 5), "no offer")
+
+        tapWhenReady("채우기")
+
+        XCTAssertEqual(floor.value as? String, "B2")
+        XCTAssertEqual(app.textFields["예: A구역"].value as? String, "C구역")
+        XCTAssertFalse(element("지난번 이 주차장").exists, "the offer should be spent")
+    }
+
     // MARK: - Settings
 
     func testSettingsHasNoPlaceholderRows() {

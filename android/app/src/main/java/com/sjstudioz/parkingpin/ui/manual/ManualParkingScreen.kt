@@ -32,6 +32,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.sjstudioz.parkingpin.R
+import com.sjstudioz.parkingpin.domain.photo.PillarSuggestion
+import com.sjstudioz.parkingpin.ui.photo.readLabel
 import com.sjstudioz.parkingpin.theme.ParkingpinTheme
 import com.sjstudioz.parkingpin.theme.spacing
 import com.sjstudioz.parkingpin.ui.components.DetailHeader
@@ -56,6 +58,7 @@ fun ManualParkingScreen(
     onSave: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    onApplyUsualSpot: () -> Unit = {},
 ) {
     val floorFocus = remember { FocusRequester() }
 
@@ -92,6 +95,10 @@ fun ManualParkingScreen(
                     color = MaterialTheme.colorScheme.error,
                 )
             }
+        }
+
+        state.usualSpot?.let { usual ->
+            item("usual-spot") { UsualSpotRow(usual, onApply = onApplyUsualSpot) }
         }
 
         item("form") {
@@ -256,5 +263,30 @@ private fun ManualParkingPreview() {
             onSave = {},
             onBack = {},
         )
+    }
+}
+
+/**
+ * docs/02 §18: `지난번 이 주차장  B2 · A구역  채우기`.
+ *
+ * A row, not a card and not a filled button: the form's one primary action stays `저장`,
+ * and ignoring this costs nothing. It fills only what is still blank.
+ */
+@Composable
+private fun UsualSpotRow(usual: PillarSuggestion, onApply: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = stringResource(R.string.usual_spot_title),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = usual.readLabel(),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+        }
+        TextButton(onClick = onApply) { Text(stringResource(R.string.usual_spot_fill)) }
     }
 }
