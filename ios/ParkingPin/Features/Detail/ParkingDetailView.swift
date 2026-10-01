@@ -89,6 +89,15 @@ struct ParkingDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if let session, session.isActive {
+                // docs/01 §5a `위치 보내기` (DECIDED 2026-10-01): place, time and a map link,
+                // to an app and a person the user picks. Memo and photo stay on the phone.
+                // Active only — where the car was last week is nobody's errand.
+                ToolbarItem(placement: .topBarTrailing) {
+                    ShareLink(item: ParkingShareText.text(for: session)) {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                    .accessibilityLabel("위치 보내기")
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("수정") { isEditing = true }
                 }
