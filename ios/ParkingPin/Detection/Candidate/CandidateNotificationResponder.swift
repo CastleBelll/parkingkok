@@ -37,7 +37,12 @@ final class CandidateNotificationResponder: NotificationResponding {
             // and FR-006 makes the floor optional. `FloorValue.parse` keeps whatever they
             // typed, so `주차타워 2` survives as well as `B3`.
             let text = userInfo[PKNotificationRouter.userTextKey] ?? ""
-            model.confirm(candidate, draft: ManualParkingDraft(floorText: text))
+            if !model.confirm(candidate, draft: ManualParkingDraft(floorText: text)) {
+                // The answer was typed in the shade and the shade is gone: without this the
+                // floor was lost with no word (audit 2026-10-01). The candidate is still
+                // pending, so the app can finish it.
+                Self.postSaveFailedNotice()
+            }
 
         case UNNotificationDefaultActionIdentifier:
             // docs/05 §10a: a tap opens the confirmation screen, and never silently
@@ -50,5 +55,14 @@ final class CandidateNotificationResponder: NotificationResponding {
             // not an answer, and treating it as one would throw away the trip.
             break
         }
+    }
+
+    /// One plain line, no candidate, no place — the notification copy rule (docs/09 §9).
+    private static func postSaveFailedNotice() {
+        let content = UNMutableNotificationContent()
+        content.title = "층을 저장하지 못했어요"
+        content.body = "주차핀을 열어 다시 확인해 주세요."
+        let request = UNNotificationRequest(identifier: "candidate-save-failed", content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
     }
 }

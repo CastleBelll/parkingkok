@@ -95,16 +95,20 @@ struct ParkingDetailView: View {
         .navigationTitle("주차 위치")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if let session, session.isActive {
+            if let session {
                 // docs/01 §5a `위치 보내기` (DECIDED 2026-10-01): place, time and a map link,
                 // to an app and a person the user picks. Memo and photo stay on the phone.
                 // Active only — where the car was last week is nobody's errand.
-                ToolbarItem(placement: .topBarTrailing) {
-                    ShareLink(item: ParkingShareText.text(for: session)) {
-                        Image(systemName: "square.and.arrow.up")
+                if session.isActive {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        ShareLink(item: ParkingShareText.text(for: session)) {
+                            Image(systemName: "square.and.arrow.up")
+                        }
+                        .accessibilityLabel("위치 보내기")
                     }
-                    .accessibilityLabel("위치 보내기")
                 }
+                // Every record: a wrong or missing floor is worth fixing after the fact too
+                // (audit 2026-10-01).
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("수정") { isEditing = true }
                 }
@@ -122,8 +126,7 @@ struct ParkingDetailView: View {
         .confirmationDialog("이 주차 기록을 삭제할까요?", isPresented: $isConfirmingDelete, titleVisibility: .visible) {
             Button("삭제", role: .destructive) {
                 Task {
-                    await model.delete(id: sessionID)
-                    dismiss()
+                    if await model.delete(id: sessionID) { dismiss() }
                 }
             }
             Button("취소", role: .cancel) {}
@@ -311,10 +314,13 @@ struct ParkingDetailView: View {
                 subtitle: "주차를 종료하고 기록을 저장합니다",
                 systemImage: "flag.checkered"
             ) {
+                var ended = false
                 pkWithAnimation(PKMotion.sessionChange, reduceMotion: reduceMotion) {
-                    _ = model.endActiveParking()
+                    ended = model.endActiveParking()
                 }
-                dismiss()
+                // On failure the screen stays, where `model.failure` is shown; leaving would
+                // put the reason on a screen the user did not ask about.
+                if ended { dismiss() }
             }
         }
         Button(role: .destructive) {
@@ -371,6 +377,7 @@ struct ParkingDetailView: View {
         // downsamples without ever decoding the full-resolution image (docs/11 §12).
         guard let data = try? await item.loadTransferable(type: Data.self) else {
             photoPhase = .empty
+            model.notePhotoUnreadable()
             return
         }
         await attachPhoto(data)

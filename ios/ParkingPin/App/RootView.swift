@@ -168,6 +168,16 @@ struct RootView: View {
                     parking: composition.model,
                     path: $path
                 )
+            } else {
+                // Expired or answered while the user was getting here — from a stale row in
+                // 알림 기록 or a late notification tap. Said, rather than an empty screen
+                // with only a back button (audit 2026-10-01).
+                ContentUnavailableView(
+                    "이미 지난 감지예요",
+                    systemImage: "clock",
+                    description: Text("45분이 지나 만료됐거나 이미 답한 감지예요. 주차는 홈에서 직접 저장할 수 있어요.")
+                )
+                .background(PKColor.background)
             }
         case .settings:
             SettingsView(appInfo: appInfo, model: composition?.model, path: $path)

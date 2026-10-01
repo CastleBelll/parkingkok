@@ -592,6 +592,13 @@ final class ParkingModel {
         failure = nil
     }
 
+    /// A photo the album handed back could not be read (iCloud offline, a format the picker
+    /// would not export). Said on the screen the user is on; the picker had already closed
+    /// and nothing else happened (audit 2026-10-01).
+    func notePhotoUnreadable() {
+        failure = "사진을 불러오지 못했어요. 다시 골라 주세요."
+    }
+
     private func refreshAfterWrite() {
         activeSession = try? store.activeSession()
         completedSessions = (try? store.completedSessions(limit: nil)) ?? []
