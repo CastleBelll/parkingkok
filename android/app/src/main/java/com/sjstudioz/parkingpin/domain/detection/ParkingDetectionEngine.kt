@@ -59,6 +59,16 @@ data class TravelSession(
      */
     val lastStoppedFixAtMillis: Long? = null,
     /**
+     * The newest fix that could not have shown movement: no reported speed and coarser than
+     * [BLIND_ACCURACY_METERS] — docs/05 §3a "A blind fix is not a stop" (2026-10-01), iOS's
+     * `lastBlindFixAt`.
+     *
+     * A tunnel or an underground road hands a moving car coarse fixes that cannot clear §7's
+     * noise floor. Read as silence they let `movementIdleWindow` fire mid-drive, and the
+     * transition lapsed to `IDLE` before the parking at the end of the drive.
+     */
+    val lastBlindFixAtMillis: Long? = null,
+    /**
      * When motion last said this device is *in a vehicle*, or null if it has not said so.
      *
      * Separate from the session's first vehicle evidence because a car link opens a session
@@ -164,6 +174,28 @@ data class StopOnlyResumeWindow(
 )
 
 /**
+ * docs/05 §3a "A stop-only candidate takes the exit that follows it" (2026-10-01): what a
+ * stop-only candidate was scored on, so an exit or a walk before [deadlineMillis] can re-score
+ * it. iOS's `CandidateRescore`.
+ *
+ * Separate from [StopOnlyResumeWindow] on purpose. That window is the capture's lifetime and
+ * an exit closes it; the walk that follows the exit a second later must still count. Read
+ * only while it names the pending candidate, so a stale one is inert and is never cleared
+ * path by path.
+ */
+@Serializable
+data class StopOnlyRescore(
+    val candidateId: String,
+    /** The drive's end plus `transitionWindow`: the car has provably not moved on before it. */
+    val deadlineMillis: Long,
+    /** The candidate's codes so far, signals that did not move the bucket included. */
+    val reasons: List<EvidenceReasonCode>,
+    val durationMillis: Long,
+    val distanceMeters: Double,
+    val location: ReliableLocation?,
+)
+
+/**
  * The candidate the engine last created, in the terms the contract checks.
  *
  * Held beside the state rather than only in the candidate store so a fixture replay — and
@@ -224,6 +256,7 @@ data class DetectionEngineState(
      * Persisted: see [StopOnlyResumeWindow] for why it survives exactly when its capture does.
      */
     val stopOnlyResumeWindow: StopOnlyResumeWindow? = null,
+    val stopOnlyRescore: StopOnlyRescore? = null,
 ) {
 
     /**
@@ -324,6 +357,15 @@ sealed interface DetectionEffect {
      * for the whole feature.
      */
     data class RetireCandidate(val candidateId: String) : DetectionEffect
+
+    /**
+     * The pending candidate, re-scored in place — docs/05 §3a "A stop-only candidate takes the
+     * exit that follows it" (2026-10-01). [upgraded] carries the same id and describes it in
+     * full; the adapter rewrites the stored candidate and posts the notification only if this
+     * is the first time it qualifies. Not a new candidate: nothing is withdrawn, nothing is
+     * counted as created, and the history gains no row.
+     */
+    data class UpgradeCandidate(val upgraded: CreateCandidate) : DetectionEffect
 
     /** §15 `markParkingActive`. The record itself is written by the confirmation flow. */
     data class MarkParkingActive(val candidateId: String) : DetectionEffect
@@ -582,7 +624,7 @@ class ParkingDetectionEngine(
                 // are all measured from.
                 isMovementIdle(state, session, atMillis) ->
                     state.enterParkingTransition(
-                        state.stamp(checkNotNull(session.lastMovementEvidenceAtMillis) + MOVEMENT_IDLE_WINDOW_MILLIS, atMillis),
+                        state.stamp(checkNotNull(session.movementIdleAnchorMillis()) + MOVEMENT_IDLE_WINDOW_MILLIS, atMillis),
                         byMovementIdle = true,
                     )
 
@@ -659,9 +701,36 @@ class ParkingDetectionEngine(
      */
     private fun isMovementIdle(state: DetectionEngineState, session: TravelSession, atMillis: Long): Boolean {
         if (state.carLinkConnected) return false
-        val lastMovement = session.lastMovementEvidenceAtMillis ?: return false
-        return atMillis - lastMovement >= MOVEMENT_IDLE_WINDOW_MILLIS
+        val anchor = session.movementIdleAnchorMillis() ?: return false
+        return atMillis - anchor >= MOVEMENT_IDLE_WINDOW_MILLIS
     }
+
+    /**
+     * What `movementIdleWindow` is measured from: the last movement, or a later blind fix
+     * (§3a "A blind fix is not a stop"). `null` while the drive has never moved — a blind fix
+     * alone does not start the clock.
+     */
+    private fun TravelSession.movementIdleAnchorMillis(): Long? {
+        val lastMovement = lastMovementEvidenceAtMillis ?: return null
+        return maxOf(lastMovement, lastBlindFixAtMillis ?: lastMovement)
+    }
+
+    /**
+     * Admitted or not — a coarse fix that jumps still says the sky is gone (iOS notes it before
+     * its outlier check). Only while the idle window is still open, though: a blind fix that
+     * lands after it closed says nothing about the silence before it, which §3a already reads
+     * as idle. That is also what keeps a restore, which settles the windows before the waking
+     * fix, agreeing with a process that never died. iOS `DrivingEvidence.noteBlind`.
+     */
+    private fun TravelSession.notesBlind(sample: LocationSample): Boolean {
+        if (!sample.isBlind()) return false
+        val anchor = movementIdleAnchorMillis() ?: return true
+        return sample.atMillis - anchor < MOVEMENT_IDLE_WINDOW_MILLIS
+    }
+
+    /** §3a: no reported speed and coarser than [BLIND_ACCURACY_METERS] (iOS `LocationFix.isBlind`). */
+    private fun LocationSample.isBlind(): Boolean =
+        quality.isValid && speedMps == null && horizontalAccuracyM > BLIND_ACCURACY_METERS
 
     /**
      * §10's 45-minute expiry for a candidate left behind by a new journey.
@@ -813,6 +882,11 @@ class ParkingDetectionEngine(
                 sample.atMillis
             } else {
                 session.lastStoppedFixAtMillis
+            },
+            lastBlindFixAtMillis = if (session.notesBlind(sample)) {
+                maxOf(session.lastBlindFixAtMillis ?: sample.atMillis, sample.atMillis)
+            } else {
+                session.lastBlindFixAtMillis
             },
         ).let { if (fellIntoPoor) it.notingFallIntoPoor(sample.atMillis) else it }
         return state.copy(
@@ -989,6 +1063,19 @@ class ParkingDetectionEngine(
         state: DetectionEngineState,
         event: DetectionEvent,
     ): EngineStep {
+        val rescored = state.rescoreStopOnlyCandidate(event) ?: return fromPendingCandidate(before, state, event)
+        val next = fromPendingCandidate(before, rescored.state, event)
+        return EngineStep(
+            next.state,
+            rescored.effects + next.effects.filterNot { it is DetectionEffect.PersistCheckpoint },
+        ).withCheckpoint()
+    }
+
+    private fun fromPendingCandidate(
+        before: DetectionEngineState,
+        state: DetectionEngineState,
+        event: DetectionEvent,
+    ): EngineStep {
         val candidate = state.candidate ?: return state.moveTo(DetectionState.IDLE, event.atMillis)
         state.stopOnlyResumeWindow?.let { window ->
             fromStopOnlyWindow(before, state, window, event)?.let { return it }
@@ -1050,9 +1137,10 @@ class ParkingDetectionEngine(
      *
      * - the **second** accepted fix at or after the drive's end that *reports* ≥ 2.0 m/s, or a
      *   `vehicle_enter`, resumes the drive (rule 2);
-     * - a `vehicle_exit` or a `walking_enter` closes the window and nothing else (rule 4): the
-     *   vehicle ended after all, or the person left it — movement after either is somebody
-     *   else's journey. iOS's engine closes it on the same two, so every fixture reads alike.
+     * - a `vehicle_exit` or a `walking_enter` closes the window (rule 4): the vehicle ended
+     *   after all, or the person left it — movement after either is somebody else's journey.
+     *   iOS's engine closes it on the same two, so every fixture reads alike. Re-scoring the
+     *   candidate on them is [rescoreStopOnlyCandidate]'s, and outlives this window.
      *
      * A `stationary_enter` leaves it open: the Transition API can report STILL inside a car at
      * a light.
@@ -1067,6 +1155,59 @@ class ParkingDetectionEngine(
         is DetectionEvent.VehicleExit, is DetectionEvent.WalkingEnter -> EngineStep(state.copy(stopOnlyResumeWindow = null))
         is DetectionEvent.Location -> onFixInsideStopOnlyWindow(before, state, window, event.sample)
         else -> null
+    }
+
+    /**
+     * docs/05 §3a "A stop-only candidate takes the exit that follows it" (2026-10-01), iOS's
+     * `rescoreStopOnlyCandidate`. `null` when the event is not one it reads.
+     *
+     * A stop can confirm a transition seconds before the exit and the walk that say the same
+     * thing more strongly; on the 2026-09-30 and 2026-10-01 field drives the candidate stayed
+     * `low` and posted nothing. Inside the window the car has provably not moved on, so the
+     * candidate is re-scored with the added code and, if its bucket rises, upgraded in place
+     * ([DetectionEffect.UpgradeCandidate]) — same id, creation time and location. A code that
+     * does not move the bucket is kept for the next one. After the deadline the exit is not used: the
+     * car may have driven on to park somewhere else.
+     */
+    private fun DetectionEngineState.rescoreStopOnlyCandidate(event: DetectionEvent): EngineStep? {
+        val added = when (event) {
+            is DetectionEvent.VehicleExit -> EvidenceReasonCode.VEHICLE_EXIT_DETECTED
+            is DetectionEvent.WalkingEnter -> EvidenceReasonCode.WALKING_AFTER_VEHICLE
+            else -> return null
+        }
+        val current = candidate ?: return null
+        val hold = stopOnlyRescore?.takeIf { it.candidateId == current.id && event.atMillis < it.deadlineMillis }
+            ?: return null
+        if (added in hold.reasons) return null
+
+        val reasons = (hold.reasons + added).sortedBy { it.ordinal }
+        val score = ParkingConfidencePolicy.score(reasons, hold.durationMillis, hold.distanceMeters)
+        val confidence = ParkingConfidencePolicy.bucketOf(score)
+        if (confidence == current.confidence) {
+            return EngineStep(copy(stopOnlyRescore = hold.copy(reasons = reasons)))
+        }
+        return EngineStep(
+            copy(
+                candidate = current.copy(confidence = confidence, score = score, reasons = reasons),
+                stopOnlyRescore = hold.copy(reasons = reasons),
+            ),
+            listOf(
+                DetectionEffect.UpgradeCandidate(
+                    DetectionEffect.CreateCandidate(
+                        candidateId = current.id,
+                        confidence = confidence,
+                        score = score,
+                        reasons = reasons,
+                        lastReliableLocation = hold.location,
+                        vehicleSessionDurationMillis = hold.durationMillis,
+                        travelDistanceMeters = hold.distanceMeters,
+                        walkingEvidence = EvidenceReasonCode.WALKING_AFTER_VEHICLE in reasons,
+                        gpsDegradation = EvidenceReasonCode.LOCATION_QUALITY_DEGRADED in reasons,
+                        optionalVehicleSignal = EvidenceReasonCode.CAR_PROJECTION_DISCONNECTED in reasons,
+                    ),
+                ),
+            ),
+        )
     }
 
     /**
@@ -1423,6 +1564,18 @@ class ParkingDetectionEngine(
             } else {
                 null
             },
+            stopOnlyRescore = if (stop.isStopOnly(signal)) {
+                StopOnlyRescore(
+                    candidateId = id,
+                    deadlineMillis = stop.atMillis + TRANSITION_WINDOW_MILLIS,
+                    reasons = reasons,
+                    durationMillis = durationMillis,
+                    distanceMeters = stop.distanceMeters,
+                    location = inheritedLocation,
+                )
+            } else {
+                null
+            },
         )
         return EngineStep(
             next,
@@ -1594,6 +1747,13 @@ class ParkingDetectionEngine(
         copy(lastDegradedToPoorAtMillis = maxOf(lastDegradedToPoorAtMillis ?: atMillis, atMillis))
 
     companion object {
+
+        /**
+         * Above this a speedless fix is a cell or Wi-Fi guess, not a position: the tunnels of
+         * the 2026-09-30/10-01 field drives reported 89–2,300 m, while a parked car in a garage
+         * (field s16, s31) reads 30–55 m and must still be able to look still. **unvalidated**
+         */
+        const val BLIND_ACCURACY_METERS = 80f
 
         /**
          * Enough to walk `DRIVING_CANDIDATE -> DRIVING -> PARKING_TRANSITION -> IDLE` and

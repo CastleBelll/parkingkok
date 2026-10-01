@@ -44,6 +44,15 @@ struct ParkingTransitionEvidenceTests {
         return engine
     }
 
+    private func upgrades(_ effects: [DetectionEffect]) -> [ParkingCandidate] {
+        effects.compactMap {
+            if case let .upgradeCandidate(candidate) = $0 {
+                return candidate
+            }
+            return nil
+        }
+    }
+
     private func candidates(_ effects: [DetectionEffect]) -> [ParkingCandidate] {
         effects.compactMap {
             if case let .createCandidate(candidate) = $0 {
@@ -905,6 +914,135 @@ struct ParkingTransitionEvidenceTests {
         #expect(walking.contains(.stopLocationCapture))
         #expect(!boarding.contains(.withdrawCandidate(id: candidate.id)))
         #expect(await engine.state == .drivingCandidate)
+    }
+
+    // MARK: - A stop-only candidate takes the exit that follows it (docs/05 §3a, 2026-10-01)
+
+    @Test("A walk before the drive's window closes re-scores a stop-only candidate")
+    func walkRescoresStopOnlyCandidate() async throws {
+        // Arrange — on 2026-10-01 the walk came a second after the stop that confirmed the
+        // transition, and the candidate stayed low: nothing was posted.
+        let (engine, candidate) = try await stoppedInTrafficEngine()
+
+        // Act
+        let effects = await engine.handle(.walkingEnter(at: at(300)))
+
+        // Assert — the same candidate, upgraded in place and announced for the first time.
+        let rescored = try #require(upgrades(effects).first)
+        #expect(candidates(effects).isEmpty)
+        #expect(!effects.contains(.withdrawCandidate(id: candidate.id)))
+        #expect(rescored.id == candidate.id)
+        #expect(rescored.confidenceBucket == .medium)
+        #expect(rescored.reasonCodes.contains(.walkingAfterVehicle))
+        #expect(rescored.detectedAt == candidate.detectedAt)
+        #expect(rescored.expiresAt == candidate.expiresAt)
+        #expect(effects.contains(.issueCandidateNotification(rescored)))
+        #expect(await engine.snapshot().pendingCandidateId == candidate.id)
+    }
+
+    @Test("An exit and then a walk both count towards a stop-only candidate")
+    func exitThenWalkAccumulate() async throws {
+        // Arrange — the exit closes the resume window; the walk a second later must still count.
+        let (engine, _) = try await stoppedInTrafficEngine()
+
+        // Act
+        let exit = await engine.handle(.vehicleExit(at: at(300)))
+        let walk = await engine.handle(.walkingEnter(at: at(301)))
+
+        // Assert — the exit alone does not move the bucket; the two together do.
+        #expect(upgrades(exit).isEmpty)
+        let rescored = try #require(upgrades(walk).first)
+        #expect(rescored.confidenceBucket == .high)
+        #expect(rescored.reasonCodes.contains(.vehicleExitDetected))
+    }
+
+    @Test("A walk after the drive's window leaves a stop-only candidate as it was")
+    func lateWalkDoesNotRescore() async throws {
+        // Arrange — past the window the car may have driven on and parked somewhere else.
+        let (engine, candidate) = try await stoppedInTrafficEngine()
+
+        // Act
+        let effects = await engine.handle(.walkingEnter(at: at(280 + ParkingTransitionPolicy.transitionWindow)))
+
+        // Assert
+        #expect(upgrades(effects).isEmpty)
+        #expect(await engine.snapshot().pendingCandidateId == candidate.id)
+    }
+
+    @Test("An upgrade of a candidate already announced does not announce it again")
+    func upgradeOfAnnouncedCandidateIsSilent() async throws {
+        // Arrange — the 2026-10-01 shape: a stop-only candidate that fell into poor near the
+        // end (45), an exit that lifts it to medium and announces it, then the walk.
+        let engine = await drivingEngine()
+        _ = await engine.handle(fix(100, speed: 9))
+        _ = await engine.handle(fix(150, accuracy: 50, speed: 0))
+        _ = await engine.handle(fix(200, speed: 0))
+        _ = try #require(await candidates(engine.handle(fix(280, speed: 0))).first)
+        let exit = await engine.handle(.vehicleExit(at: at(290)))
+        let announced = try #require(upgrades(exit).first)
+        try #require(announced.confidenceBucket == .medium)
+        try #require(exit.contains(.issueCandidateNotification(announced)))
+
+        // Act
+        let effects = await engine.handle(.walkingEnter(at: at(291)))
+
+        // Assert — one buzz for one parking.
+        let rescored = try #require(upgrades(effects).first)
+        #expect(rescored.confidenceBucket == .high)
+        #expect(!effects.contains(where: { if case .issueCandidateNotification = $0 { true } else { false } }))
+    }
+
+    // MARK: - A blind fix is not a stop (docs/05 §3a, 2026-10-01)
+
+    @Test("Blind fixes in a tunnel do not end a drive as movement idle")
+    func blindFixesDoNotIdle() async {
+        // Arrange — speedless 600 m fixes say the sky is gone, not that the car stopped.
+        // The 2026-10-01 drive lapsed to IDLE this way and lost the parking at its end.
+        let engine = await drivingEngine()
+        _ = await engine.handle(fix(100, speed: 14))
+
+        // Act
+        for seconds in stride(from: 130.0, through: 700, by: 30) {
+            _ = await engine.handle(fix(seconds, accuracy: 600, speed: nil))
+        }
+
+        // Assert
+        #expect(await engine.state == .driving)
+    }
+
+    @Test("A real stop after the tunnel still ends the drive")
+    func stopAfterTunnelEndsTheDrive() async {
+        // Arrange — the window runs from the last blind fix, so the clock restarts, not stops.
+        let engine = await drivingEngine()
+        _ = await engine.handle(fix(100, speed: 14))
+        for seconds in stride(from: 130.0, through: 400, by: 30) {
+            _ = await engine.handle(fix(seconds, accuracy: 600, speed: nil))
+        }
+
+        // Act
+        _ = await engine.handle(fix(570, speed: 0))
+        let beforeWindow = await engine.state
+        _ = await engine.handle(fix(590, speed: 0))
+
+        // Assert — the last blind fix at 400 s puts the boundary at 580 s; the stop at 590 s
+        // confirms the transition it opened.
+        #expect(beforeWindow == .driving)
+        #expect(await engine.state == .candidatePending)
+    }
+
+    @Test("A garage fix of 50 m is not blind and lets a parked car look still")
+    func garageFixIsNotBlind() async {
+        // Arrange — field s16: a parked car under a slab reads 30–55 m without a speed.
+        let engine = await drivingEngine()
+        _ = await engine.handle(fix(100, speed: 14))
+
+        // Act
+        for seconds in stride(from: 130.0, through: 400, by: 30) {
+            _ = await engine.handle(fix(seconds, accuracy: 50, speed: nil))
+        }
+
+        // Assert
+        #expect(await engine.state == .parkingTransition)
     }
 
     @Test("A vehicle_exit after a stop-only candidate closes its resume window")

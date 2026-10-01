@@ -101,6 +101,11 @@ actor ParkingDetectionEngine {
         set { memory.candidateResume = newValue }
     }
 
+    private var candidateRescore: CandidateRescore? {
+        get { memory.candidateRescore }
+        set { memory.candidateRescore = newValue }
+    }
+
     /// The vehicle-activity *level*. Set by `vehicleEnter`, cleared by `vehicleExit` — see
     /// `DetectionEvent` for why this is a level and not a decaying sample.
     private var isVehicleActive: Bool {
@@ -678,7 +683,7 @@ actor ParkingDetectionEngine {
         case .maximumDurationReached:
             evidence.startedAt.addingTimeInterval(DrivingSessionTimeoutPolicy.maximumDuration)
         case .movementIdle:
-            evidence.lastMovingSampleAt?.addingTimeInterval(ParkingTransitionPolicy.movementIdleWindow)
+            evidence.movementIdleAnchor?.addingTimeInterval(ParkingTransitionPolicy.movementIdleWindow)
         case .walkingDetected, .vehicleExit, .carLinkDisconnected, .vehicleEvidenceExpired,
              .authorizationLost, .captureFailed, .smartDetectionDisabled, .fieldTestStopped:
             nil
@@ -817,7 +822,8 @@ actor ParkingDetectionEngine {
         case .candidatePending:
             // An explicit exit is the vehicle ending after all: movement after it is
             // somebody else's journey, not this drive resuming (§3a).
-            return closeCandidateResume()
+            return rescoreStopOnlyCandidate(now: now) { $0.vehicleExitDetected = true }
+                + closeCandidateResume()
         case .idle:
             return []
         }
@@ -834,7 +840,8 @@ actor ParkingDetectionEngine {
             // §3a rule 4 (round 3): the person has left the car, so vehicle evidence after
             // this is a bus or a lift, not the jam moving on. The candidate stands. Stillness
             // does not close it — the Transition API reports STILL inside a car at a light.
-            return closeCandidateResume()
+            return rescoreStopOnlyCandidate(now: now) { $0.walkingAfterVehicle = true }
+                + closeCandidateResume()
         }
         guard var current = transition, checkpoint.state == .parkingTransition else { return [] }
         if walking {
@@ -1232,6 +1239,48 @@ actor ParkingDetectionEngine {
 
     /// Ends a stop-only candidate's resume window, releasing the capture it kept. The
     /// candidate is untouched.
+    /// docs/05 §3a "A stop-only candidate takes the exit that follows it" (2026-10-01).
+    ///
+    /// A stop can confirm a transition seconds before the exit and the walk that say the
+    /// same thing more strongly — on 2026-09-30 and 2026-10-01 the walk came 1–30 s after
+    /// the stop, and the candidate stayed `low`, which posts nothing (§9). Before the drive's
+    /// own window runs out the car has provably not moved on, so the candidate is re-scored on the
+    /// added signal and, if its bucket rises, upgraded in place (`upgradeCandidate`) — same
+    /// id, detection time and location — and announced if this is the first time it
+    /// qualifies. A signal that does not move the bucket is kept for the next one. After the deadline the exit is not used:
+    /// the car may have driven on to park somewhere else.
+    private func rescoreStopOnlyCandidate(
+        now: Date,
+        adding signal: (inout ParkingEvidence) -> Void
+    ) -> [DetectionEffect] {
+        guard checkpoint.state == .candidatePending,
+              var hold = candidateRescore,
+              let current = pendingCandidate,
+              hold.candidateId == current.id,
+              now < hold.deadline
+        else { return [] }
+        signal(&hold.evidence)
+        guard let rescored = ParkingCandidatePolicy.evaluate(
+            hold.evidence,
+            id: current.id,
+            detectedAt: current.detectedAt,
+            lastReliableLocation: current.lastReliableLocation,
+            accuracyBucket: current.accuracyBucket
+        ), rescored.confidenceBucket != current.confidenceBucket
+        else {
+            candidateRescore = hold
+            return [persistedCheckpoint()]
+        }
+
+        pendingCandidate = rescored
+        candidateRescore = hold
+        var effects: [DetectionEffect] = [.upgradeCandidate(rescored)]
+        if rescored.isNotifiable, !current.isNotifiable {
+            effects.append(.issueCandidateNotification(rescored))
+        }
+        return effects + [persistedCheckpoint()]
+    }
+
     private func closeCandidateResume() -> [DetectionEffect] {
         guard candidateResume != nil else { return [] }
         candidateResume = nil
@@ -1544,6 +1593,13 @@ actor ParkingDetectionEngine {
             ? CandidateResume(
                 driveEndedAt: transition.enteredAt,
                 deadline: transition.enteredAt.addingTimeInterval(ParkingTransitionPolicy.transitionWindow)
+            )
+            : nil
+        candidateRescore = Self.isStopOnly(transition, evidence: evidence)
+            ? CandidateRescore(
+                candidateId: candidate.id,
+                deadline: transition.enteredAt.addingTimeInterval(ParkingTransitionPolicy.transitionWindow),
+                evidence: evidence
             )
             : nil
         // §9: `low` posts nothing. The candidate above is already written, so the app still

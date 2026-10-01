@@ -93,7 +93,11 @@ class ParityFixtureTest {
                 "manual_save_then_short_departure.json",
                 "quiet_transition_expires_no_candidate.json",
                 "red_light_no_candidate.json",
+                // docs/05 §3a "A stop-only candidate takes the exit that follows it" (2026-10-01).
+                "stop_candidate_takes_following_exit.json",
                 "subway_commute_underground.json",
+                // docs/05 §3a "A blind fix is not a stop" (2026-10-01).
+                "tunnel_blind_then_parks.json",
                 "tunnel_no_parking.json",
                 "vehicle_then_walk.json",
             ),
@@ -457,6 +461,8 @@ internal fun candidatesPerTravelSession(effects: List<DetectionEffect>): List<In
                 if (!supersedes && session != null) counts[session] -= 1
             }
 
+            // The same candidate, re-scored in place: no new prompt (§3a, 2026-10-01).
+            is DetectionEffect.UpgradeCandidate,
             is DetectionEffect.MarkParkingActive,
             is DetectionEffect.ProposeParkingEnd,
             -> Unit
@@ -492,6 +498,8 @@ internal fun outcomeLabel(effect: DetectionEffect): String? = when (effect) {
     is DetectionEffect.CreateCandidate ->
         "create ${effect.confidence.name.lowercase()} ${effect.reasons.map { it.wire }.sorted().joinToString(",")}"
     is DetectionEffect.RetireCandidate -> "withdraw"
+    is DetectionEffect.UpgradeCandidate ->
+        "upgrade ${effect.upgraded.confidence.name.lowercase()} ${effect.upgraded.reasons.map { it.wire }.sorted().joinToString(",")}"
     is DetectionEffect.ProposeParkingEnd -> "proposeParkingEnd"
     is DetectionEffect.MarkParkingActive,
     is DetectionEffect.PersistCheckpoint,

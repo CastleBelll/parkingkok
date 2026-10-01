@@ -25,6 +25,11 @@ enum DetectionEffect: Sendable, Equatable {
     case issueCandidateNotification(ParkingCandidate)
     /// Retire a candidate: clear the store and withdraw its notification.
     case withdrawCandidate(id: UUID)
+    /// The pending candidate, re-scored in place — docs/05 §3a "A stop-only candidate takes
+    /// the exit that follows it" (2026-10-01). Same id: rewrite the store, count nothing as
+    /// created, add no history row. The engine follows it with `issueCandidateNotification`
+    /// only when this is the first time the candidate qualifies, so one parking buzzes once.
+    case upgradeCandidate(ParkingCandidate)
     /// §6's rule was not met by a transition that closed. An ordinary outcome, surfaced so
     /// a rising count with no candidates is visible in diagnostics rather than silent.
     case candidateRuleUnmet

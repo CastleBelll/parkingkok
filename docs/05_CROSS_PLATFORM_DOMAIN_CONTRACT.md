@@ -204,7 +204,11 @@ line, and the test is named "No travel session produces more than one candidate"
    the same effect list is a supersession (§10a) and changes nothing. Any other withdrawal —
    expiry, a car-link reconnect, a stop-only resume, `user_saved`, `user_kept_parking` — subtracts 1 from the
    session that created that candidate.
-5. Every count must be ≤ 1.
+5. `upgradeCandidate` / `UpgradeCandidate` changes nothing: it is the pending candidate
+   re-scored in place, same id (engine §3a "A stop-only candidate takes the exit that follows
+   it", 2026-10-01). Its outcome-trace label is `upgrade <bucket> <codes>`, written like
+   `create`.
+6. Every count must be ≤ 1.
 
 Pinned values, each by a test of the same name on both runners: engine §17
 `long_stop_in_traffic` gives `[0]` (and its candidate is `low`, withdrawn, never notified); two

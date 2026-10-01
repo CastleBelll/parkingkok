@@ -2031,6 +2031,52 @@ class ParkingDetectionEngineTest {
         DetectionEvent.Location(fix(at(seconds), accuracyM = 8f, speedMps = speedMps, north = north))
 
     @Test
+    fun `blind fixes in a tunnel do not end a drive as movement idle`() {
+        // Arrange — docs/05 §3a "A blind fix is not a stop": speedless 600 m fixes say the sky
+        // is gone, not that the car stopped. The 2026-10-01 drive lapsed to IDLE this way.
+        val moving = drivenFromEnter().handle(DetectionEvent.Location(fix(at(100), accuracyM = 8f, speedMps = 14f)))
+
+        // Act
+        val state = (130L..700L step 30).fold(moving) { acc, seconds ->
+            acc.handle(DetectionEvent.Location(fix(at(seconds), accuracyM = 600f, speedMps = null)))
+        }
+
+        // Assert
+        assertEquals(DetectionState.DRIVING, state.state)
+    }
+
+    @Test
+    fun `a real stop after the tunnel still ends the drive`() {
+        // Arrange — the window runs from the last blind fix, so the clock restarts, not stops.
+        val tunnel = (130L..400L step 30).fold(
+            drivenFromEnter().handle(DetectionEvent.Location(fix(at(100), accuracyM = 8f, speedMps = 14f))),
+        ) { acc, seconds -> acc.handle(DetectionEvent.Location(fix(at(seconds), accuracyM = 600f, speedMps = null))) }
+
+        // Act
+        val beforeWindow = tunnel.handle(DetectionEvent.Location(fix(at(570), accuracyM = 8f, speedMps = 0f)))
+        val afterWindow = beforeWindow.handle(DetectionEvent.Location(fix(at(590), accuracyM = 8f, speedMps = 0f)))
+
+        // Assert — the last blind fix at 400 s puts the boundary at 580 s; the stop at 590 s
+        // confirms the transition it opened.
+        assertEquals(DetectionState.DRIVING, beforeWindow.state)
+        assertEquals(DetectionState.CANDIDATE_PENDING, afterWindow.state)
+    }
+
+    @Test
+    fun `a garage fix of 50 m is not blind and lets a parked car look still`() {
+        // Arrange — field s16: a parked car under a slab reads 30-55 m without a speed.
+        val moving = drivenFromEnter().handle(DetectionEvent.Location(fix(at(100), accuracyM = 8f, speedMps = 14f)))
+
+        // Act
+        val state = (130L..400L step 30).fold(moving) { acc, seconds ->
+            acc.handle(DetectionEvent.Location(fix(at(seconds), accuracyM = 50f, speedMps = null)))
+        }
+
+        // Assert
+        assertEquals(DetectionState.PARKING_TRANSITION, state.state)
+    }
+
+    @Test
     fun `a candidate confirmed only by a stop keeps its resume window open`() {
         // Arrange / Act
         val (state, candidate) = stoppedInTraffic()
@@ -2201,11 +2247,61 @@ class ParkingDetectionEngineTest {
         val walking = pending.handle(DetectionEvent.WalkingEnter(at(300)))
         val boarding = engine.handle(walking, DetectionEvent.VehicleEnter(at(330)))
 
-        // Assert
+        // Assert — the walk re-scored the candidate (§3a "A stop-only candidate takes the exit
+        // that follows it"); the boarding after it leaves that one answerable.
         assertNull(walking.stopOnlyResumeWindow)
+        assertEquals(candidate.id, walking.candidate?.id)
         assertTrue(boarding.effects.none { it is DetectionEffect.RetireCandidate })
         assertEquals(DetectionState.DRIVING_CANDIDATE, boarding.state.state)
-        assertEquals(candidate, boarding.state.candidate)
+        assertEquals(walking.candidate, boarding.state.candidate)
+    }
+
+    @Test
+    fun `a walk before the drive's window closes re-scores a stop-only candidate`() {
+        // Arrange — on 2026-10-01 the walk came a second after the stop that confirmed the
+        // transition, and the candidate stayed low: nothing was posted.
+        val (pending, candidate) = stoppedInTraffic()
+
+        // Act
+        val step = engine.handle(pending, DetectionEvent.WalkingEnter(at(300)))
+
+        // Assert — the same candidate, upgraded in place: nothing withdrawn or created.
+        val upgraded = step.effects.filterIsInstance<DetectionEffect.UpgradeCandidate>().single().upgraded
+        assertTrue(step.effects.none { it is DetectionEffect.RetireCandidate || it is DetectionEffect.CreateCandidate })
+        assertEquals(candidate.id, upgraded.candidateId)
+        assertEquals(ConfidenceBucket.MEDIUM, upgraded.confidence)
+        assertTrue(EvidenceReasonCode.WALKING_AFTER_VEHICLE in upgraded.reasons)
+        assertEquals(candidate.copy(confidence = upgraded.confidence, score = upgraded.score, reasons = upgraded.reasons), step.state.candidate)
+    }
+
+    @Test
+    fun `an exit and then a walk both count towards a stop-only candidate`() {
+        // Arrange — the exit closes the resume window; the walk a second later must still count.
+        val (pending, _) = stoppedInTraffic()
+
+        // Act
+        val exit = engine.handle(pending, DetectionEvent.VehicleExit(at(300)))
+        val walk = engine.handle(exit.state, DetectionEvent.WalkingEnter(at(301)))
+
+        // Assert — the exit alone does not move the bucket; the two together do.
+        assertTrue(exit.effects.none { it is DetectionEffect.UpgradeCandidate })
+        val upgraded = walk.effects.filterIsInstance<DetectionEffect.UpgradeCandidate>().single().upgraded
+        assertEquals(ConfidenceBucket.HIGH, upgraded.confidence)
+        assertTrue(EvidenceReasonCode.VEHICLE_EXIT_DETECTED in upgraded.reasons)
+    }
+
+    @Test
+    fun `an exit after the drive's window leaves a stop-only candidate as it was`() {
+        // Arrange — past the window the car may have driven on and parked somewhere else.
+        val (pending, candidate) = stoppedInTraffic()
+        val deadlineSeconds = 280 + ParkingDetectionEngine.TRANSITION_WINDOW_MILLIS / 1_000
+
+        // Act
+        val step = engine.handle(pending, DetectionEvent.WalkingEnter(at(deadlineSeconds)))
+
+        // Assert
+        assertTrue(step.effects.none { it is DetectionEffect.UpgradeCandidate })
+        assertEquals(candidate, step.state.candidate)
     }
 
     @Test

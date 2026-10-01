@@ -7,6 +7,7 @@ import com.sjstudioz.parkingpin.data.InMemoryPreferencesDataStore
 import com.sjstudioz.parkingpin.data.parking.ParkingDatabase
 import com.sjstudioz.parkingpin.data.parking.RoomParkingRepository
 import com.sjstudioz.parkingpin.data.parking.createTestParkingDatabase
+import com.sjstudioz.parkingpin.domain.detection.CandidateHistoryEntry
 import com.sjstudioz.parkingpin.domain.detection.ParkingCandidate
 import com.sjstudioz.parkingpin.domain.detection.ReliableLocation
 import com.sjstudioz.parkingpin.domain.parking.ConfidenceBucket
@@ -89,6 +90,53 @@ class ParkingCandidateCoordinatorTest {
         assertEquals(candidate.id, coordinator.observePending().first()?.id)
         // The event is about detection, not about the notification.
         assertTrue("parking_candidate_created" in analytics.names)
+    }
+
+    // ── Upgrade in place (docs/05 §3a "A stop-only candidate takes the exit that follows it") ──
+
+    @Test
+    fun `a low candidate upgraded to medium is announced once and keeps its identity`() = runTest {
+        // Arrange
+        val candidate = coordinator.create(evidence(ConfidenceBucket.LOW), location())
+        val createdEvents = analytics.names.size
+
+        // Act
+        coordinator.upgrade(candidate.id, evidence(ConfidenceBucket.MEDIUM))
+
+        // Assert — same id, times and location; announced now; no second creation counted;
+        // and the history has no line for a candidate that never left the slot.
+        val stored = checkNotNull(store.readCandidateOnce())
+        assertEquals(candidate.copy(evidence = evidence(ConfidenceBucket.MEDIUM)), stored)
+        assertEquals(listOf(stored), notifier.showing)
+        assertEquals(createdEvents, analytics.names.size)
+        assertEquals(emptyList<CandidateHistoryEntry>(), store.readCandidateHistoryOnce())
+    }
+
+    @Test
+    fun `an upgrade of a candidate already on screen does not post it again`() = runTest {
+        // Arrange
+        val candidate = coordinator.create(evidence(ConfidenceBucket.MEDIUM), location())
+
+        // Act
+        coordinator.upgrade(candidate.id, evidence(ConfidenceBucket.HIGH))
+
+        // Assert — one buzz for one parking.
+        assertEquals(1, notifier.posted.size)
+        assertEquals(ConfidenceBucket.HIGH, store.readCandidateOnce()?.confidenceBucket)
+    }
+
+    @Test
+    fun `an upgrade for a candidate that has already gone changes nothing`() = runTest {
+        // Arrange
+        val candidate = coordinator.create(evidence(ConfidenceBucket.LOW), location())
+        coordinator.reject(candidate.id)
+
+        // Act
+        coordinator.upgrade(candidate.id, evidence(ConfidenceBucket.HIGH))
+
+        // Assert
+        assertNull(store.readCandidateOnce())
+        assertEquals(emptyList<ParkingCandidate>(), notifier.posted)
     }
 
     @Test

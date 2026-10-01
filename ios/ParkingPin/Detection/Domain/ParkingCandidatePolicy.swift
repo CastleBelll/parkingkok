@@ -284,7 +284,8 @@ enum ParkingTransitionPolicy {
 
     /// Whether movement has been quiet long enough to stop calling this a drive.
     ///
-    /// `lastMovingSampleAt` is `nil` until the session has seen movement at all, and that
+    /// `anchor` is `DrivingEvidence.movementIdleAnchor`: the last moving sample, or a later
+    /// blind fix. It is `nil` until the session has seen movement at all, and that
     /// case is deliberately not idle: a session that has not yet moved is what
     /// `DrivingSessionTimeoutPolicy.vehicleEvidenceTimeout` already governs, and treating
     /// it as a parking transition would open a candidate for a car that never left.
@@ -294,8 +295,8 @@ enum ParkingTransitionPolicy {
     /// descent into a garage.
     static let nearEndHorizon: TimeInterval = transitionWindow
 
-    static func isMovementIdle(lastMovingSampleAt: Date?, now: Date) -> Bool {
-        guard let lastMovingSampleAt else { return false }
-        return now.timeIntervalSince(lastMovingSampleAt) >= movementIdleWindow
+    static func isMovementIdle(anchor: Date?, now: Date) -> Bool {
+        guard let anchor else { return false }
+        return now.timeIntervalSince(anchor) >= movementIdleWindow
     }
 }
