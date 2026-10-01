@@ -463,33 +463,11 @@ Cloud Functions
 Remote Config templates
 ```
 
-환경:
-
-```text
-parkingpin-dev     ← DEV, STAGING 빌드 / Android debug
-parkingpin-51147   ← PROD 빌드 / Android release (스토어)
-```
-
-**결정 (2026-09-29): 프로젝트는 두 개다.** 원래 dev/staging/prod 세 개를 적었지만, 1인 개발에서
-staging 프로젝트가 따로 막아 주는 위험이 없다 — 번들 ID를 하나로 합친 것(CLAUDE.md)과 같은
-판단이다. 분리가 반드시 지켜야 하는 것은 하나뿐이다: **개발 빌드의 테스트 계정과 analytics가
-운영 데이터에 섞이지 않는 것.** STAGING 빌드는 dev 프로젝트를 쓴다. QA 인원이 생기면 staging
-프로젝트를 다시 검토한다.
-
-설정 파일은 커밋하지 않고(§14), 위치가 환경을 결정한다:
-
-| 플랫폼 | dev | prod |
-|---|---|---|
-| iOS | `ios/ParkingPin/Firebase/Environments/Dev/GoogleService-Info.plist` | `…/Environments/Prod/GoogleService-Info.plist` |
-| Android | `android/app/src/debug/google-services.json` | `android/app/src/release/google-services.json` |
-
-- iOS는 `EXCLUDED_SOURCE_FILE_NAMES`(Dev/Staging/Prod.xcconfig)로 다른 환경의 파일을 번들에서
-  뺀다. DEV/STAGING 번들에 prod 파일은 들어갈 수 없고, `FirebaseEnvironmentTests`가 DEV 번들의
-  `PROJECT_ID == parkingpin-dev`를 고정한다.
-- Android는 google-services 플러그인이 빌드 타입별 파일을 고른다. 둘 다 없으면 플러그인을 적용하지
-  않으므로 CI와 fork는 지금처럼 Firebase 없이 빌드된다.
-- 릴리스 CI는 `firebase-production` environment secret에서 prod 파일만 주입한다.
-- Functions/Rules 배포는 `.firebaserc`(커밋 안 함) alias `dev`/`prod`로 대상을 고른다.
+환경: **프로젝트 하나, `parkingpin-51147`** (2026-10-01 결정). DEV/STAGING/PROD 빌드와
+Android debug/release가 모두 같은 프로젝트를 쓴다. bundle id를 하나로 합친 것과 같은 이유다 —
+개발자 한 명, 기기 한 대에 환경별 프로젝트는 맞춰 둘 것만 늘린다. 개발 빌드의 analytics가
+운영 데이터에 섞이는 비용은 감수한다. 설정 파일(`ios/ParkingPin/Firebase/GoogleService-Info.plist`,
+`android/app/google-services.json`)은 커밋하지 않는다.
 
 production Firebase 변경은 mobile app과 별도로 backwards-compatible하게 배포한다.
 
