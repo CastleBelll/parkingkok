@@ -180,4 +180,41 @@ struct ParkingMapPointTests {
         #expect(url.absoluteString.contains("daddr=37.500000,127.500000"))
         #expect(url.absoluteString.filter { $0 == "," }.count == 1)
     }
+
+    @Test("Kakao Map gets a walking route to the point")
+    func kakaoWalkingRoute() throws {
+        // Arrange
+        let point = try #require(ParkingMapPoint(session(location: location())))
+
+        // Act
+        let url = try #require(ParkingDirections.MapApp.kakao.url(for: point))
+
+        // Assert
+        #expect(url.absoluteString == "kakaomap://route?ep=37.123457,127.987654&by=FOOT")
+    }
+
+    @Test("Naver Map gets a walking route named with the FR-008 label")
+    func naverWalkingRoute() throws {
+        // Arrange
+        let point = try #require(ParkingMapPoint(session(location: location())))
+
+        // Act
+        let url = try #require(ParkingDirections.MapApp.naver.url(for: point))
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+
+        // Assert
+        #expect(url.scheme == "nmap")
+        #expect(url.host == "route")
+        #expect(url.path == "/walk")
+        #expect(items.first { $0.name == "dlat" }?.value == "37.123457")
+        #expect(items.first { $0.name == "dlng" }?.value == "127.987654")
+        #expect(items.first { $0.name == "dname" }?.value == "마지막으로 확인된 위치")
+    }
+
+    @Test("Apple Maps keeps its walking directions link")
+    func appleWalkingRoute() throws {
+        let point = try #require(ParkingMapPoint(session(location: location())))
+        #expect(ParkingDirections.MapApp.apple.url(for: point) == ParkingDirections.url(for: point))
+    }
 }
+

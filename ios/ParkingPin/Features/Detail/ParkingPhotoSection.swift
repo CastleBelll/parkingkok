@@ -79,7 +79,12 @@ struct ParkingPhotoCard: View {
                     .scaledToFill()
                     .frame(maxWidth: .infinity)
                     .frame(height: Self.imageHeight)
+                    .clipped()
                     .clipShape(.rect(cornerRadius: PKRadius.row))
+                    // `scaledToFill` lays a portrait photo out far taller than the 200 pt it
+                    // shows, and clipping does not clip hit-testing: without this the tap
+                    // area reached up over 길찾기 (audit 2026-10-01).
+                    .contentShape(.rect(cornerRadius: PKRadius.row))
             }
             .buttonStyle(.plain)
             .accessibilityLabel("주차 사진 크게 보기")
