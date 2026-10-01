@@ -125,7 +125,30 @@ targets:
       base:
         GENERATE_INFOPLIST_FILE: YES
 
+  # Device-review smoke tests (2026-10-01): taps the controls a user taps and checks what
+  # happens, on the seeded DEV build. Its own scheme so CI's unit run stays fast.
+  ParkingPinUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: ParkingPinUITests
+    dependencies:
+      - target: ParkingPin
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: ParkingPin
+
 schemes:
+  ParkingPinUITests:
+    build:
+      targets:
+        ParkingPin: all
+        ParkingPinUITests: [test]
+    test:
+      config: DEV
+      targets:
+        - ParkingPinUITests
   ParkingPin:
     build:
       targets:

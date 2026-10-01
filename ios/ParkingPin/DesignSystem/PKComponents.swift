@@ -145,9 +145,8 @@ struct PKPrimaryButtonStyle: ButtonStyle {
         configuration.label
             .font(PKTypography.row)
             .foregroundStyle(Color.white)
-            .frame(maxWidth: .infinity, minHeight: PKSize.minimumTouchTarget)
-            .padding(.vertical, PKSpacing.l)
             .padding(.horizontal, PKSpacing.l)
+            .frame(maxWidth: .infinity, minHeight: PKSize.primaryButtonHeight)
             .background {
                 RoundedRectangle(cornerRadius: PKRadius.button)
                     .fill(PKColor.primary)
@@ -164,8 +163,7 @@ struct PKCompactPrimaryButtonStyle: ButtonStyle {
         configuration.label
             .font(PKTypography.row)
             .foregroundStyle(Color.white)
-            .frame(maxWidth: .infinity, minHeight: PKSize.minimumTouchTarget)
-            .padding(.vertical, PKSpacing.m)
+            .frame(maxWidth: .infinity, minHeight: PKSize.secondaryButtonHeight)
             .background {
                 RoundedRectangle(cornerRadius: PKRadius.button)
                     .fill(PKColor.primary)
@@ -196,13 +194,14 @@ struct PKPrimaryActionButton: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: PKSpacing.s) {
+            VStack(spacing: 2) {
                 Label(title, systemImage: systemImage)
-                    .font(PKTypography.sectionTitle)
+                    .font(PKTypography.row)
                 Text(subtitle)
-                    .font(PKTypography.caption)
-                    .opacity(0.9)
+                    .font(.caption2)
+                    .opacity(0.85)
             }
+            .padding(.vertical, PKSpacing.s)
         }
         .buttonStyle(PKPrimaryButtonStyle())
         .accessibilityElement(children: .combine)
@@ -217,9 +216,9 @@ struct PKSoftButtonStyle: ButtonStyle {
         configuration.label
             .font(PKTypography.row)
             .foregroundStyle(PKColor.primary)
-            .frame(maxWidth: .infinity, minHeight: PKSize.minimumTouchTarget)
-            .padding(.vertical, PKSpacing.m)
+            .frame(maxWidth: .infinity, minHeight: PKSize.secondaryButtonHeight)
             .background(PKColor.primarySoft, in: .rect(cornerRadius: PKRadius.button))
+            .contentShape(.rect(cornerRadius: PKRadius.button))
             .pkPressFeedback(configuration.isPressed)
     }
 }
@@ -240,8 +239,7 @@ struct PKOutlineButtonStyle: ButtonStyle {
         configuration.label
             .font(PKTypography.row)
             .foregroundStyle(tint)
-            .frame(maxWidth: .infinity, minHeight: PKSize.minimumTouchTarget)
-            .padding(.vertical, PKSpacing.m)
+            .frame(maxWidth: .infinity, minHeight: PKSize.secondaryButtonHeight)
             .background {
                 RoundedRectangle(cornerRadius: PKRadius.button)
                     .strokeBorder(PKColor.divider, lineWidth: PKSize.hairline)
@@ -294,31 +292,6 @@ struct PKGroupedRowButtonStyle: ButtonStyle {
     }
 }
 
-/// A filter chip (`04-history-list.png`'s 전체 / 자동 감지 / 직접 저장).
-///
-/// Selection is a fill swap in the mock. It lives in the design system rather than in the
-/// history screen so the chip presses like every other control in the app — one press
-/// definition, reused, not one per screen.
-struct PKChipButtonStyle: ButtonStyle {
-    let isSelected: Bool
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(PKTypography.caption)
-            .foregroundStyle(isSelected ? Color.white : PKColor.textSecondary)
-            .frame(maxWidth: .infinity, minHeight: PKSize.minimumTouchTarget)
-            .background {
-                RoundedRectangle(cornerRadius: PKRadius.button)
-                    .fill(isSelected ? PKColor.primary : PKColor.surface)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: PKRadius.button)
-                            .strokeBorder(PKColor.divider, lineWidth: isSelected ? 0 : PKSize.hairline)
-                    }
-            }
-            .pkPressFeedback(configuration.isPressed)
-    }
-}
-
 /// One key of the floor stepper (`−` / `+`).
 ///
 /// `01-home-main.png` sizes these to their contents — two compact rounded squares with a
@@ -327,14 +300,15 @@ struct PKChipButtonStyle: ButtonStyle {
 /// §6 ranks it fourth, under the floor, the zone and the elapsed time.
 struct PKStepperKeyStyle: ButtonStyle {
     /// Wide enough for a comfortable thumb, narrow enough to stay a key rather than a bar.
-    static let width: CGFloat = 76
+    static let width: CGFloat = 60
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.title2.weight(.bold))
+            .font(.title3.weight(.semibold))
             .foregroundStyle(PKColor.primary)
-            .frame(width: Self.width, height: PKSize.minimumTouchTarget + PKSpacing.s)
-            .background(PKColor.primarySoft, in: .rect(cornerRadius: PKRadius.button))
+            .frame(width: Self.width, height: PKSize.minimumTouchTarget)
+            .background(PKColor.primarySoft, in: .rect(cornerRadius: PKRadius.chip))
+            .contentShape(.rect(cornerRadius: PKRadius.chip))
             .pkPressFeedback(configuration.isPressed)
     }
 }
