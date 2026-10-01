@@ -102,6 +102,7 @@ class NavBackStackTest {
             ParkingpinRoute.Settings,
             ParkingpinRoute.Diagnostics,
             ParkingpinRoute.Detail("id-with-dashes-1234"),
+            ParkingpinRoute.EditRecord("id-with-dashes-1234"),
             ParkingpinRoute.Confirm("candidate-with-dashes-1234"),
         )
 

@@ -66,6 +66,7 @@ import com.sjstudioz.parkingpin.ui.history.HistoryScreen
 import com.sjstudioz.parkingpin.ui.history.HistoryViewModel
 import com.sjstudioz.parkingpin.ui.home.HomeScreen
 import com.sjstudioz.parkingpin.ui.home.HomeViewModel
+import com.sjstudioz.parkingpin.ui.manual.EditParkingViewModel
 import com.sjstudioz.parkingpin.ui.manual.ManualParkingScreen
 import com.sjstudioz.parkingpin.ui.manual.ManualParkingViewModel
 import com.sjstudioz.parkingpin.ui.motion.LocalMotionEnabled
@@ -198,7 +199,14 @@ fun ParkingpinApp(
             is ParkingpinRoute.Detail -> DetailRoute(
                 container = container,
                 recordId = route.recordId,
+                onEdit = { backStack = backStack.push(ParkingpinRoute.EditRecord(route.recordId)) },
                 onBack = { backStack = backStack.pop() },
+            )
+
+            is ParkingpinRoute.EditRecord -> EditRecordRoute(
+                container = container,
+                recordId = route.recordId,
+                onDone = { backStack = backStack.pop() },
             )
 
             ParkingpinRoute.History -> HistoryRoute(
@@ -358,6 +366,7 @@ private fun HomeRoute(container: AppContainer, onNavigate: (ParkingpinRoute) -> 
         onPhotoEntry = { onNavigate(ParkingpinRoute.ManualEntry(fromPillarPhoto = true)) },
         onOpenCandidate = { onNavigate(ParkingpinRoute.Confirm(it)) },
         onOpenDetail = { onNavigate(ParkingpinRoute.Detail(it)) },
+        onEditRecord = { onNavigate(ParkingpinRoute.EditRecord(it)) },
         onOpenHistory = { onNavigate(ParkingpinRoute.History) },
         onOpenSettings = { onNavigate(ParkingpinRoute.Settings) },
         // docs/10 §7b: the bell opens what the app raised, not the switches that turn it
@@ -403,7 +412,7 @@ private fun ManualEntryRoute(
         // then take a second. Only `onCancelled` says the photo is not coming.
         onHide = { capturing = false },
         onPhotoSelected = viewModel::onPhotoCaptured,
-        onCameraUnavailable = viewModel::onCaptureDismissed,
+        onCameraUnavailable = viewModel::onCameraUnavailable,
         onCancelled = viewModel::onCaptureDismissed,
     )
 
@@ -419,7 +428,7 @@ private fun ManualEntryRoute(
 }
 
 @Composable
-private fun DetailRoute(container: AppContainer, recordId: String, onBack: () -> Unit) {
+private fun DetailRoute(container: AppContainer, recordId: String, onEdit: () -> Unit, onBack: () -> Unit) {
     PreparePillarReader(container)
     val viewModel: ParkingDetailViewModel =
         viewModel(
@@ -450,6 +459,29 @@ private fun DetailRoute(container: AppContainer, recordId: String, onBack: () ->
         onDismissPillarSuggestion = viewModel::onDismissPillarSuggestion,
         onBack = onBack,
         onShare = { state.record?.let { shareParking(context, it) } },
+        onEdit = onEdit,
+    )
+}
+
+@Composable
+private fun EditRecordRoute(container: AppContainer, recordId: String, onDone: () -> Unit) {
+    val viewModel: EditParkingViewModel =
+        viewModel(key = "edit-$recordId", factory = EditParkingViewModel.factory(container, recordId))
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+    // Back to the detail once written — or at once if the record was deleted meanwhile.
+    LaunchedEffect(state.savedRecordId, state.candidateGone) {
+        if (state.savedRecordId != null || state.candidateGone) onDone()
+    }
+
+    ManualParkingScreen(
+        state = state,
+        onFloorChange = viewModel::onFloorChange,
+        onZoneChange = viewModel::onZoneChange,
+        onSpotChange = viewModel::onSpotChange,
+        onMemoChange = viewModel::onMemoChange,
+        onSave = viewModel::onSave,
+        onBack = onDone,
     )
 }
 

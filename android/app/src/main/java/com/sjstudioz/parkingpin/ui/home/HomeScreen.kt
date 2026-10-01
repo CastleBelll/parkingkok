@@ -80,6 +80,7 @@ import com.sjstudioz.parkingpin.ui.motion.LocalMotionEnabled
 import com.sjstudioz.parkingpin.ui.motion.MotionDurations
 import com.sjstudioz.parkingpin.ui.motion.pressScale
 import com.sjstudioz.parkingpin.ui.UiNotice
+import com.sjstudioz.parkingpin.ui.messageRes
 import com.sjstudioz.parkingpin.ui.photo.ParkingPhotoPicker
 import com.sjstudioz.parkingpin.ui.photo.PillarSuggestionCard
 import com.sjstudioz.parkingpin.ui.format.dayText
@@ -117,6 +118,8 @@ fun HomeScreen(
     onAcceptParkingEnd: () -> Unit = {},
     /** docs/05 §11a `아직 주차 중`. */
     onKeepParking: () -> Unit = {},
+    /** `수정` of a record — reached from the hero when the floor is empty (audit 2026-10-01). */
+    onEditRecord: (String) -> Unit = {},
 ) {
     var pickingPhoto by remember { mutableStateOf(false) }
 
@@ -150,6 +153,8 @@ fun HomeScreen(
                 onPhotoEntry = onPhotoEntry,
                 onAcceptParkingEnd = onAcceptParkingEnd,
                 onKeepParking = onKeepParking,
+                onEnterFloor = { active?.let { onEditRecord(it.id) } },
+                onOpenDetail = { active?.let { onOpenDetail(it.id) } },
             )
         }
         val candidateId = state.pendingCandidateId
@@ -183,10 +188,7 @@ fun HomeScreen(
                     hasPhoto = state.hasPhoto,
                     photoBusy = state.photoBusy,
                     onDirections = onDirections,
-                    onPhoto = {
-                        // The viewer lives on the detail screen; adding one starts here.
-                        if (state.hasPhoto) onOpenDetail(active.id) else pickingPhoto = true
-                    },
+                    onPhoto = { pickingPhoto = true },
                     onOpenDetail = { onOpenDetail(active.id) },
                     onEndParking = onEndParking,
                     // One primary CTA per screen: while the departure is asked, its
@@ -280,6 +282,8 @@ private fun HeroSlot(
     onPhotoEntry: () -> Unit,
     onAcceptParkingEnd: () -> Unit,
     onKeepParking: () -> Unit,
+    onEnterFloor: () -> Unit,
+    onOpenDetail: () -> Unit,
 ) {
     val motionEnabled = LocalMotionEnabled.current
     AnimatedContent(
@@ -310,6 +314,8 @@ private fun HeroSlot(
                 onStepFloor = onStepFloor,
                 onAcceptParkingEnd = onAcceptParkingEnd,
                 onKeepParking = onKeepParking,
+                onEnterFloor = onEnterFloor,
+                onOpenDetail = onOpenDetail,
             )
         }
     }
@@ -330,6 +336,8 @@ private fun ActiveParkingCard(
     onStepFloor: (Int) -> Unit,
     onAcceptParkingEnd: () -> Unit,
     onKeepParking: () -> Unit,
+    onEnterFloor: () -> Unit,
+    onOpenDetail: () -> Unit,
 ) {
     // One step nearer than the rows below it: this is the card the screen is about.
     ParkingpinCard {
@@ -394,6 +402,9 @@ private fun ActiveParkingCard(
                     pinLabel = record.floor?.displayLabel,
                     zoneLabel = record.zone,
                     pinSize = 26.dp,
+                    // A map looks like a way into the parking; it opens its detail (audit
+                    // 2026-10-01 — it used to swallow the tap).
+                    onClick = onOpenDetail,
                 )
             }
         }
@@ -405,7 +416,7 @@ private fun ActiveParkingCard(
         }
 
         Spacer(Modifier.height(MaterialTheme.spacing.large))
-        FloorStepper(floor = record.floor, onStepFloor = onStepFloor)
+        FloorStepper(floor = record.floor, onStepFloor = onStepFloor, onEnterFloor = onEnterFloor)
 
         if (asksParkingEnd) {
             Spacer(Modifier.height(MaterialTheme.spacing.large))
@@ -526,8 +537,17 @@ private fun FloorHero(floor: Floor?, spokenPrefix: String) {
  * minimum in docs/01_PRODUCT_REQUIREMENTS.md §8.
  */
 @Composable
-private fun FloorStepper(floor: Floor?, onStepFloor: (Int) -> Unit) {
-    val steppable = floor?.isSteppable == true
+private fun FloorStepper(floor: Floor?, onStepFloor: (Int) -> Unit, onEnterFloor: () -> Unit) {
+    // No floor at all — a detection confirmed without one — has nothing to step. The keys
+    // gave way to the one thing that helps, entering it (audit 2026-10-01: they sat disabled
+    // with a reason about a typed floor that did not exist).
+    if (floor == null) {
+        TextButton(onClick = onEnterFloor, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.home_floor_enter))
+        }
+        return
+    }
+    val steppable = floor.isSteppable
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
         Row(
             horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.large),
@@ -673,26 +693,22 @@ private fun PrimaryActions(
                 onClick = onDirections,
                 trailing = { RowChevron(enabled = canOpenMap) },
             )
-            HorizontalDivider(
-                modifier = Modifier.padding(start = MaterialTheme.spacing.large),
-                color = MaterialTheme.colorScheme.outlineVariant,
-            )
-            ParkingpinRow(
-                title = stringResource(
-                    if (hasPhoto) R.string.home_photo_view else R.string.home_photo_add,
-                ),
-                supporting = stringResource(
-                    if (hasPhoto) {
-                        R.string.home_photo_view_caption
-                    } else {
-                        R.string.home_photo_add_caption
-                    },
-                ),
-                iconRes = R.drawable.ic_photo,
-                enabled = !photoBusy,
-                onClick = onPhoto,
-                trailing = { RowChevron(enabled = !photoBusy) },
-            )
+            // Only to add one. With a photo this row led to the detail screen — the same
+            // place as 주차 상세 보기 below it (audit 2026-10-01), where the photo lives.
+            if (!hasPhoto) {
+                HorizontalDivider(
+                    modifier = Modifier.padding(start = MaterialTheme.spacing.large),
+                    color = MaterialTheme.colorScheme.outlineVariant,
+                )
+                ParkingpinRow(
+                    title = stringResource(R.string.home_photo_add),
+                    supporting = stringResource(R.string.home_photo_add_caption),
+                    iconRes = R.drawable.ic_photo,
+                    enabled = !photoBusy,
+                    onClick = onPhoto,
+                    trailing = { RowChevron(enabled = !photoBusy) },
+                )
+            }
             // Detail used to sit in a card of its own. Three actions in two cards is the
             // stack of panels the design harness calls the AI dashboard: the cards were
             // drawing boundaries where the content has none. One group, divided.
@@ -724,14 +740,7 @@ private fun PrimaryActions(
 private fun NoticeCard(notice: UiNotice, onDismiss: () -> Unit) {
     ParkingpinCard(contentPadding = MaterialTheme.spacing.large) {
         Text(
-            text = stringResource(
-                when (notice) {
-                    UiNotice.PHOTO_UNREADABLE -> R.string.notice_photo_unreadable
-                    UiNotice.PHOTO_NOT_SAVED -> R.string.notice_photo_not_saved
-                    UiNotice.CAMERA_UNAVAILABLE -> R.string.notice_camera_unavailable
-                    UiNotice.NO_MAPS_APP -> R.string.notice_no_maps_app
-                },
-            ),
+            text = stringResource(notice.messageRes()),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurface,
         )

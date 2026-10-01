@@ -125,6 +125,7 @@
          row that read like a different kind of thing — and iOS already said 층 미입력. -->
     <string name="home_no_floor">층 미입력</string>
     <string name="home_floor_hint">층을 변경할 수 있어요</string>
+    <string name="home_floor_enter">층 입력</string>
     <string name="home_floor_hint_fixed">직접 입력한 층이라 - / + 로 바꿀 수 없어요</string>
     <string name="home_floor_decrease">한 층 아래로</string>
     <string name="home_floor_increase">한 층 위로</string>
@@ -137,8 +138,6 @@
     <string name="home_map_caption_none">위치 없이 저장한 기록이라 지도를 열 수 없어요</string>
     <string name="home_photo_add">사진 추가</string>
     <string name="home_photo_add_caption">주차한 자리를 사진으로 남겨두세요</string>
-    <string name="home_photo_view">사진 보기</string>
-    <string name="home_photo_view_caption">저장한 주차 사진을 확인하세요</string>
     <string name="home_recent_title">최근 주차</string>
     <string name="home_recent_all">전체보기</string>
     <string name="home_recent_empty">아직 저장된 주차 기록이 없어요</string>
@@ -191,7 +190,7 @@
 
     <!-- Manual parking entry (FR-001) -->
     <string name="manual_title">주차 위치 저장</string>
-    <string name="manual_subtitle">기억나는 만큼만 적어도 괜찮아요. 나중에 층은 바꿀 수 있어요.</string>
+    <string name="manual_subtitle">기억나는 만큼만 적어도 괜찮아요. 저장한 뒤에도 상세 화면에서 고칠 수 있어요.</string>
     <string name="manual_floor_label">층</string>
     <string name="manual_floor_placeholder">예) B3, 2F, 옥상</string>
     <string name="manual_floor_help">B3 이나 2F 처럼 적으면 홈에서 - / + 로 바꿀 수 있어요</string>
@@ -210,6 +209,9 @@
     <!-- Parking detail (design-references/03-parking-detail.png) -->
     <string name="detail_title">주차 위치</string>
     <string name="detail_share">위치 보내기</string>
+    <string name="detail_edit">수정</string>
+    <string name="edit_title">주차 정보 수정</string>
+    <string name="edit_subtitle">층, 구역, 번호, 메모를 고칠 수 있어요.</string>
     <string name="detail_past_title">지난 주차 기록</string>
     <string name="shortcut_active_parking_short">주차 위치</string>
     <string name="shortcut_active_parking_long">지금 주차한 위치 보기</string>
@@ -237,6 +239,8 @@
     <string name="detail_photo_saved_at">%1$s에 저장됨</string>
     <string name="detail_photo_replace">사진 다시 고르기</string>
     <string name="detail_photo_delete">사진 삭제</string>
+    <string name="detail_photo_delete_confirm_title">이 사진을 삭제할까요?</string>
+    <string name="detail_photo_delete_confirm_body">삭제한 사진은 되돌릴 수 없어요.</string>
     <string name="detail_photo_close">닫기</string>
     <string name="detail_photo_missing">사진을 불러올 수 없어요</string>
     <string name="detail_photo_empty">아직 사진이 없어요. 기둥 번호나 주변을 찍어두면 찾기 쉬워요.</string>
@@ -251,6 +255,8 @@
     <string name="notice_photo_unreadable">고른 파일에서 사진을 읽지 못했어요. 다른 사진으로 시도해 주세요.</string>
     <string name="notice_photo_not_saved">사진을 저장하지 못했어요. 저장 공간을 확인해 주세요. 주차 기록은 그대로예요.</string>
     <string name="notice_camera_unavailable">카메라 앱을 찾지 못했어요. 앨범에서 고를 수 있어요.</string>
+    <string name="notice_answer_not_saved">답을 저장하지 못했어요. 다시 눌러 주세요.</string>
+    <string name="notice_photo_not_removed">사진을 지우지 못했어요. 다시 시도해 주세요.</string>
     <string name="notice_no_maps_app">지도 앱을 찾지 못했어요. 지도 앱을 설치하면 길찾기를 열 수 있어요.</string>
 
     <!-- History (design-references/04-history-list.png) -->

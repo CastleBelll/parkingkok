@@ -56,6 +56,7 @@ import com.sjstudioz.parkingpin.domain.photo.PhotoSource
 import com.sjstudioz.parkingpin.theme.ParkingpinTheme
 import com.sjstudioz.parkingpin.theme.spacing
 import com.sjstudioz.parkingpin.ui.UiNotice
+import com.sjstudioz.parkingpin.ui.messageRes
 import com.sjstudioz.parkingpin.ui.components.DetailHeader
 import com.sjstudioz.parkingpin.ui.components.IconChip
 import com.sjstudioz.parkingpin.ui.components.LocationPreviewCard
@@ -102,10 +103,12 @@ fun ParkingDetailScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     onShare: () -> Unit = {},
+    onEdit: () -> Unit = {},
 ) {
     var confirmingDelete by remember { mutableStateOf(false) }
     var pickingPhoto by remember { mutableStateOf(false) }
     var viewingPhoto by remember { mutableStateOf(false) }
+    var confirmingPhotoRemoval by remember { mutableStateOf(false) }
 
     ParkingpinScreen(
         modifier = modifier,
@@ -113,8 +116,15 @@ fun ParkingDetailScreen(
             DetailHeader(
                 title = stringResource(R.string.detail_title),
                 onBack = onBack,
-                trailing = if (state.record?.isActive == true) {
-                    { ShareButton(onShare) }
+                // 수정 on every record, finished ones included: a wrong or missing floor is
+                // worth fixing after the fact too (audit 2026-10-01).
+                trailing = if (state.record != null) {
+                    {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (state.record.isActive) ShareButton(onShare)
+                            TextButton(onClick = onEdit) { Text(stringResource(R.string.detail_edit)) }
+                        }
+                    }
                 } else {
                     null
                 },
@@ -192,11 +202,30 @@ fun ParkingDetailScreen(
     if (viewingPhoto) {
         PhotoViewer(
             photo = state.photo,
-            onRemove = {
-                viewingPhoto = false
-                onRemovePhoto()
-            },
+            // Asked first: one tap used to delete the only photo of the pillar, with no
+            // way back (audit 2026-10-01).
+            onRemove = { confirmingPhotoRemoval = true },
             onDismiss = { viewingPhoto = false },
+        )
+    }
+
+    if (confirmingPhotoRemoval) {
+        AlertDialog(
+            onDismissRequest = { confirmingPhotoRemoval = false },
+            title = { Text(stringResource(R.string.detail_photo_delete_confirm_title)) },
+            text = { Text(stringResource(R.string.detail_photo_delete_confirm_body)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmingPhotoRemoval = false
+                        viewingPhoto = false
+                        onRemovePhoto()
+                    },
+                ) { Text(stringResource(R.string.action_delete), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmingPhotoRemoval = false }) { Text(stringResource(R.string.action_cancel)) }
+            },
         )
     }
 
@@ -573,14 +602,7 @@ private fun PhotoViewer(
 private fun NoticeCard(notice: UiNotice, onDismiss: () -> Unit) {
     ParkingpinCard(contentPadding = MaterialTheme.spacing.large) {
         Text(
-            text = stringResource(
-                when (notice) {
-                    UiNotice.PHOTO_UNREADABLE -> R.string.notice_photo_unreadable
-                    UiNotice.PHOTO_NOT_SAVED -> R.string.notice_photo_not_saved
-                    UiNotice.CAMERA_UNAVAILABLE -> R.string.notice_camera_unavailable
-                    UiNotice.NO_MAPS_APP -> R.string.notice_no_maps_app
-                },
-            ),
+            text = stringResource(notice.messageRes()),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurface,
         )

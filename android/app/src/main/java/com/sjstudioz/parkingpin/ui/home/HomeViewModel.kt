@@ -119,9 +119,9 @@ class HomeViewModel(
     /** §11a's pending departure question, as stored. */
     private val observeEndProposal: () -> Flow<ParkingEndProposal?> = { flowOf(null) },
     /** `주차 종료` on the question: closes the record at the departure time. Never throws. */
-    private val acceptEndProposal: suspend () -> Unit = {},
+    private val acceptEndProposal: suspend () -> Boolean = { true },
     /** `아직 주차 중` on the question: keeps the record, tells the engine. Never throws. */
-    private val keepParking: suspend () -> Unit = {},
+    private val keepParking: suspend () -> Boolean = { true },
     /** Ending the parking by hand drops the question with it. */
     private val withdrawEndProposal: suspend () -> Unit = {},
     private val adjustParkingFloor: AdjustParkingFloorUseCase,
@@ -175,12 +175,15 @@ class HomeViewModel(
 
     /** §11a `주차 종료`: the record ends when the car pulled away, not now. */
     fun onAcceptParkingEnd() {
-        viewModelScope.launch { acceptEndProposal() }
+        viewModelScope.launch { if (!acceptEndProposal()) notice.value = UiNotice.ANSWER_NOT_SAVED }
     }
 
-    /** §11a `아직 주차 중`. */
+    /**
+     * §11a `아직 주차 중`. A failed write leaves the question up, and says so: it used to stay
+     * up with no word, and the button looked dead (audit 2026-10-01).
+     */
     fun onKeepParking() {
-        viewModelScope.launch { keepParking() }
+        viewModelScope.launch { if (!keepParking()) notice.value = UiNotice.ANSWER_NOT_SAVED }
     }
 
     fun onStepFloor(delta: Int) {

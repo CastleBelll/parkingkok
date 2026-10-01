@@ -276,7 +276,8 @@ private val WIDE_PADDING: Dp = 16.dp
 private val TIGHT_GAP: Dp = 4.dp
 private val STEPPER_GAP: Dp = 12.dp
 private val KEY_WIDTH: Dp = 52.dp
-private val KEY_HEIGHT: Dp = 40.dp
+/** The minimum touch target (docs/01 §8); 40 dp was under it (audit 2026-10-01). */
+private val KEY_HEIGHT: Dp = 48.dp
 private val KEY_RADIUS: Dp = 12.dp
 
 private val LABEL_SIZE = 12.sp

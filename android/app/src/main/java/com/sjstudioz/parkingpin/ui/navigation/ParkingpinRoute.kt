@@ -48,6 +48,9 @@ sealed interface ParkingpinRoute {
     /** `03-parking-detail.png`. */
     data class Detail(val recordId: String) : ParkingpinRoute
 
+    /** `수정` from the detail screen: the manual form, filled with the record. */
+    data class EditRecord(val recordId: String) : ParkingpinRoute
+
     /** `04-history-list.png`. */
     data object History : ParkingpinRoute
 
@@ -81,6 +84,7 @@ sealed interface ParkingpinRoute {
 internal object ParkingpinRouteCodec {
 
     private const val DETAIL_PREFIX = "detail:"
+    private const val EDIT_PREFIX = "edit:"
     private const val CONFIRM_PREFIX = "confirm:"
     private const val MANUAL_CONFIRM_PREFIX = "manual:"
     private const val PILLAR = "pillar"
@@ -97,6 +101,7 @@ internal object ParkingpinRouteCodec {
             route.candidateId?.let { prefix + it } ?: if (route.fromPillarPhoto) PILLAR else "manual"
         }
         is ParkingpinRoute.Detail -> DETAIL_PREFIX + route.recordId
+        is ParkingpinRoute.EditRecord -> EDIT_PREFIX + route.recordId
         is ParkingpinRoute.Confirm -> CONFIRM_PREFIX + route.candidateId
     }
 
@@ -108,6 +113,9 @@ internal object ParkingpinRouteCodec {
         value == "notifications" -> ParkingpinRoute.Notifications
         value == "settings" -> ParkingpinRoute.Settings
         value == "diagnostics" -> ParkingpinRoute.Diagnostics
+        value.startsWith(EDIT_PREFIX) ->
+            value.removePrefix(EDIT_PREFIX).takeIf { it.isNotEmpty() }
+                ?.let { ParkingpinRoute.EditRecord(it) }
         value.startsWith(DETAIL_PREFIX) ->
             value.removePrefix(DETAIL_PREFIX).takeIf { it.isNotEmpty() }
                 ?.let { ParkingpinRoute.Detail(it) }
