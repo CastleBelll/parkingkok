@@ -12,9 +12,10 @@ import SwiftUI
 /// 마지막으로 확인된 위치
 /// [ map ]  약 18m 이내
 ///
-/// [ 사진으로 입력 ]  [ 직접 입력 ]
+/// [ 사진으로 입력 ]        ← filled, the one primary
+/// [ 직접 입력 ]            ← tonal
 /// ─────────────────────────
-/// 주차 아님
+/// [ 주차 아님 ]            ← outlined, red label
 /// ```
 ///
 /// ### What is deliberately absent
@@ -158,20 +159,22 @@ struct CandidateConfirmationView: View {
     /// own history — the mock draws them. The product owner removed them on 2026-09-20;
     /// §7a records the trade.
     private var floorChoices: some View {
-        VStack(spacing: PKSpacing.m) {
-            HStack(spacing: PKSpacing.m) {
-                // Photo first (docs/10 §7a): it is the faster of the two and typing less
-                // is the point. It drops out entirely where there is no camera, and
-                // 직접 입력 takes the width on its own.
-                if ParkingPhotoSource.available.contains(.camera) {
-                    pillarButton
+        // Stacked, ranked by fill (docs/10 §7a, revised 2026-10-01): with the quick picks
+        // gone, the two ways in sat side by side as identical outlines and the screen had no
+        // primary at all. The faster path takes the screen's one filled button; the other is
+        // tonal; 주차 아님 below keeps its outline. Without a camera 직접 입력 is the primary.
+        VStack(spacing: PKSpacing.s) {
+            if ParkingPhotoSource.available.contains(.camera) {
+                pillarButton
+                Button { openManualEntry(with: nil) } label: {
+                    Label(Self.manualEntryTitle, systemImage: "keyboard")
                 }
-                Button(Self.manualEntryTitle) { openManualEntry(with: nil) }
-                    // Outlined, not tinted. §7a ranks these after the picks, and five
-                    // identically tinted blocks would have given the screen no ranking at
-                    // all — the border keeps them legible as controls while the picks keep
-                    // the screen's one accent (CLAUDE.md design harness).
-                    .buttonStyle(PKOutlineButtonStyle())
+                .buttonStyle(PKSoftButtonStyle())
+            } else {
+                Button { openManualEntry(with: nil) } label: {
+                    Label(Self.manualEntryTitle, systemImage: "keyboard")
+                }
+                .buttonStyle(PKPrimaryButtonStyle())
             }
         }
     }
@@ -201,7 +204,7 @@ struct CandidateConfirmationView: View {
                 Label(Self.pillarEntryTitle, systemImage: "camera")
             }
         }
-        .buttonStyle(PKOutlineButtonStyle())
+        .buttonStyle(PKPrimaryButtonStyle())
         .disabled(isReadingPillar)
         .accessibilityLabel(Self.pillarEntryTitle)
     }

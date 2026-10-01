@@ -94,9 +94,10 @@ struct HomeView: View {
                     )
                     .pkEntrance(1)
                     HomeActionRow(
-                        icon: "mappin.and.ellipse",
+                        icon: "map",
                         title: "주차 위치 보기",
-                        subtitle: "저장된 주차 정보를 확인하세요"
+                        // What the row opens: the detail with its map, 길찾기 and photo.
+                        subtitle: "지도, 길찾기, 사진을 한 번에 확인해요"
                     ) {
                         path.append(.parkingDetail(id: active.id))
                     }

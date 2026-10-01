@@ -1,16 +1,18 @@
 package com.sjstudioz.parkingpin.ui.confirm
 
 import androidx.annotation.DrawableRes
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -19,19 +21,19 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.sjstudioz.parkingpin.R
 import com.sjstudioz.parkingpin.domain.detection.ParkingCandidateNotice
 import com.sjstudioz.parkingpin.theme.ParkingpinTheme
 import com.sjstudioz.parkingpin.theme.spacing
 import com.sjstudioz.parkingpin.ui.components.DetailHeader
-import com.sjstudioz.parkingpin.ui.components.ParkingpinScreen
 import com.sjstudioz.parkingpin.ui.components.ParkingLocationMap
+import com.sjstudioz.parkingpin.ui.components.ParkingpinScreen
 import com.sjstudioz.parkingpin.ui.format.timeOfDayText
 
 /**
@@ -187,58 +189,51 @@ private val LOCATION_PREVIEW_SIDE = 112.dp
  * point (§7a). Both land in the same manual entry form; the photo one arrives with what
  * the pillar said already filled in.
  */
+/**
+ * §7a's two ways into the form, stacked and ranked by fill (revised 2026-10-01): side by
+ * side as two identical outlines, the screen had no primary action at all. Photo is the
+ * faster path and takes the one filled button; 직접 입력 is tonal; 주차 아님 below keeps its
+ * outline. iOS draws the same three.
+ */
 @Composable
 private fun EntryChoices(
     enabled: Boolean,
     onManualEntry: () -> Unit,
     onPhotoEntry: () -> Unit,
 ) {
-    Row(horizontalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small)) {
-        Escape(
-            label = stringResource(R.string.candidate_confirm_photo),
-            enabled = enabled,
+    Column(verticalArrangement = Arrangement.spacedBy(MaterialTheme.spacing.small)) {
+        Button(
             onClick = onPhotoEntry,
-            modifier = Modifier.weight(1f),
-            iconRes = R.drawable.ic_camera,
-        )
-        Escape(
-            label = stringResource(R.string.candidate_confirm_manual),
             enabled = enabled,
-            onClick = onManualEntry,
-            modifier = Modifier.weight(1f),
-        )
-    }
-}
-
-/** One of §7a's two ways into the form. Outlined, because neither is the answer. */
-@Composable
-private fun Escape(
-    label: String,
-    enabled: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    @DrawableRes iconRes: Int? = null,
-) {
-    OutlinedButton(
-        onClick = onClick,
-        enabled = enabled,
-        shape = MaterialTheme.shapes.small,
-        modifier = modifier.heightIn(min = CHOICE_HEIGHT),
-    ) {
-        if (iconRes != null) {
-            // The one glyph on this screen, and it carries meaning: it says the button
-            // opens a camera rather than a keyboard, which the two labels alone leave to
-            // reading. iOS shows the same.
+            shape = MaterialTheme.shapes.small,
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = PRIMARY_CHOICE_HEIGHT),
+        ) {
+            // The one glyph that carries meaning here: a camera, not a keyboard.
             Icon(
-                painter = painterResource(iconRes),
+                painter = painterResource(R.drawable.ic_camera),
                 contentDescription = null,
                 modifier = Modifier.size(ESCAPE_ICON_SIZE),
             )
             Spacer(Modifier.width(MaterialTheme.spacing.small))
+            Text(text = stringResource(R.string.candidate_confirm_photo), style = MaterialTheme.typography.titleMedium)
         }
-        Text(text = label, style = MaterialTheme.typography.titleMedium)
+        FilledTonalButton(
+            onClick = onManualEntry,
+            enabled = enabled,
+            shape = MaterialTheme.shapes.small,
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = CHOICE_HEIGHT),
+        ) {
+            Text(text = stringResource(R.string.candidate_confirm_manual), style = MaterialTheme.typography.titleMedium)
+        }
     }
 }
+
+/** The screen's one primary — taller than the choices under it, as on iOS (54 pt). */
+private val PRIMARY_CHOICE_HEIGHT = 54.dp
 
 /** Sized against the label beside it, not against a touch target. */
 private val ESCAPE_ICON_SIZE = 20.dp
@@ -278,7 +273,7 @@ private fun RejectButton(enabled: Boolean, onReject: () -> Unit) {
 }
 
 /** Room for a Korean label at a large font scale without the row growing a second line. */
-private val CHOICE_HEIGHT = 56.dp
+private val CHOICE_HEIGHT = 48.dp
 
 @Preview(name = "Confirm — with a fix", showBackground = true)
 @Composable

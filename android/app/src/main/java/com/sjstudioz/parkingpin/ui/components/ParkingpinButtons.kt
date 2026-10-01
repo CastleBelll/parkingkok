@@ -44,9 +44,11 @@ fun PrimaryCtaButton(
     Button(
         onClick = onClick,
         shape = MaterialTheme.shapes.small,
+        // Tight vertical padding against a fixed minimum: 16 dp each way on top of a 76 dp
+        // floor drew an 80+ dp slab (device review 2026-10-01).
         contentPadding = PaddingValues(
             horizontal = MaterialTheme.spacing.large,
-            vertical = MaterialTheme.spacing.large,
+            vertical = MaterialTheme.spacing.small,
         ),
         interactionSource = interactionSource,
         modifier = modifier
@@ -62,7 +64,7 @@ fun PrimaryCtaButton(
                     modifier = Modifier.size(CTA_ICON),
                 )
                 Spacer(Modifier.width(MaterialTheme.spacing.small))
-                Text(text = label, style = MaterialTheme.typography.titleLarge)
+                Text(text = label, style = MaterialTheme.typography.titleMedium)
             }
             Spacer(Modifier.height(MaterialTheme.spacing.tiny))
             Text(
@@ -77,8 +79,8 @@ fun PrimaryCtaButton(
 }
 
 /** Room for a label line and a caption line with a gap between them. */
-private val PRIMARY_CTA_MIN_HEIGHT = 76.dp
+private val PRIMARY_CTA_MIN_HEIGHT = 60.dp
 
-private val CTA_ICON = 20.dp
+private val CTA_ICON = 18.dp
 
 private const val CTA_CAPTION_ALPHA = 0.82f

@@ -351,3 +351,14 @@ swiftlint lint --strict    # correctness; run from the repo root
 ## Tests
 
 Swift Testing only — do not add XCTest (docs/04 §18 forbids mixing styles).
+
+## UI smoke tests (device review, 2026-10-01)
+
+`ParkingPinUITests` taps the controls a person taps on the seeded DEV build — the floor
+key, 주차 위치 보기, 전체보기 → a record, 길찾기, 수정, 위치 보내기, the photo, 주차 아님,
+직접 입력, and that Settings lists no placeholder rows. Its own scheme, not part of CI:
+
+```sh
+xcodebuild test -project ParkingPin.xcodeproj -scheme ParkingPinUITests \
+  -destination 'platform=iOS Simulator,name=<simulator>'
+```

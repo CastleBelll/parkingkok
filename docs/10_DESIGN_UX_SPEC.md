@@ -197,11 +197,18 @@ the row — "we saved a location" and "we have no location" are both answers, an
 not.
 
 ### The two ways in
-Two choices, side by side, and nothing else:
+Two choices, stacked, and nothing else:
 
 ```text
-[ 사진으로 입력 ]   [ 직접 입력 ]
+[ 사진으로 입력 ]     filled — the screen's one primary
+[ 직접 입력 ]         tonal
 ```
+
+Revised 2026-10-01 after a device review. With the quick picks gone the two sat side by side
+as identical outlines, and the screen had no primary action at all — the harness asks for
+exactly one. Photo takes it because it is the faster path; with no camera, `직접 입력` is
+filled instead. The ranking the picks used to carry — fill, then tone, then border — is
+kept by these two and 주차 아님 below them.
 
 `직접 입력` opens the existing manual entry, empty, and saving there confirms.
 `사진으로 입력` opens the camera, reads the pillar (docs/02 §6a) and opens that same manual

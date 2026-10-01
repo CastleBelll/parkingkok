@@ -34,4 +34,9 @@ enum PKSize {
     /// The circular icon chip on rows and cards.
     static let iconChip: CGFloat = 40
     static let hairline: CGFloat = 1
+    /// A screen's one primary button. Fixed, not `minHeight` plus padding: the padding sat on
+    /// top of the 44 pt floor and drew 68 pt slabs (device review 2026-10-01).
+    static let primaryButtonHeight: CGFloat = 54
+    /// Secondary and compact buttons — the mocks' 길찾기 / 아직 주차 중 height.
+    static let secondaryButtonHeight: CGFloat = 46
 }

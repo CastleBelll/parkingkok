@@ -6,7 +6,6 @@ import SwiftUI
 /// build, so capping the list would show the restriction without the thing it restricts.
 /// Every stored record is listed.
 struct HistoryView: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @Bindable private var model: ParkingModel
     @Binding private var path: [AppRoute]
@@ -100,21 +99,16 @@ struct HistoryView: View {
         model.completedSessions.filter(filter.matches)
     }
 
+    /// The system segmented control (CLAUDE.md design harness: platform-native controls).
+    /// Three tall pill buttons drew more attention than the list they filter, and pill-shaping
+    /// every element is on the harness's forbidden list (device review 2026-10-01).
     private var filterChips: some View {
-        HStack(spacing: PKSpacing.s) {
+        Picker("필터", selection: $filter) {
             ForEach(HistoryFilter.allCases, id: \.self) { option in
-                Button {
-                    pkWithAnimation(PKMotion.selection, reduceMotion: reduceMotion) {
-                        filter = option
-                    }
-                } label: {
-                    Text(option.title)
-                }
-                .buttonStyle(PKChipButtonStyle(isSelected: option == filter))
-                // Selection is a colour swap in the mock; VoiceOver needs it said.
-                .accessibilityAddTraits(option == filter ? [.isButton, .isSelected] : .isButton)
+                Text(option.title).tag(option)
             }
         }
+        .pickerStyle(.segmented)
     }
 }
 
@@ -175,7 +169,7 @@ private struct MonthlySummaryCard: View {
     var body: some View {
         PKCard(radius: PKRadius.row) {
             HStack(spacing: PKSpacing.l) {
-                PKIconChip("chart.bar.fill")
+                PKIconChip("calendar")
                 VStack(alignment: .leading, spacing: PKSpacing.xs) {
                     Text("이번 달")
                         .font(PKTypography.supporting)
