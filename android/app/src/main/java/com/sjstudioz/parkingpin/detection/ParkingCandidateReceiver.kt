@@ -5,8 +5,11 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.RemoteInput
 import com.sjstudioz.parkingpin.ParkingpinApplication
 import com.sjstudioz.parkingpin.domain.detection.DetectionEvent
+import com.sjstudioz.parkingpin.domain.parking.FloorParser
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /**
@@ -23,7 +26,56 @@ import kotlinx.coroutines.launch
 class ParkingCandidateReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != ParkingCandidateChannel.ACTION_REJECT) return
+        when (intent.action) {
+            ParkingCandidateChannel.ACTION_REJECT -> reject(context, intent)
+            ParkingCandidateChannel.ACTION_ENTER_FLOOR -> enterFloor(context, intent)
+        }
+    }
+
+    /**
+     * `층 입력` answered inline (docs/02 §5, iOS `CandidateNotificationResponder`): the
+     * candidate is confirmed with the typed floor, through the same [CandidateConfirmation]
+     * the confirmation screen uses. Empty or unparseable text still confirms — the user said
+     * "yes, I parked", FR-006 makes the floor optional, and [FloorParser] keeps whatever was
+     * typed. A candidate already gone confirms nothing.
+     */
+    private fun enterFloor(context: Context, intent: Intent) {
+        val candidateId = intent.getStringExtra(ParkingCandidateChannel.EXTRA_CANDIDATE_ID)
+        if (candidateId.isNullOrEmpty()) {
+            Log.w(TAG, "floor entry ignored: no candidate id")
+            return
+        }
+        val typed = RemoteInput.getResultsFromIntent(intent)
+            ?.getCharSequence(ParkingCandidateChannel.KEY_FLOOR)
+            ?.toString()
+            .orEmpty()
+
+        // Taken down now: an inline reply leaves a spinner on the notification until it is
+        // replaced or cancelled, and the answer has been given.
+        NotificationManagerCompat.from(context)
+            .cancel(ParkingCandidateChannel.notificationId(candidateId))
+
+        val container = ParkingpinApplication.containerOf(context)
+        if (container == null) {
+            Log.w(TAG, "floor entry arrived with no container")
+            return
+        }
+        val pending = goAsync()
+        container.applicationScope.launch {
+            try {
+                container.candidateConfirmation.confirm(candidateId, floorAnswer(typed))
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (@Suppress("TooGenericExceptionCaught") failure: Exception) {
+                // By type only: the message may quote the row, which holds the location.
+                Log.w(TAG, "floor entry failed: ${failure.javaClass.simpleName}")
+            } finally {
+                pending.finish()
+            }
+        }
+    }
+
+    private fun reject(context: Context, intent: Intent) {
         val candidateId = intent.getStringExtra(ParkingCandidateChannel.EXTRA_CANDIDATE_ID)
         if (candidateId.isNullOrEmpty()) {
             Log.w(TAG, "candidate rejection ignored: no candidate id")
@@ -59,7 +111,14 @@ class ParkingCandidateReceiver : BroadcastReceiver() {
         }
     }
 
-    private companion object {
-        const val TAG = "PkDetection"
+    companion object {
+        private const val TAG = "PkDetection"
+
+        /** FR-005's free text, capped like FR-006's short fields so the shade cannot overflow a row. */
+        private const val MAX_FLOOR_TEXT = 40
+
+        /** The typed floor as the record stores it; blank is no floor, not a refusal. */
+        fun floorAnswer(typed: String): ConfirmedCandidateDetails =
+            ConfirmedCandidateDetails(floor = FloorParser.parse(typed.trim().take(MAX_FLOOR_TEXT)))
     }
 }

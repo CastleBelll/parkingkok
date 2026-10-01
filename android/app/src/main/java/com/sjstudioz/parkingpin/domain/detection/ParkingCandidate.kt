@@ -105,8 +105,18 @@ object ParkingCandidateNotice {
 
     const val BODY: String = "마지막으로 확인된 위치와 시간을 저장해뒀어요."
 
-    /** docs/02 §5 "confirm/open floor entry". Opens the confirmation screen. */
+    /**
+     * docs/02 §5 "confirm/open floor entry". Answered inline, as on iOS: the floor is typed
+     * in the shade and the record written without the app coming forward. The body tap is
+     * what opens the confirmation screen.
+     */
     const val ACTION_OPEN: String = "층 입력"
+
+    /**
+     * The inline field's hint — iOS `CandidateNotificationCopy.enterFloorPlaceholder`. An
+     * example of what to type, not a value: nothing from the candidate reaches it.
+     */
+    const val FLOOR_INPUT_HINT: String = "예: B3"
 
     /** docs/02 §5, docs/10 §7 secondary. Answered without opening the app. */
     const val ACTION_REJECT: String = "주차 아님"
