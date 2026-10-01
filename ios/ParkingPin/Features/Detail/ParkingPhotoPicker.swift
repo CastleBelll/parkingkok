@@ -1,3 +1,4 @@
+import AVFoundation
 import PhotosUI
 import SwiftUI
 import UIKit
@@ -18,9 +19,17 @@ enum ParkingPhotoSource: String, Identifiable, CaseIterable {
     /// The simulator has no camera, and a user can turn the app's camera access off in
     /// Settings without that being an app failure (CLAUDE.md: 권한 거부는 앱 전체
     /// failure가 아니다). Either way the library entry stays.
+    ///
+    /// `isSourceTypeAvailable` says the hardware exists, not that the app may use it: with
+    /// access refused, `사진 촬영` opened a black camera screen (audit 2026-10-01). A refused
+    /// camera is therefore not offered; an unasked one is, and the picker asks.
     @MainActor
     static var available: [ParkingPhotoSource] {
-        UIImagePickerController.isSourceTypeAvailable(.camera) ? allCases : [.library]
+        let refused: Bool = switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .denied, .restricted: true
+        default: false
+        }
+        return UIImagePickerController.isSourceTypeAvailable(.camera) && !refused ? allCases : [.library]
     }
 
     var title: String {

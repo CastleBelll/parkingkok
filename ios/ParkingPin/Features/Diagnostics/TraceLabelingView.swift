@@ -168,7 +168,7 @@ struct TraceLabelingView: View {
                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                     if !model.isOpen(summary.id) {
                         Button("나누기") { splitTarget = model.session(id: summary.id) }
-                            .tint(.indigo)
+                            .tint(PKColor.primary)
                     }
                 }
             }

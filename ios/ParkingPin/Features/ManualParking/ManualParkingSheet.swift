@@ -31,6 +31,8 @@ struct ManualParkingSheet: View {
     private let pillarPhoto: Data?
 
     @Environment(\.dismiss) private var dismiss
+    /// Why the last 저장 did not go through, shown in the sheet; nil until one fails.
+    @State private var saveFailure: String?
     @State private var draft = ManualParkingDraft()
     @State private var isSaving = false
     @FocusState private var focusedField: Field?
@@ -73,6 +75,16 @@ struct ManualParkingSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                // A save that failed keeps the sheet open (`finish`), so the reason has to be
+                // here: written only to the model, it showed on the screen behind the sheet
+                // and 저장 looked like it did nothing (audit 2026-10-01).
+                if let saveFailure {
+                    Section {
+                        Label(saveFailure, systemImage: "exclamationmark.circle")
+                            .font(PKTypography.supporting)
+                            .foregroundStyle(PKColor.danger)
+                    }
+                }
                 if let pillarPhoto, let image = UIImage(data: pillarPhoto) {
                     pillarSection(image)
                 }
@@ -224,6 +236,7 @@ struct ManualParkingSheet: View {
 
     private func save() {
         isSaving = true
+        saveFailure = nil
         if let confirmation {
             // §7a: saving here *is* the confirmation. One path, so the record a quick pick
             // writes and the record this writes differ only in what the user typed.
@@ -256,11 +269,14 @@ struct ManualParkingSheet: View {
         }
     }
 
-    /// Stays open on failure so the user's typing is not thrown away with the sheet.
+    /// Stays open on failure so the user's typing is not thrown away with the sheet, and
+    /// says why.
     private func finish(succeeded: Bool) {
         isSaving = false
         if succeeded {
             dismiss()
+        } else {
+            saveFailure = model.failure ?? "저장하지 못했어요. 다시 시도해 주세요."
         }
     }
 }

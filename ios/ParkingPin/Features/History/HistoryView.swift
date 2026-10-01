@@ -55,13 +55,28 @@ struct HistoryView: View {
                     }
                 }
                 .pkEntrance(2)
+            }
 
-                Button("기록 전체 삭제", role: .destructive) { isConfirmingDeleteAll = true }
-                    .font(PKTypography.row)
-                    .tint(PKColor.danger)
-                    .frame(maxWidth: .infinity, minHeight: PKSize.minimumTouchTarget)
-                    .padding(.top, PKSpacing.s)
-                    .pkEntrance(3)
+            // A failed write (deleting everything included) says why here, as home and
+            // detail do; History used to swallow it (audit 2026-10-01).
+            if let failure = model.failure {
+                PKNoticeCard(text: failure)
+            }
+
+            // Whatever the filter shows: it deletes everything, so whether it is offered
+            // must not depend on what one chip happens to match.
+            if !model.completedSessions.isEmpty || model.activeSession != nil {
+                Button(role: .destructive) {
+                    isConfirmingDeleteAll = true
+                } label: {
+                    Text("기록 전체 삭제")
+                        .font(PKTypography.row)
+                        .frame(maxWidth: .infinity, minHeight: PKSize.minimumTouchTarget)
+                        .contentShape(.rect)
+                }
+                .tint(PKColor.danger)
+                .padding(.top, PKSpacing.s)
+                .pkEntrance(3)
             }
         }
         .navigationTitle("주차 기록")

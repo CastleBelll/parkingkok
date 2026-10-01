@@ -116,7 +116,9 @@ struct HomeView: View {
                         }
                         .pkEntrance(3)
                     }
-                } else if candidates.pending == nil {
+                } else {
+                    // Shown beside a pending candidate too: hiding it left answering the
+                    // guess as the only way to save a parking by hand (audit 2026-10-01).
                     EmptyParkingCard(
                         onSaveManually: { isManualSheetPresented = true },
                         onPhotoEntry: beginPillarEntry
@@ -195,7 +197,10 @@ struct HomeView: View {
             guard let item else { return }
             Task {
                 defer { pillarLibraryItem = nil }
-                guard let data = try? await item.loadTransferable(type: Data.self) else { return }
+                guard let data = try? await item.loadTransferable(type: Data.self) else {
+                    model.notePhotoUnreadable()
+                    return
+                }
                 readPillar(data)
             }
         }
@@ -380,6 +385,9 @@ private struct RecentParkingSection: View {
                             .font(.caption.weight(.semibold))
                     }
                     .font(PKTypography.caption)
+                    // Caption text alone is a 16 pt target; the row gets the full minimum.
+                    .frame(minHeight: PKSize.minimumTouchTarget)
+                    .contentShape(.rect)
                 }
                 .tint(PKColor.textSecondary)
             }
