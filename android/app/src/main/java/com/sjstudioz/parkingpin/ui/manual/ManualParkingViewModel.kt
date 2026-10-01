@@ -221,7 +221,10 @@ class ManualParkingViewModel(
     private suspend fun attachPillarPhoto(recordId: String) {
         val entry = pillarPhoto ?: return
         val photo = capturedPhoto ?: return
-        entry.attachTo(recordId, photo)
+        // After a committed save: a photo failure here must not read as "save failed", or a
+        // retry meets the user's own record as AlreadyActive (audit 2026-10-01).
+        runCatching { entry.attachTo(recordId, photo) }
+            .onFailure { Log.w(TAG, "pillar photo not attached: ${it.javaClass.simpleName}") }
     }
 
     fun onFloorChange(value: String) = _uiState.update { it.copy(floorRaw = value) }

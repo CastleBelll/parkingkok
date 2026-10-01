@@ -29,7 +29,7 @@ class CandidateConfirmation(
         )
         if (result is ConfirmCandidateResult.Confirmed) {
             result.endedPrevious?.let { endProposals?.retire(it.id) }
-            detectionRuntime?.handleUserAnswer(DetectionEvent.UserConfirmedParking(clock.nowEpochMillis()))
+            detectionRuntime?.handleCandidateConfirmed(clock.nowEpochMillis(), result.record.location)
         }
         return result
     }

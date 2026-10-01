@@ -97,10 +97,18 @@ class ParkingDetailViewModel(
      * Re-decoded only when the stored path changes, not on every edit: stepping the floor
      * emits a new record, and re-reading a 1600px JPEG for that would be a decode per tap.
      */
+    /**
+     * Bumped by every attach that succeeded. A replaced photo keeps its file name — one per
+     * record — so the path alone never changed and the old picture stayed on screen after
+     * 사진 다시 고르기 (audit 2026-10-01).
+     */
+    private val photoAttachments = MutableStateFlow(0)
+
     private val photo: Flow<ParkingPhotoImage?> = record
         .map { it?.photoRelativePath }
+        .combine(photoAttachments) { path, attachments -> path to attachments }
         .distinctUntilChanged()
-        .map { photoLoader.load(it) }
+        .map { (path, _) -> photoLoader.load(path) }
 
     val uiState: StateFlow<ParkingDetailUiState> =
         combine(record, photo, notice, photoBusy, pillarSuggestion) {
@@ -147,6 +155,7 @@ class ParkingDetailViewModel(
             }
             photoBusy.value = false
             if (result is AttachParkingPhotoResult.Attached) {
+                photoAttachments.value += 1
                 pillarSuggestion.value =
                     suggestFromPillarPhoto(recordId, source).takeUnless { it.isEmpty }
             }

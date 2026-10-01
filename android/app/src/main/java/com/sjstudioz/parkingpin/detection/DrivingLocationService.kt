@@ -68,15 +68,35 @@ class DrivingLocationService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         createChannel()
-        ServiceCompat.startForeground(
-            this,
-            NOTIFICATION_ID,
-            notification(),
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION,
-        )
+        try {
+            ServiceCompat.startForeground(
+                this,
+                NOTIFICATION_ID,
+                notification(),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION,
+            )
+        } catch (refused: SecurityException) {
+            return refuse(refused)
+        } catch (refused: IllegalStateException) {
+            // `ForegroundServiceStartNotAllowedException` (API 31+) is one of these.
+            return refuse(refused)
+        }
         startTicking()
         // Not sticky: the drive is what justifies this service, and the system restarting
         // it on its own — with no session behind it — is the leak the class doc rules out.
+        return START_NOT_STICKY
+    }
+
+    /**
+     * The OS would not let a location service start: with location allowed only "while
+     * using the app", Android 14+ refuses a background start of this type. Uncaught, that
+     * crashed the process on every drive (audit 2026-10-01). The drive goes uncaptured —
+     * which is what that permission means — and the app stays up. Class name only: nothing
+     * here is about a place.
+     */
+    private fun refuse(reason: RuntimeException): Int {
+        Log.w(TAG, "location service not allowed to start: ${reason.javaClass.simpleName}")
+        stopSelf()
         return START_NOT_STICKY
     }
 

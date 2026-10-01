@@ -1,9 +1,14 @@
 package com.sjstudioz.parkingpin
 
+import android.Manifest
 import android.content.Context
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import android.os.Build
+import android.os.PowerManager
+import android.util.Log
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import com.google.firebase.FirebaseApp
 import com.google.firebase.analytics.FirebaseAnalytics
 import com.google.firebase.auth.FirebaseAuth
@@ -26,19 +31,19 @@ import com.sjstudioz.parkingpin.data.parking.RoomParkingRepository
 import com.sjstudioz.parkingpin.data.photo.FileParkingPhotoImageLoader
 import com.sjstudioz.parkingpin.data.photo.FileParkingPhotoStore
 import com.sjstudioz.parkingpin.data.photo.JpegPhotoEncoder
-import com.sjstudioz.parkingpin.data.photo.ParkingPhotoFiles
 import com.sjstudioz.parkingpin.data.photo.MlKitPillarTextReader
+import com.sjstudioz.parkingpin.data.photo.ParkingPhotoFiles
 import com.sjstudioz.parkingpin.data.photo.ParkingPhotoImageLoader
 import com.sjstudioz.parkingpin.detection.ActivityTransitionRegistrar
+import com.sjstudioz.parkingpin.detection.CandidateConfirmation
 import com.sjstudioz.parkingpin.detection.DetectionRegistrationCoordinator
 import com.sjstudioz.parkingpin.detection.FusedLocationSessionController
 import com.sjstudioz.parkingpin.detection.FusedLocationSessionRegistrar
 import com.sjstudioz.parkingpin.detection.NotificationCandidateDelivery
-import com.sjstudioz.parkingpin.detection.ParkingCandidateCoordinator
-import com.sjstudioz.parkingpin.detection.CandidateConfirmation
 import com.sjstudioz.parkingpin.detection.NotificationParkingEndProposalDelivery
-import com.sjstudioz.parkingpin.detection.ParkingEndProposalCoordinator
+import com.sjstudioz.parkingpin.detection.ParkingCandidateCoordinator
 import com.sjstudioz.parkingpin.detection.ParkingDetectionRuntime
+import com.sjstudioz.parkingpin.detection.ParkingEndProposalCoordinator
 import com.sjstudioz.parkingpin.detection.TransitionEventIngestor
 import com.sjstudioz.parkingpin.diagnostics.DiagnosticsExporter
 import com.sjstudioz.parkingpin.diagnostics.FileDiagnosticsReportStore
@@ -49,38 +54,35 @@ import com.sjstudioz.parkingpin.domain.parking.usecase.CleanUpOrphanPhotosUseCas
 import com.sjstudioz.parkingpin.domain.photo.ParkingPhotoStore
 import com.sjstudioz.parkingpin.domain.photo.PillarTextReader
 import com.sjstudioz.parkingpin.domain.photo.ReadPillarSuggestionUseCase
-import com.sjstudioz.parkingpin.ui.manual.PillarPhotoEntry
 import com.sjstudioz.parkingpin.domain.trace.TraceDeviceInfo
 import com.sjstudioz.parkingpin.domain.widget.ParkingWidgetSync
 import com.sjstudioz.parkingpin.entitlement.isWidgetStepperEntitled
 import com.sjstudioz.parkingpin.identity.AnonymousIdentity
-import com.sjstudioz.parkingpin.identity.FirebaseAnonymousSignIn
 import com.sjstudioz.parkingpin.identity.FirebaseAccountLinking
+import com.sjstudioz.parkingpin.identity.FirebaseAnonymousSignIn
+import com.sjstudioz.parkingpin.identity.LazyAnonymousIdentity
 import com.sjstudioz.parkingpin.identity.LinkingAccountIdentity
 import com.sjstudioz.parkingpin.identity.UnavailableAccountLinking
-import com.sjstudioz.parkingpin.identity.LazyAnonymousIdentity
 import com.sjstudioz.parkingpin.identity.UnavailableAnonymousIdentity
 import com.sjstudioz.parkingpin.location.CheckpointParkingLocationProvider
 import com.sjstudioz.parkingpin.location.CurrentFixParkingLocationProvider
 import com.sjstudioz.parkingpin.trace.FileTraceStore
-import com.sjstudioz.parkingpin.trace.NotificationLabelPromptDelivery
 import com.sjstudioz.parkingpin.trace.NoOpTraceLabelPrompting
+import com.sjstudioz.parkingpin.trace.NotificationLabelPromptDelivery
 import com.sjstudioz.parkingpin.trace.TraceLabelPrompter
 import com.sjstudioz.parkingpin.trace.TraceRecorder
-import android.Manifest
-import android.content.pm.PackageManager
-import androidx.core.content.ContextCompat
-import android.os.PowerManager
+import com.sjstudioz.parkingpin.ui.manual.PillarPhotoEntry
 import com.sjstudioz.parkingpin.widget.CompositeWidgetProjectionStore
 import com.sjstudioz.parkingpin.widget.GlanceWidgetProjectionStore
 import com.sjstudioz.parkingpin.widget.LockScreenParkingNotice
 import com.sjstudioz.parkingpin.widget.anyParkingWidgetPlaced
+import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import java.util.UUID
-import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Manual composition root. A DI framework is not justified at this size
@@ -94,7 +96,19 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
 
     private val appContext: Context = context.applicationContext
 
-    val applicationScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /** For start-up checks that read system state ([com.sjstudioz.parkingpin.detection.CarLinkProbe]). */
+    val applicationContextForProbes: Context get() = appContext
+
+    /**
+     * The receivers launch here with try/finally and no catch, so an IOException from
+     * DataStore or Room in a background batch used to kill the process (audit 2026-10-01).
+     * Logged by class name only — a message may quote a row, and a row holds a location.
+     */
+    val applicationScope: CoroutineScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, failure ->
+            Log.e("Parkingpin", "background work failed: ${failure.javaClass.simpleName}")
+        },
+    )
 
     val detectionStateStore: DetectionStateStore = DetectionStateStore(detectionDataStore(appContext))
 
@@ -298,8 +312,10 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
     suspend fun setLockScreenNoticeEnabled(enabled: Boolean) {
         detectionStateStore.setLockScreenNoticeEnabled(enabled)
         lockScreenNoticeEnabled.set(enabled)
-        // The switch has to take effect now, not at the next parking.
-        parkingWidgetSync.refresh()
+        // The switch has to take effect now, not at the next parking — and keep following:
+        // with no home-screen widget the sync was never started at process start, so a
+        // notice switched on later showed one state and then went stale (audit 2026-10-01).
+        syncParkingWidgets()
     }
 
     private val parkingWidgetSyncStarted = AtomicBoolean(false)
@@ -409,7 +425,7 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
         // `CurrentFixParkingLocationProvider` for why the checkpoint alone was not enough.
         CurrentFixParkingLocationProvider(
             context = appContext,
-            fallback = CheckpointParkingLocationProvider(detectionStateStore),
+            fallback = CheckpointParkingLocationProvider(detectionStateStore, clock),
         )
     }
 

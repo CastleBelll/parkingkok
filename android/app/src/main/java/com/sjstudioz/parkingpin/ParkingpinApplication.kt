@@ -2,6 +2,8 @@ package com.sjstudioz.parkingpin
 
 import android.app.Application
 import android.content.Context
+import com.sjstudioz.parkingpin.detection.CarLinkProbe
+import com.sjstudioz.parkingpin.domain.detection.DetectionEvent
 import kotlinx.coroutines.launch
 
 /**
@@ -29,6 +31,17 @@ class ParkingpinApplication : Application() {
         // Process death leaves the Play services subscription intact, so this normally
         // resolves to "already registered" and issues no call at all. With Smart Detection
         // off it also ends whatever a process that died mid-opt-out left behind (docs/05 §3a).
+        created.applicationScope.launch {
+            // docs/05 §3a: re-assert the car link the engine remembers. Only a definite "no
+            // car connected" ends it; an unknown answer changes nothing.
+            if (created.detectionStateStore.readEngineStateOnce()?.carLinkConnected == true &&
+                CarLinkProbe(created.applicationContextForProbes).isCarConnected() == false
+            ) {
+                created.parkingDetectionRuntime.handleCarLink(
+                    DetectionEvent.CarLinkDisconnected(created.clock.nowEpochMillis()),
+                )
+            }
+        }
         created.applicationScope.launch {
             created.registrationCoordinator.reconcile()
             // The third leak guard: a session record left behind by a process that died

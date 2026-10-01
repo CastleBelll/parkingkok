@@ -9,6 +9,9 @@ import com.sjstudioz.parkingpin.domain.parking.usecase.EndParkingUseCase
 import com.sjstudioz.parkingpin.domain.parking.usecase.ManualParkingInput
 import com.sjstudioz.parkingpin.domain.parking.usecase.SaveManualParkingResult
 import com.sjstudioz.parkingpin.domain.parking.usecase.SaveManualParkingUseCase
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -167,5 +170,40 @@ class SaveManualParkingUseCaseTest {
 
         assertNull(adjustFloor(1))
         assertEquals(1, repository.findActive()?.revision)
+    }
+
+    /** A save whose fix job can be awaited, with a stored location and a fresh fix. */
+    private suspend fun saveWith(stored: ParkingLocation, fix: ParkingLocation): ParkingLocation? {
+        val fixJobs = SupervisorJob()
+        val saveWithFix = SaveManualParkingUseCase(
+            repository = repository,
+            locationProvider = object : ParkingLocationProvider {
+                override suspend fun lastReliableLocation() = stored
+                override suspend fun currentFix() = fix
+            },
+            clock = clock,
+            idGenerator = { "record-${nextId++}" },
+            scope = CoroutineScope(fixJobs + Dispatchers.Default),
+        )
+        saveWithFix(ManualParkingInput(floorRaw = "B3"))
+        fixJobs.children.forEach { it.join() }
+        return repository.findActive()?.location
+    }
+
+    @Test
+    fun `a recent stored location that is more accurate keeps its place`() = runTest {
+        val stored = ParkingLocation(37.5, 127.0, 5f, start - 60_000L)
+        val fix = ParkingLocation(37.6, 127.1, 30f, start)
+
+        assertEquals(stored, saveWith(stored, fix))
+    }
+
+    @Test
+    fun `an old stored location loses to the fix however accurate it was`() = runTest {
+        // Audit 2026-10-01: last week's 5 m fix was another place, not a better reading.
+        val stored = ParkingLocation(37.5, 127.0, 5f, start - ParkingLocationProvider.MAX_SAVED_LOCATION_AGE_MILLIS - 1)
+        val fix = ParkingLocation(37.6, 127.1, 30f, start)
+
+        assertEquals(fix, saveWith(stored, fix))
     }
 }

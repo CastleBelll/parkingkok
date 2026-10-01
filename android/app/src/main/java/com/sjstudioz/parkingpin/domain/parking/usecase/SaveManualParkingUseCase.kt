@@ -130,9 +130,16 @@ class SaveManualParkingUseCase(
             // moment's, so it wins ties on age.
             // A stored accuracy of null is a location that never said how good it was, and
             // a fix that states 20 m beats one that states nothing.
+            //
+            // Only a *recent* stored location can win on accuracy: an old one is a different
+            // place, however precisely it was measured (audit 2026-10-01).
             val storedAccuracy = stored?.horizontalAccuracyM
             val fixAccuracy = fix.horizontalAccuracyM
-            if (storedAccuracy != null && fixAccuracy != null && storedAccuracy <= fixAccuracy) return@launch
+            val storedIsRecent = stored != null &&
+                fix.capturedAtMillis - stored.capturedAtMillis <= ParkingLocationProvider.MAX_SAVED_LOCATION_AGE_MILLIS
+            if (storedIsRecent && storedAccuracy != null && fixAccuracy != null && storedAccuracy <= fixAccuracy) {
+                return@launch
+            }
             repository.update(recordId) { current ->
                 // Still open, still this parking: a record the user has since ended keeps
                 // the coordinates it ended with.
