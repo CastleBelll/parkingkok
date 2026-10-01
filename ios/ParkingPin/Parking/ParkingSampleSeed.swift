@@ -144,6 +144,16 @@
                     source: offset.source
                 )
                 record.endedAt = record.startedAt.addingTimeInterval(offset.durationHours * 3600)
+                // The newest past parking was at the same landmark, so docs/02 §18's
+                // `지난번 이 주차장` has a precedent to offer on the forms the tour opens.
+                if offset.startedHoursAgo == past.first?.startedHoursAgo, !isWithoutLocationRequested {
+                    record.location = ParkedLocation(
+                        latitude: sampleLatitude,
+                        longitude: sampleLongitude,
+                        horizontalAccuracy: sampleAccuracyMeters,
+                        capturedAt: record.startedAt
+                    )
+                }
                 try store.startSession(record)
                 try store.endSession(id: record.id, at: record.endedAt ?? now)
             }

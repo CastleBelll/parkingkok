@@ -404,3 +404,36 @@ photo — nothing the widget would not draw (docs/06 §1).
 A static shortcut `주차 위치` on a long press of the icon opens the active parking's detail
 (map and `길찾기`) over home; with none, home. Android has no counterpart to answering by
 voice without an Assistant integration, which is out of scope.
+
+## 18. 지난번 이 주차장 — last time's floor, offered (DECIDED 2026-10-01)
+People park where they parked before: the office, the mart, home. When the car is left near a
+place it was left before, the floor and zone from that time are offered, so the usual answer
+takes one tap instead of typing.
+
+### The rule (both platforms, `UsualSpotLookup`)
+- **Here** is the record's own location on home, or on the form the candidate's fix (confirming)
+  or the stored fix a manual save would attach (a manual save; docs/04).
+- The match is the **newest completed record** that is within **150 m** of here and says a floor
+  or a zone. 150 m covers one large car park and does not reach the next one.
+- Both fixes must state an accuracy of **100 m or better**. An unstated accuracy does not count:
+  it is better to offer nothing than to name the wrong car park.
+- **A zone belongs to its floor.** If a floor is already given (typed on the form, or saved on
+  the record) and it is not last time's, written either way (`지하 2층` = `B2`), nothing is
+  offered. Last time's `C구역` on B2 says nothing about B3.
+- Only the **floor and zone** are offered. The bay number is never carried over, because it is
+  almost always different next time.
+- Only the most recent 200 completed parkings are scanned.
+
+### Where it appears
+- **Manual form** (both arrivals): a row above the fields, `지난번 이 주차장  B2 · A구역  채우기`.
+  It is a text button and not a primary one, because `저장` stays the screen's one CTA. The tap
+  fills only the blanks. The row goes away once the user has typed everything it would fill.
+- **Home**, for an open parking that left the floor or zone blank: the §6a suggestion card,
+  titled `지난번 이 주차장에선 여기였어요`, with `적용` and `아니요`. A pillar-photo suggestion
+  outranks it, and only one card shows at a time. Once it is applied or dismissed, it is not
+  shown again for that record.
+
+### What it never does
+It never writes on its own (§6a's rule for a guess holds whatever made the guess). It never
+leaves the device: the lookup reads local records only, and nothing about it is sent to
+analytics.

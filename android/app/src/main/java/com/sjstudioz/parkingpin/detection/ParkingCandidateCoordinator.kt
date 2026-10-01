@@ -405,7 +405,7 @@ data class ConfirmedCandidateDetails(
  * The two types are the same four numbers in two layers — detection's view and the
  * record's — so this is the one place they are bridged.
  */
-private fun ReliableLocation.toParkingLocation(): ParkingLocation = ParkingLocation(
+internal fun ReliableLocation.toParkingLocation(): ParkingLocation = ParkingLocation(
     latitude = latitude,
     longitude = longitude,
     horizontalAccuracyM = horizontalAccuracyM,

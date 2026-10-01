@@ -36,10 +36,12 @@ fun PillarSuggestionCard(
     onApply: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    /** docs/02 §18 reuses the card for last time's floor; only the heading differs. */
+    title: String = stringResource(R.string.pillar_suggestion_title),
 ) {
     ParkingpinCard(modifier = modifier, contentPadding = MaterialTheme.spacing.large) {
         Text(
-            text = stringResource(R.string.pillar_suggestion_title),
+            text = title,
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onSurface,
         )
@@ -68,7 +70,7 @@ fun PillarSuggestionCard(
 }
 
 /** `B3 · A구역 142`, in the order the home hero ranks them, skipping what was not read. */
-private fun PillarSuggestion.readLabel(): String {
+internal fun PillarSuggestion.readLabel(): String {
     val within = listOfNotNull(zone, spot).joinToString(" ")
     return listOfNotNull(floorRaw, within.takeIf { it.isNotEmpty() }).joinToString(" · ")
 }

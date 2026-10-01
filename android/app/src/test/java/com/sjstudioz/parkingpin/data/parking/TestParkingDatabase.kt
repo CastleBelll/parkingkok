@@ -4,6 +4,7 @@ import android.content.ContextWrapper
 import androidx.room.Room
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import kotlinx.coroutines.Dispatchers
+import kotlin.coroutines.CoroutineContext
 
 /**
  * A real [ParkingDatabase], in memory, on the JVM.
@@ -16,8 +17,14 @@ import kotlinx.coroutines.Dispatchers
  * Room never reaches into the platform, and taking this route keeps Robolectric (and a
  * multi-second per-class start-up cost) out of the build.
  */
-internal fun createTestParkingDatabase(): ParkingDatabase =
+internal fun createTestParkingDatabase(
+    /**
+     * Where Room runs its queries. A test driving a ViewModel passes its test dispatcher, so
+     * no Room thread can resume a collector on `Dispatchers.Main` after `resetMain`.
+     */
+    queryContext: CoroutineContext = Dispatchers.IO,
+): ParkingDatabase =
     Room.inMemoryDatabaseBuilder(ContextWrapper(null), ParkingDatabase::class.java)
         .setDriver(BundledSQLiteDriver())
-        .setQueryCoroutineContext(Dispatchers.IO)
+        .setQueryCoroutineContext(queryContext)
         .build()

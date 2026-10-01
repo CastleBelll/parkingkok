@@ -35,6 +35,9 @@ struct ManualParkingSheet: View {
     @State private var saveFailure: String?
     @State private var draft = ManualParkingDraft()
     @State private var isSaving = false
+    /// docs/02 §18: last time's floor and zone where the car is now; nil until looked up,
+    /// and for an edit, which is not a new parking.
+    @State private var usualSpot: PillarReading?
     @FocusState private var focusedField: Field?
 
     private enum Field: Hashable {
@@ -88,6 +91,9 @@ struct ManualParkingSheet: View {
                 if let pillarPhoto, let image = UIImage(data: pillarPhoto) {
                     pillarSection(image)
                 }
+                if let offer = offeredUsualSpot {
+                    usualSpotSection(offer)
+                }
                 Section {
                     TextField("예: B3, 지하 3층, 3F", text: $draft.floorText)
                         .focused($focusedField, equals: .floor)
@@ -130,6 +136,7 @@ struct ManualParkingSheet: View {
                 }
             }
             .onAppear(perform: loadDraft)
+            .task { await loadUsualSpot() }
         }
         .presentationDetents([.medium, .large])
     }
@@ -182,6 +189,59 @@ struct ManualParkingSheet: View {
             return "사진에서 층·구역을 찾지 못했어요. 직접 적어주세요."
         }
         return "사진에서 \(read.joined(separator: " · "))(을)를 읽었어요. 맞는지 확인해 주세요."
+    }
+
+    /// docs/02 §18 `지난번 이 주차장  B2 · A구역  채우기`. A plain button, not a prominent
+    /// one: `저장` stays the sheet's one primary action, and ignoring this costs nothing.
+    private func usualSpotSection(_ offer: PillarReading) -> some View {
+        Section {
+            HStack {
+                VStack(alignment: .leading, spacing: PKSpacing.xs) {
+                    Text("지난번 이 주차장")
+                        .font(PKTypography.supporting)
+                        .foregroundStyle(PKColor.textSecondary)
+                    Text(offer.floorAndZoneLabel)
+                        .font(PKTypography.row)
+                        .foregroundStyle(PKColor.textPrimary)
+                }
+                Spacer()
+                Button("채우기") { applyUsualSpot(offer) }
+            }
+        }
+    }
+
+    /// What the offer would still fill; nil once the user has typed all of it.
+    private var offeredUsualSpot: PillarReading? {
+        guard let usualSpot else { return nil }
+        // A floor typed that differs from last time's makes last time's zone wrong too.
+        guard UsualSpotLookup.agrees(FloorValue.parse(draft.floorText), usualFloorText: usualSpot.floorText) else {
+            return nil
+        }
+        let fills = usualSpot.suggestedFloorText(over: draft.floorText) != nil
+            || usualSpot.suggestedZone(over: draft.zone) != nil
+        return fills ? usualSpot : nil
+    }
+
+    /// Only the blanks: what the user typed outranks what history guesses.
+    private func applyUsualSpot(_ offer: PillarReading) {
+        if let floorText = offer.suggestedFloorText(over: draft.floorText) {
+            draft.floorText = floorText
+        }
+        if let zone = offer.suggestedZone(over: draft.zone) {
+            draft.zone = zone
+        }
+        usualSpot = nil
+    }
+
+    /// The candidate's own fix when confirming; otherwise the fix a save would use.
+    private func loadUsualSpot() async {
+        guard editing == nil else { return }
+        let here = if let confirmation {
+            confirmation.candidate.lastReliableLocation.map(ParkedLocation.init)
+        } else {
+            await model.storedLocation()
+        }
+        usualSpot = model.usualSpot(near: here)
     }
 
     /// FR-005's accepted spellings, plus what happens to anything else.

@@ -113,6 +113,8 @@ fun HomeScreen(
     onNoticeShown: () -> Unit,
     onApplyPillarSuggestion: () -> Unit,
     onDismissPillarSuggestion: () -> Unit,
+    onApplyUsualSpot: () -> Unit = {},
+    onDismissUsualSpot: () -> Unit = {},
     modifier: Modifier = Modifier,
     /** docs/05 §11a `주차 종료` on the departure question. */
     onAcceptParkingEnd: () -> Unit = {},
@@ -177,6 +179,19 @@ fun HomeScreen(
                     suggestion = suggestion,
                     onApply = onApplyPillarSuggestion,
                     onDismiss = onDismissPillarSuggestion,
+                )
+            }
+        }
+        // docs/02 §18, in the same place and only when §6a has nothing to say: a photo the
+        // user just took outranks what history guesses.
+        val usualSpot = state.usualSpot
+        if (active != null && usualSpot != null) {
+            item("usual-spot") {
+                PillarSuggestionCard(
+                    suggestion = usualSpot,
+                    onApply = onApplyUsualSpot,
+                    onDismiss = onDismissUsualSpot,
+                    title = stringResource(R.string.usual_spot_card_title),
                 )
             }
         }
