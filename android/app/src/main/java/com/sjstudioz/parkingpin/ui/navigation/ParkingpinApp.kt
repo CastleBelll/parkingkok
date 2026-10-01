@@ -1,8 +1,10 @@
 package com.sjstudioz.parkingpin.ui.navigation
 
 import android.Manifest
+import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -39,6 +41,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.IntOffset
+import androidx.core.app.ActivityCompat
 import androidx.core.net.toUri
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
@@ -664,9 +667,10 @@ private fun SettingsRoute(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
-    // A permission can be revoked in system Settings while this screen is backgrounded.
+    // A permission can be granted or revoked in system Settings while this screen is
+    // backgrounded; coming back is when detection has to catch up with it.
     LifecycleResumeEffect(Unit) {
-        viewModel.refresh()
+        viewModel.onPermissionsChanged()
         onPauseOrDispose { }
     }
 
@@ -676,20 +680,41 @@ private fun SettingsRoute(
     // installed the app could not grant what detection needs without going to system
     // Settings by hand, and every device test so far had been granted over adb, which is
     // what hid it.
+    // The permission a row asked for, so a denial the OS answered without a dialog can be
+    // told apart from one the user just gave.
+    var askedPermission by remember { mutableStateOf<String?>(null) }
     val requestPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { viewModel.refresh() }
+    ) { granted ->
+        val asked = askedPermission
+        askedPermission = null
+        viewModel.onPermissionsChanged()
+        // Denied twice, Android stops showing the dialog and answers "no" at once: the row
+        // looked dead (audit 2026-10-01). There the only way left is system Settings.
+        val activity = context.findActivity()
+        if (!granted && asked != null && activity != null &&
+            !ActivityCompat.shouldShowRequestPermissionRationale(activity, asked)
+        ) {
+            context.startActivity(appDetailsSettings(context))
+        }
+    }
 
     // Turning detection on asks for what detection needs, in one dialog. Background
     // location is deliberately absent: Android 11+ refuses to prompt for it alongside the
     // foreground one, so it stays a row that opens system Settings.
+    // The switch is turned on after the answer, as the first-run prompt does: turned on
+    // first, it registered against permissions not yet granted, failed, and stayed on
+    // looking fine (audit 2026-10-01).
     val enableDetection = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
-    ) { viewModel.refresh() }
+    ) { viewModel.onDetectionEnabledChange(true) }
 
     SettingsScreen(
         state = state,
-        onRequestPermission = { permission -> requestPermission.launch(permission) },
+        onRequestPermission = { permission ->
+            askedPermission = permission
+            requestPermission.launch(permission)
+        },
         // docs/07 §13a. Credential Manager needs an Activity context, so the token is
         // fetched here and the ViewModel decides only what it means.
         onSignIn = {
@@ -708,9 +733,13 @@ private fun SettingsRoute(
         },
         onSignOut = viewModel::onSignOut,
         onDetectionEnabledChange = { enabled ->
-            if (enabled) enableDetection.launch(detectionPermissions())
-            viewModel.onDetectionEnabledChange(enabled)
+            if (enabled) {
+                enableDetection.launch(detectionPermissions())
+            } else {
+                viewModel.onDetectionEnabledChange(false)
+            }
         },
+        showDeveloperTools = container.isDebuggable,
         onLockScreenNoticeChange = viewModel::onLockScreenNoticeChange,
         onAnalyticsConsentChange = viewModel::onAnalyticsConsentChange,
         onOpenBatterySettings = {
@@ -773,3 +802,16 @@ private val NavBackStackSaver = listSaver<MutableState<NavBackStack>, String>(
     save = { it.value.encode() },
     restore = { mutableStateOf(NavBackStack.decode(it)) },
 )
+
+/** This app's page in system Settings — where a permission the OS will no longer prompt for is changed. */
+private fun appDetailsSettings(context: Context): Intent =
+    Intent(
+        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+        Uri.fromParts("package", context.packageName, null),
+    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}

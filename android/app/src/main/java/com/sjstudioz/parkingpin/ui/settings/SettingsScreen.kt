@@ -74,6 +74,8 @@ fun SettingsScreen(
     onOpenDiagnostics: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    /** The diagnostics screen is a debuggable-build tool; a store build does not list it. */
+    showDeveloperTools: Boolean = false,
 ) {
     var confirmingDelete by remember { mutableStateOf(false) }
 
@@ -315,46 +317,13 @@ fun SettingsScreen(
             }
         }
 
-        // 4. Plus
-        item("plus-title") { SectionTitle(stringResource(R.string.settings_section_plus)) }
-        item("plus") {
-            ParkingpinCard(contentPadding = 0.dp) {
-                ParkingpinRow(
-                    title = stringResource(R.string.settings_plus_title),
-                    supporting = stringResource(R.string.settings_plus_caption),
-                    // No sparkle. docs/10 §9 rules sparkles and crowns out of anything
-                    // that talks about Plus, and a row that says 준비 중 needs no glyph.
-                    iconRes = null,
-                    enabled = false,
-                    trailing = {
-                        StatusBadge(
-                            text = stringResource(R.string.coming_soon_badge),
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    },
-                )
-            }
-        }
+        // Plus and CSV export are not listed until they work (device feedback 2026-10-01:
+        // disabled 준비 중 rows read as broken buttons).
 
         // 5. 데이터
         item("data-title") { SectionTitle(stringResource(R.string.settings_section_data)) }
         item("data") {
             ParkingpinCard(contentPadding = 0.dp) {
-                ParkingpinRow(
-                    title = stringResource(R.string.settings_data_export),
-                    supporting = stringResource(R.string.settings_data_export_caption),
-                    iconRes = R.drawable.ic_download,
-                    enabled = false,
-                    trailing = {
-                        StatusBadge(
-                            text = stringResource(R.string.coming_soon_badge),
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    },
-                )
-                SettingsDivider()
                 ParkingpinRow(
                     title = stringResource(R.string.settings_data_delete),
                     supporting = stringResource(R.string.settings_data_delete_caption),
@@ -388,11 +357,12 @@ fun SettingsScreen(
             }
         }
 
-        // The P0 instrumentation screen keeps its access path (CLAUDE.md Development Order).
-        item("developer-title") {
+        // The P0 instrumentation screen keeps its access path (CLAUDE.md Development Order)
+        // in a debuggable build only.
+        if (showDeveloperTools) item("developer-title") {
             SectionTitle(stringResource(R.string.settings_section_developer))
         }
-        item("developer") {
+        if (showDeveloperTools) item("developer") {
             ParkingpinCard(contentPadding = 0.dp) {
                 ParkingpinRow(
                     title = stringResource(R.string.settings_diagnostics),

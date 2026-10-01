@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import UserNotifications
 
 /// Composition root for the detection stack, and the only thing `AppDelegate` talks to
@@ -109,12 +110,18 @@ final class DetectionRuntime {
         // whichever process closed the session, so the responder that answers the tap is
         // built here and held for the process's lifetime.
         labelPromptResponder = traces.map(TraceLabelPromptResponder.init(store:))
-        let prompter = traces.map { store in
-            TraceLabelPrompter(
-                delivery: labelPromptDelivery ?? UserNotificationLabelPromptDelivery(),
-                onSuppressed: { store.recordLabelPromptSuppressed() }
-            )
-        }
+        // Field-data collection, not the product: a store build never asks "이 이동,
+        // 무엇이었나요?" (audit 2026-10-01 found it posted in PROD).
+        #if PK_PROD
+            let prompter: TraceLabelPrompter? = nil
+        #else
+            let prompter = traces.map { store in
+                TraceLabelPrompter(
+                    delivery: labelPromptDelivery ?? UserNotificationLabelPromptDelivery(),
+                    onSuppressed: { store.recordLabelPromptSuppressed() }
+                )
+            }
+        #endif
 
         // Beside the checkpoint, in the directory that already carries the protection
         // class a locked-device wake needs (docs/05 §10a: the candidate must survive a
@@ -391,6 +398,12 @@ final class DetectionRuntime {
         preference.isEnabled = enabled
         if enabled {
             requestNextLocationPermission()
+            // Already at Always (a re-enable): the location rungs are done, so the rest
+            // of the ladder is asked now rather than on an authorization change that will
+            // not come.
+            if locationAuthorization == .always {
+                requestFollowUpPermissions()
+            }
             startMonitoringIfPermitted()
             Task { [weak self, coordinator] in
                 await coordinator.setSmartDetectionEnabled(true)
@@ -456,6 +469,41 @@ extension DetectionRuntime: SignificantLocationMonitorDelegate {
     func monitorDidChangeAuthorization(_ authorization: LocationAuthorization) {
         locationAuthorization = authorization
         startMonitoringIfPermitted()
+        continuePermissionLadder(after: authorization)
+    }
+
+    /// The opt-in's permission ladder, one rung per answer (audit 2026-10-01: the first-run
+    /// `자동 기록 켜기` asked for When-In-Use and stopped there, so a new user never reached
+    /// Always — without which nothing is monitored — and was never asked for notifications,
+    /// without which a detected parking says nothing).
+    ///
+    /// When-In-Use granted → ask for Always (docs/04 §4: contextual, after the opt-in).
+    /// Always granted, or location refused → ask for notifications and motion, which work
+    /// either way. Only while Smart Detection is on and the app is on screen: a background
+    /// relaunch reports the authorization too, and a prompt cannot appear there.
+    private func continuePermissionLadder(after authorization: LocationAuthorization) {
+        guard preference.isEnabled, UIApplication.shared.applicationState == .active else { return }
+        switch authorization {
+        case .whenInUse:
+            requestNextLocationPermission()
+        case .always, .denied, .restricted:
+            requestFollowUpPermissions()
+        case .notDetermined:
+            break
+        }
+    }
+
+    /// Notifications, then motion — each only if never asked, so a refusal is not nagged.
+    private func requestFollowUpPermissions() {
+        Task { [weak self] in
+            guard let self else { return }
+            if await notificationAuthorization() == "notDetermined" {
+                await requestNotificationPermission()
+            }
+            if motionAuthorization == .notDetermined {
+                await requestMotionPermission()
+            }
+        }
     }
 
     /// The one path that runs while nobody is watching, so it is the one whose evidence
