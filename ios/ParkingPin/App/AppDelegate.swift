@@ -22,6 +22,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         AnalyticsComposition.applyStoredConsent()
         #if PK_DEV
             FirebaseSelfCheck.runIfRequested()
+            // docs/05 §19: the battery gate's iOS measurement, gathered on ordinary drives.
+            EnergyMetricsRecorder.shared.start()
         #endif
         return true
     }

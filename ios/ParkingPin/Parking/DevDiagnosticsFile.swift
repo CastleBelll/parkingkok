@@ -36,6 +36,26 @@
             try? data.write(to: url, options: .atomic)
         }
 
+        static func readDecodable<Value: Decodable>(_ type: Value.Type, from name: String) -> Value? {
+            guard let url = url(for: name), let data = try? Data(contentsOf: url) else { return nil }
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return try? decoder.decode(type, from: data)
+        }
+
+        static func writeEncodable(_ value: some Encodable, to name: String) {
+            guard let url = url(for: name) else { return }
+            try? FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            guard let data = try? encoder.encode(value) else { return }
+            try? data.write(to: url, options: .atomic)
+        }
+
         private static func url(for name: String) -> URL? {
             guard let identifier = Bundle.main
                 .object(forInfoDictionaryKey: "PKAppGroupIdentifier") as? String,

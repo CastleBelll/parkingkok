@@ -1958,6 +1958,22 @@ Tools:
 
 Do not invent fixed percentage gate before P0 baseline. Define threshold from reference devices and repeatable test protocol.
 
+**How the field numbers are collected (2026-10-01).** Both without a cable, on ordinary drives:
+
+- **iOS — MetricKit.** DEV builds subscribe to `MXMetricManager` (`EnergyMetricsRecorder`) and
+  keep each daily payload's CPU time, foreground/background/background-location time and
+  Core Location time per accuracy (`EnergyDay`) in the App Group's
+  `Library/Application Support/Diagnostics/energy-metrics.json`, read with `devicectl` like the
+  other DEV diagnostics. `locationBestForNavigationSeconds` is the bounded capture; the coarse
+  buckets are significant change. Payloads arrive about once a day, the first one a day after
+  install. Aggregates only, no coordinate.
+- **Android — `adb shell dumpsys batterystats --charged com.sjstudioz.parkingpin`**, which
+  reports the app's GPS time, wakelocks and foreground-service time since the last full
+  charge. No app code.
+
+Baseline is a week with Smart Detection off against a week with it on, same phone, same
+routine.
+
 **The bounded capture runs through `PARKING_TRANSITION` (2026-09-27).** It used to stop at
 the transition's entry; it now stops when the transition decides (§3a "The
 `PARKING_TRANSITION` rows, exactly"). That adds at most `transitionWindow` — 300 s — of
