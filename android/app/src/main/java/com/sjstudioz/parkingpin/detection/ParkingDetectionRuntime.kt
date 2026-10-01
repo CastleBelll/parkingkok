@@ -11,13 +11,15 @@ import com.sjstudioz.parkingpin.domain.detection.DetectionEvent
 import com.sjstudioz.parkingpin.domain.detection.MotionDomainEvent
 import com.sjstudioz.parkingpin.domain.detection.MotionEventKind
 import com.sjstudioz.parkingpin.domain.detection.ParkingDetectionEngine
+import com.sjstudioz.parkingpin.domain.detection.ReliableLocation
 import com.sjstudioz.parkingpin.domain.location.LocationCaptureModePolicy
 import com.sjstudioz.parkingpin.domain.location.LocationSample
 import com.sjstudioz.parkingpin.domain.location.LocationSessionMode
+import com.sjstudioz.parkingpin.domain.parking.ParkingLocation
 import com.sjstudioz.parkingpin.domain.trace.LocationQualityBucket
+import java.util.UUID
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.util.UUID
 
 /**
  * The application layer around [ParkingDetectionEngine]: restore, feed, persist, act.
@@ -204,8 +206,8 @@ class ParkingDetectionRuntime(
      * The capture is stopped after the engine, outside the lock: it has a lock of its own,
      * and a failure there must not cost the state machine its `PARKED`.
      */
-    suspend fun handleUserSavedParking(atMillis: Long): List<DetectionEffect> =
-        handleParkedByUser(DetectionEvent.UserSavedParking(atMillis))
+    suspend fun handleUserSavedParking(atMillis: Long, location: ParkingLocation? = null): List<DetectionEffect> =
+        handleParkedByUser(DetectionEvent.UserSavedParking(atMillis, location?.toReliableLocation()))
 
     /**
      * `아직 주차 중` answered a departure proposal (docs/05 §11a, contract §2
@@ -478,3 +480,17 @@ private fun DetectionEffect.CreateCandidate.toDetectionProperties(): DetectionPr
     gpsDegradation = gpsDegradation,
     optionalVehicleSignal = optionalVehicleSignal,
 )
+
+/**
+ * A saved record's location as the engine measures the next drive against it (docs/05 §11d).
+ * An accuracy the record never had is taken as poor rather than perfect, so it can only widen
+ * the passenger test's allowance.
+ */
+private fun ParkingLocation.toReliableLocation(): ReliableLocation = ReliableLocation(
+    latitude = latitude,
+    longitude = longitude,
+    horizontalAccuracyM = horizontalAccuracyM ?: UNKNOWN_ACCURACY_METERS,
+    capturedAtMillis = capturedAtMillis,
+)
+
+private const val UNKNOWN_ACCURACY_METERS = 100f

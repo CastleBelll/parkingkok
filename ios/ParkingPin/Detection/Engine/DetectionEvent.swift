@@ -52,7 +52,10 @@ enum DetectionEvent: Sendable, Equatable {
     /// (docs/05 §11c). Distinct from `userConfirmedParking` because it is valid from every
     /// state, not only `CANDIDATE_PENDING` — and it is what arms §11's departure for the
     /// records most users actually have.
-    case userSavedParking(at: Date)
+    ///
+    /// `location` is where the saved parking says the car is, when it has one — what
+    /// §11d's passenger test measures a later drive against.
+    case userSavedParking(at: Date, location: LastReliableLocation? = nil)
     /// The user answered a departure proposal with 아직 주차 중 (docs/05 §11a, contract §2
     /// `user_kept_parking`). The same `*any* → PARKED` row as `userSavedParking`, with no new
     /// record: the car is still where the active parking says it is.
@@ -74,7 +77,7 @@ enum DetectionEvent: Sendable, Equatable {
              let .timerTick(at),
              let .userConfirmedParking(at),
              let .userRejectedParking(at),
-             let .userSavedParking(at),
+             let .userSavedParking(at, _),
              let .userKeptParking(at):
             at
         case let .location(fix):

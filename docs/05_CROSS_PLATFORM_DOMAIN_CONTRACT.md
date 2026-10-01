@@ -56,7 +56,7 @@ trace(§9)와 fixture(§8)가 쓰는 문자열. 플랫폼 내부 표현과 별�
 | BluetoothCarDisconnected | `bluetooth_car_disconnected` |
 | UserConfirmedParking | `user_confirmed` |
 | UserRejectedParking | `user_rejected` |
-| UserSavedParking | `user_saved` |
+| UserSavedParking | `user_saved` — optionally carrying the saved parking's location (engine §11d); fixtures carry none |
 | UserKeptParking | `user_kept_parking` |
 
 ### Quality bucket

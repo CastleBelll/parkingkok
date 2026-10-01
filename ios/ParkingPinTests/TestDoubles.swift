@@ -542,8 +542,11 @@ final class StubManualParkingReporter: ManualParkingReporting {
 
     private(set) var keptAt: [Date] = []
 
-    func userSavedParking(at date: Date) async {
+    private(set) var savedLocations: [LastReliableLocation?] = []
+
+    func userSavedParking(at date: Date, location: LastReliableLocation?) async {
         savedAt.append(date)
+        savedLocations.append(location)
     }
 
     func userKeptParking(at date: Date) async {

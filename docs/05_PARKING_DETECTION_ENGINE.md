@@ -1689,6 +1689,41 @@ only proposes the end (§11a), so that ride costs the user one question, not the
 `platform-tests/manual_save_parks.json` and by per-platform engine tests for the departure
 that follows.
 
+### 11d. A ride in someone else's car is not a departure (DECIDED 2026-10-01)
+
+Raised by the product owner: "내 차는 주차해놓고 다른 사람의 차를 얻어타고 가는 경우도 주차 종료로
+인식이 돼서". The ride met §11's bars and §7's guard like any drive, so the parking was proposed
+as ended — and the ride's own end was then offered as the user's next parking, which a
+confirmation would have put in place of the real one.
+
+**The test: the user's own car starts where it is parked.** The engine keeps the active
+parking's location (`parkedLocation`): the confirmed candidate's fix, or the location a hand
+save carried on `user_saved`. While a departure is being watched (`PARKED` with a get-in,
+`DEPARTURE_CANDIDATE`), every accepted fix is checked against it:
+
+```text
+elsewhere  ⇔  distance(fix, parked) > 250 m + parked.accuracy + fix.accuracy
+                                      + 25 m/s × (fix time − vehicle activity start)
+```
+
+The time term is why a late first fix does not convict the user's own departure: a car that
+pulled away a minute ago may already be a kilometre and a half down the road. A coarse fix
+only widens the allowance.
+
+**Elsewhere ends the departure as someone else's ride:** back to `PARKED`, the session and its
+capture dropped, no `proposeParkingEnd`, and no parking candidate for that ride. Vehicle
+evidence within `vehicleEvidenceTimeout` of the last judged moment belongs to the same ride and
+opens nothing; a `vehicle_exit`, a hand save or a confirmed parking ends the ride. Evidence after
+a longer silence is a new trip and is judged afresh. A confirmed departure forgets the location.
+
+**What it cannot see.** A ride that starts next to the parked car (a friend's car in the same
+garage), and any parking saved without a location: both behave as before, and the proposal
+(§11a) is still the user's to answer with 아직 주차 중.
+
+Constants (`PassengerRidePolicy`, both platforms): `baseMeters` 250, `maximumSpeed` 25 m/s —
+**unvalidated**. Pinned by `passenger_ride_keeps_parking.json` and its control
+`own_car_departs_from_parked_spot.json`, and by `PassengerRideTests` / `PassengerRideTest`.
+
 ## 12. Taxi/Bus Mitigation
 - short trip guards
 - one candidate per travel session

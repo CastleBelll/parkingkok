@@ -210,6 +210,8 @@ data class CandidateSnapshot(
     /** §5: internal. Carried for diagnostics and tuning, never across an API boundary. */
     val score: Int,
     val reasons: List<EvidenceReasonCode>,
+    /** The fix the candidate inherited — where the car is if the user says yes (docs/05 §11d). */
+    val location: ReliableLocation? = null,
 )
 
 /**
@@ -257,6 +259,17 @@ data class DetectionEngineState(
      */
     val stopOnlyResumeWindow: StopOnlyResumeWindow? = null,
     val stopOnlyRescore: StopOnlyRescore? = null,
+    /**
+     * docs/05 §11d: where the active parking says the car is — the confirmed candidate's fix,
+     * or the location a hand save carried. Null when the parking has none, which turns the
+     * passenger test off. iOS `parkedLocation`.
+     */
+    val parkedLocation: ReliableLocation? = null,
+    /**
+     * docs/05 §11d: the newest vehicle evidence of a ride already judged to be in someone
+     * else's car. While it is recent, more of that ride's vehicle evidence opens nothing.
+     */
+    val passengerRideLastVehicleAtMillis: Long? = null,
 ) {
 
     /**
@@ -448,7 +461,11 @@ class ParkingDetectionEngine(
         // §3a's `any -> PARKED` row is answered before any evidence is folded or any window
         // judged: the user has said where the car is, and nothing the engine was inferring
         // — including a window that happened to close at this instant — outranks that.
-        if (event is DetectionEvent.UserSavedParking) return userSavedParking(state, event.atMillis)
+        if (event is DetectionEvent.UserSavedParking) {
+            // §11d: the hand save says where the car is now, or that it does not know.
+            val located = state.copy(parkedLocation = event.location, passengerRideLastVehicleAtMillis = null)
+            return userSavedParking(located, event.atMillis)
+        }
         // `아직 주차 중` (§11a) is the same answer about where the car is, with no new record.
         if (event is DetectionEvent.UserKeptParking) return userSavedParking(state, event.atMillis)
         // The opt-out likewise, and for iOS's reason: `endDrivingSession` acts on the state as
@@ -769,6 +786,18 @@ class ParkingDetectionEngine(
             // Inside a stop-only candidate's resume window it is the opposite: the vehicle
             // never ended, and its evidence returning is the long light ending — the same
             // drive, resumed by the edge (§3a "A stop-only candidate can still be a long light").
+            // §11d: more of a ride already judged to be someone else's. Recent vehicle evidence
+            // keeps the ride going and opens nothing; evidence after a longer silence is a new
+            // trip and is judged afresh.
+            is DetectionEvent.VehicleEnter if state.state == DetectionState.PARKED &&
+                state.passengerRideLastVehicleAtMillis != null -> {
+                val ride = state.passengerRideLastVehicleAtMillis
+                if (event.atMillis - ride < VEHICLE_EVIDENCE_TIMEOUT_MILLIS) {
+                    state.copy(passengerRideLastVehicleAtMillis = maxOf(ride, event.atMillis))
+                } else {
+                    fold(state.copy(passengerRideLastVehicleAtMillis = null), event)
+                }
+            }
             is DetectionEvent.VehicleEnter -> {
                 val newJourney = state.state == DetectionState.CANDIDATE_PENDING && state.stopOnlyResumeWindow == null
                 val previous = state.session.takeUnless { newJourney }
@@ -780,6 +809,9 @@ class ParkingDetectionEngine(
             }
             is DetectionEvent.VehicleExit -> state.copy(
                 session = endVehicleActivity(state.session, event.atMillis)?.copy(vehicleActiveSinceMillis = null),
+                // §11d: the ride in someone else's car is over.
+                passengerRideLastVehicleAtMillis = state.passengerRideLastVehicleAtMillis
+                    .takeUnless { state.state == DetectionState.PARKED },
             )
 
             // Motion confirming signals carry no evidence of their own outside
@@ -1091,6 +1123,9 @@ class ParkingDetectionEngine(
                     session = null,
                     candidate = null,
                     stopOnlyResumeWindow = null,
+                    // §11d: the confirmed candidate's fix is where the car now is.
+                    parkedLocation = candidate.location,
+                    passengerRideLastVehicleAtMillis = null,
                 ),
                 listOf(DetectionEffect.MarkParkingActive(candidate.id)),
             ).withCheckpoint()
@@ -1269,6 +1304,7 @@ class ParkingDetectionEngine(
 
     private fun fromParked(state: DetectionEngineState, event: DetectionEvent): EngineStep {
         val session = state.session ?: return EngineStep(state)
+        passengerRide(state, session, event)?.let { return it }
         // §11b. The mirror of §3a's disconnect row: the phone rejoining the car is the
         // strongest departure signal there is, and waiting for 500 m of GPS to say the same
         // thing is waiting for evidence that is already in.
@@ -1294,6 +1330,7 @@ class ParkingDetectionEngine(
 
     private fun fromDepartureCandidate(state: DetectionEngineState, event: DetectionEvent): EngineStep {
         val session = state.session ?: return state.moveTo(DetectionState.PARKED, event.atMillis)
+        passengerRide(state, session, event)?.let { return it }
         // "departure confirmed" is §7's guard in full — the one bar this project has for
         // "a meaningful driving session", movement clause included. Leaving a parking
         // record open is recoverable; ending one the user is still inside is not, which is
@@ -1303,7 +1340,8 @@ class ParkingDetectionEngine(
             // — `stateEnteredAtMillis` is when §11's two bars were first cleared — not now,
             // which is however long the strict guard took to be satisfied afterwards.
             val proposed = DetectionEffect.ProposeParkingEnd(state.stateEnteredAtMillis)
-            val confirmed = state.moveTo(DetectionState.DRIVING, event.atMillis)
+            // The car has left; where it was parked says nothing about the next drive.
+            val confirmed = state.copy(parkedLocation = null).moveTo(DetectionState.DRIVING, event.atMillis)
             // docs/05 §11: the event that confirmed the departure is then read in `DRIVING`,
             // as `DRIVING_CANDIDATE` reads the exit that promoted it. A `vehicle_exit` or a
             // link disconnect whose arrival met the guard only through elapsed time is also
@@ -1411,6 +1449,33 @@ class ParkingDetectionEngine(
                 unlinked.copy(state = DetectionState.PARKED, stateEnteredAtMillis = atMillis, session = null),
             ).withCheckpoint()
         }
+    }
+
+    /**
+     * docs/05 §11d, iOS `applyPassengerTest`: a fix of a departure-in-waiting that the parked
+     * car could not have reached ends it as someone else's ride — no question asked, the
+     * session (and with it the capture) dropped, and the rest of that ride's vehicle evidence
+     * ignored. Null when the event is not such a fix.
+     */
+    private fun passengerRide(state: DetectionEngineState, session: TravelSession, event: DetectionEvent): EngineStep? {
+        if (event !is DetectionEvent.Location) return null
+        val parked = state.parkedLocation ?: return null
+        val evidence = session.evidence
+        val vehicleStartedAt = maxOf(
+            evidence.vehicleFirstSeenAtMillis,
+            session.vehicleActiveSinceMillis ?: evidence.vehicleFirstSeenAtMillis,
+        )
+        if (!PassengerRidePolicy.isElsewhere(event.sample, parked, vehicleStartedAt)) return null
+        return EngineStep(
+            state.copy(
+                state = DetectionState.PARKED,
+                stateEnteredAtMillis = if (state.state == DetectionState.PARKED) state.stateEnteredAtMillis else event.atMillis,
+                session = null,
+                // From the judgement on, not from the ride's first evidence: the ride is
+                // still going at this fix.
+                passengerRideLastVehicleAtMillis = maxOf(evidence.lastVehicleEvidenceAtMillis, event.atMillis),
+            ),
+        ).withCheckpoint()
     }
 
     // ── Shared moves ────────────────────────────────────────────────────────────────
@@ -1546,6 +1611,7 @@ class ParkingDetectionEngine(
             confidence = confidence,
             score = score,
             reasons = reasons,
+            location = inheritedLocation,
         )
         val next = copy(
             state = DetectionState.CANDIDATE_PENDING,

@@ -91,6 +91,9 @@ class ParityFixtureTest {
                 // docs/05 §11 "An event that confirms a departure is also read in DRIVING": the
                 // vehicle_exit that confirms a short departure also ends that drive (2026-09-28).
                 "manual_save_then_short_departure.json",
+                // docs/05 §11d: the user's own car, and someone else's (2026-10-01).
+                "own_car_departs_from_parked_spot.json",
+                "passenger_ride_keeps_parking.json",
                 "quiet_transition_expires_no_candidate.json",
                 "red_light_no_candidate.json",
                 // docs/05 §3a "A stop-only candidate takes the exit that follows it" (2026-10-01).

@@ -453,8 +453,8 @@ extension DetectionRuntime: CandidateResolving {
 /// checkpoint write. What it buys is a checkpoint that is still true when detection is
 /// turned back on: the car *is* parked, and the first drive after re-enabling ends it.
 extension DetectionRuntime: ManualParkingReporting {
-    func userSavedParking(at date: Date) async {
-        await coordinator.userSavedParking(at: date)
+    func userSavedParking(at date: Date, location: LastReliableLocation?) async {
+        await coordinator.userSavedParking(at: date, location: location)
         await exportDiagnostics()
     }
 

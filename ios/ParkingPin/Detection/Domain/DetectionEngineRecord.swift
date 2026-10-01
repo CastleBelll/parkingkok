@@ -41,6 +41,13 @@ struct DetectionEngineRecord: Sendable, Equatable, Codable {
     var connectedCarLinks: Set<CarLinkKind> = []
     /// §12 / §3a "One candidate per travel session".
     var hasProducedCandidateInSession = false
+    /// docs/05 §11d: where the active parking says the car is — the confirmed candidate's
+    /// fix, or the location a hand save carried. `nil` when the parking has none, which
+    /// turns the passenger test off.
+    var parkedLocation: LastReliableLocation?
+    /// docs/05 §11d: the newest vehicle evidence of a ride already judged to be in someone
+    /// else's car. While it is recent, more of that ride's vehicle evidence opens nothing.
+    var passengerRideLastVehicleAt: Date?
 }
 
 /// The drive that just ended, held while `PARKING_TRANSITION` decides what it was.

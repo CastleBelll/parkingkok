@@ -304,7 +304,8 @@ class ManualParkingViewModel(
             result.endedPrevious?.let { endProposals?.retire(it.id) }
             // Only a write that happened: `AlreadyActive` saved nothing, and telling the
             // machine a car was parked would drop the departure evidence of the open one.
-            detectionRuntime?.handleUserSavedParking(clock.nowEpochMillis())
+            // §11d: where the record says the car is, which the next drive is measured against.
+            detectionRuntime?.handleUserSavedParking(clock.nowEpochMillis(), result.record.location)
             attachPillarPhoto(result.record.id)
         }
         _uiState.update {
