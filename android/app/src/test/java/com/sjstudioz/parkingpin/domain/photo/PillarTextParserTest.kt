@@ -232,4 +232,24 @@ class PillarTextParserTest {
         assertEquals(PillarSuggestion.NONE, PillarTextParser.parse(emptyList<String>()))
         assertEquals(PillarSuggestion.NONE, PillarTextParser.parse(listOf("", "   ")))
     }
+
+    /** Audit 2026-10-01 L12: the floor badge has a pillar label's shape (`B1` is `A9`). */
+    @Test
+    fun `the floor badge does not hide a lone-letter zone beside it`() {
+        val suggestion = PillarTextParser.parse(
+            listOf(PillarLine("B1", 0.150), PillarLine("A", 0.140), PillarLine("47", 0.143)),
+        )
+
+        assertEquals("B1", suggestion.floorRaw)
+        assertEquals("A", suggestion.zone)
+        assertEquals("47", suggestion.spot)
+    }
+
+    @Test
+    fun `the floor badge does not turn bay 85 into a misread B5`() {
+        val suggestion = PillarTextParser.parse(listOf(PillarLine("B2", 0.150), PillarLine("85", 0.140)))
+
+        assertEquals("B2", suggestion.floorRaw)
+        assertEquals("85", suggestion.spot)
+    }
 }

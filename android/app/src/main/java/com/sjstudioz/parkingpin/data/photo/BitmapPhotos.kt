@@ -26,8 +26,8 @@ import java.io.IOException
 internal object BitmapPhotos {
 
     /**
-     * [source], decoded and scaled so its long edge is at most [maxLongEdge], rotated per
-     * its EXIF orientation. Null when the stream holds nothing decodable.
+     * [source], decoded and scaled so its long edge is at most [maxLongEdge], turned upright
+     * per its EXIF orientation. Null when the stream holds nothing decodable.
      */
     fun decodeScaled(source: PhotoSource, maxLongEdge: Int): Bitmap? {
         val bounds = decodeBounds(source) ?: return null
@@ -35,7 +35,7 @@ internal object BitmapPhotos {
 
         val decoded = decodeSampled(source, PhotoScale.sampleSize(bounds, maxLongEdge))
             ?: return null
-        return transform(decoded, maxLongEdge, rotationDegrees(source))
+        return transform(decoded, maxLongEdge, orientationOf(source))
     }
 
     private fun decodeBounds(source: PhotoSource): PhotoSize? {
@@ -61,29 +61,17 @@ internal object BitmapPhotos {
         }
     }
 
-    /**
-     * EXIF rotation in degrees.
-     *
-     * A camera writes the sensor's pixels and a tag saying which way was up; re-encoding
-     * without applying the tag is what turns a photo of a pillar sideways. Mirrored
-     * orientations are not handled — no camera produces them unprompted, and a flip the
-     * user did not ask for is worse than leaving one alone.
-     */
-    private fun rotationDegrees(source: PhotoSource): Float = try {
+    /** The EXIF orientation tag, or normal when it cannot be read. */
+    private fun orientationOf(source: PhotoSource): ExifTransform = try {
         val orientation = source.openStream().use {
             ExifInterface(it).getAttributeInt(
                 ExifInterface.TAG_ORIENTATION,
                 ExifInterface.ORIENTATION_NORMAL,
             )
         }
-        when (orientation) {
-            ExifInterface.ORIENTATION_ROTATE_90 -> 90f
-            ExifInterface.ORIENTATION_ROTATE_180 -> 180f
-            ExifInterface.ORIENTATION_ROTATE_270 -> 270f
-            else -> 0f
-        }
+        ExifTransform.of(orientation)
     } catch (_: IOException) {
-        0f
+        ExifTransform.NONE
     }
 
     /**
@@ -92,14 +80,15 @@ internal object BitmapPhotos {
      * One `createBitmap` rather than a scale followed by a rotate: the second allocation
      * would be as large as the first and exist at the same time.
      */
-    private fun transform(decoded: Bitmap, maxLongEdge: Int, rotation: Float): Bitmap {
+    private fun transform(decoded: Bitmap, maxLongEdge: Int, orientation: ExifTransform): Bitmap {
         val target = PhotoScale.fit(PhotoSize(decoded.width, decoded.height), maxLongEdge)
         val matrix = Matrix().apply {
             postScale(
                 target.width.toFloat() / decoded.width,
                 target.height.toFloat() / decoded.height,
             )
-            postRotate(rotation)
+            postRotate(orientation.rotationDegrees)
+            if (orientation.mirrored) postScale(-1f, 1f)
         }
         val transformed =
             Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)

@@ -28,6 +28,12 @@ class EditParkingViewModel(
     private val _uiState = MutableStateFlow(ManualParkingUiState(editing = true))
     val uiState: StateFlow<ManualParkingUiState> = _uiState.asStateFlow()
 
+    /**
+     * False until the record has been read. A 저장 before then wrote the empty form over
+     * the record — floor, zone, spot and memo blanked by a quick tap (audit 2026-10-01).
+     */
+    private var loaded = false
+
     init {
         viewModelScope.launch {
             val record = repository.find(recordId)
@@ -36,14 +42,16 @@ class EditParkingViewModel(
                 _uiState.update { it.copy(candidateGone = true) }
                 return@launch
             }
+            // Into the blanks only: what the user typed while the read was in flight stays.
             _uiState.update {
                 it.copy(
-                    floorRaw = record.floor?.raw.orEmpty(),
-                    zone = record.zone.orEmpty(),
-                    spot = record.spot.orEmpty(),
-                    memo = record.memo.orEmpty(),
+                    floorRaw = it.floorRaw.ifEmpty { record.floor?.raw.orEmpty() },
+                    zone = it.zone.ifEmpty { record.zone.orEmpty() },
+                    spot = it.spot.ifEmpty { record.spot.orEmpty() },
+                    memo = it.memo.ifEmpty { record.memo.orEmpty() },
                 )
             }
+            loaded = true
         }
     }
 
@@ -56,7 +64,7 @@ class EditParkingViewModel(
     fun onMemoChange(value: String) = _uiState.update { it.copy(memo = value) }
 
     fun onSave() {
-        if (_uiState.value.saving) return
+        if (_uiState.value.saving || !loaded) return
         _uiState.update { it.copy(saving = true, saveFailed = false) }
         viewModelScope.launch {
             val state = _uiState.value

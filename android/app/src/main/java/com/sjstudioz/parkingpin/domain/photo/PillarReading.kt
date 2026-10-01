@@ -119,7 +119,10 @@ object PillarTextParser {
             if (floor != null && lines.none { it == floor }) add("8" + floor.drop(1))
         }
         val words = lines.flatMap { it.split(WHITESPACE) }.filter(String::isNotEmpty)
-        val shapes = labelShapes(words)
+        // Without the floor badge: `B1` has a pillar label's shape, and counting it made the
+        // wall look labelled — dropping the lone `A` beside it as a zone and reading bay `85`
+        // as a misread `B5` (audit 2026-10-01 L12, both platforms).
+        val shapes = labelShapes(words.filterNot(used::contains))
         val bays = baysIn(words, used, shapes, heights)
         val bay = nearest(bays)
         return PillarSuggestion(
