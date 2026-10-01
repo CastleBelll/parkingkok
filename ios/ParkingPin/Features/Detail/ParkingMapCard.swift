@@ -122,16 +122,26 @@ struct ParkingMapCard: View {
 ///
 /// Not a greyed-out map and not a blank space: the mock's slot keeps its size and says
 /// why it is empty, so the screen does not silently lose a section.
+///
+/// While a manual save's fix is still on its way it says that instead (2026-10-01): the
+/// few seconds of "saved without location" read as a save that had lost it.
 struct ParkingMapUnavailableCard: View {
+    var isLocating = false
+
     var body: some View {
         PKCard {
             HStack(spacing: PKSpacing.l) {
-                PKIconChip("mappin.slash", tint: .neutral)
+                if isLocating {
+                    ProgressView()
+                        .frame(width: PKSize.iconChip, height: PKSize.iconChip)
+                } else {
+                    PKIconChip("mappin.slash", tint: .neutral)
+                }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("위치 정보 없이 저장된 기록이에요")
+                    Text(isLocating ? "위치를 확인하고 있어요" : "위치 정보 없이 저장된 기록이에요")
                         .font(PKTypography.row)
                         .foregroundStyle(PKColor.textPrimary)
-                    Text("층과 구역 정보는 그대로 사용할 수 있어요.")
+                    Text(isLocating ? "잠시 후 지도에 표시돼요." : "층과 구역 정보는 그대로 사용할 수 있어요.")
                         .font(PKTypography.supporting)
                         .foregroundStyle(PKColor.textSecondary)
                 }

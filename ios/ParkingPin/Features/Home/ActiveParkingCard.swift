@@ -20,6 +20,8 @@ struct ActiveParkingCard: View {
     let onEditFloor: () -> Void
     /// docs/05 §11a: the departure question, while one is pending. `nil` is the ordinary state.
     var endPrompt: ParkingEndPrompt?
+    /// A manual save's location is still on its way; the map corner says so.
+    var isLocating = false
     var onAcceptEnd: () -> Void = {}
     var onKeepParking: () -> Void = {}
 
@@ -32,7 +34,11 @@ struct ActiveParkingCard: View {
                         heroBlock
                     }
                     Spacer(minLength: PKSpacing.s)
-                    ParkingMapThumbnail(point: ParkingMapPoint(session), zoneText: session.zone)
+                    ParkingMapThumbnail(
+                        point: ParkingMapPoint(session),
+                        zoneText: session.zone,
+                        isLocating: isLocating
+                    )
                 }
                 floorStepper
                 if let endPrompt {

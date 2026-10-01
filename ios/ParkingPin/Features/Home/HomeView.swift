@@ -83,6 +83,7 @@ struct HomeView: View {
                         onStepFloor: { model.stepActiveFloor(by: $0) },
                         onEditFloor: { isManualSheetPresented = true },
                         endPrompt: model.endPrompt,
+                        isLocating: model.locatingSessionID == active.id,
                         onAcceptEnd: {
                             pkWithAnimation(PKMotion.sessionChange, reduceMotion: reduceMotion) {
                                 _ = model.acceptEndProposal()

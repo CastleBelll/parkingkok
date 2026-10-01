@@ -27,10 +27,12 @@ struct ParkingMapThumbnail: View {
 
     private let point: ParkingMapPoint?
     private let zoneText: String?
+    private let isLocating: Bool
 
-    init(point: ParkingMapPoint?, zoneText: String?) {
+    init(point: ParkingMapPoint?, zoneText: String?, isLocating: Bool = false) {
         self.point = point
         self.zoneText = zoneText
+        self.isLocating = isLocating
     }
 
     var body: some View {
@@ -65,6 +67,8 @@ struct ParkingMapThumbnail: View {
                 pin
             }
             .overlay(alignment: .bottomTrailing) { zoneChip }
+        } else if isLocating {
+            locating
         } else {
             placeholder
         }
@@ -131,8 +135,25 @@ struct ParkingMapThumbnail: View {
         }
     }
 
+    /// The seconds between a manual save and its fix. `위치 없음` here read as a save that
+    /// had lost its location (2026-10-01), when the fix was ten seconds away.
+    private var locating: some View {
+        ZStack {
+            PKColor.textSecondary.opacity(0.08)
+            VStack(spacing: PKSpacing.xs) {
+                ProgressView()
+                Text("위치 확인 중")
+                    .font(PKTypography.caption)
+                    .foregroundStyle(PKColor.textSecondary)
+            }
+        }
+    }
+
     private var accessibilityText: String {
-        point?.captionText ?? "위치 정보 없이 저장된 기록이에요"
+        if let point {
+            return point.captionText
+        }
+        return isLocating ? "위치를 확인하고 있어요" : "위치 정보 없이 저장된 기록이에요"
     }
 
     /// Everything the rendered image depends on, so `.task(id:)` can tell a real change
