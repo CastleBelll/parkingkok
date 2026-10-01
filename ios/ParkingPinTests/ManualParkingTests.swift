@@ -56,6 +56,41 @@ struct ManualParkingTests {
         #expect(model.session(id: id)?.location == nil)
     }
 
+    /// 2026-10-01: the ten seconds before the fix showed `위치 없음`, and read as a save
+    /// that had lost its location.
+    @Test("While the fix is on its way the parking is marked as locating, and not after")
+    func marksLocatingUntilTheFixArrives() async throws {
+        // Arrange
+        let provider = LateFixProvider()
+        let model = try makeModel(locationProvider: provider)
+        #expect(await model.saveManualParking(ManualParkingDraft(floorText: "B2")))
+        let id = try #require(model.activeSession?.id)
+        await provider.waitUntilAsked()
+        #expect(model.locatingSessionID == id)
+
+        // Act
+        provider.answer(ParkedLocation(latitude: 37.5, longitude: 127.0, horizontalAccuracy: 9, capturedAt: now))
+        for _ in 0 ..< 10 {
+            await Task.yield()
+        }
+
+        // Assert
+        #expect(model.locatingSessionID == nil)
+        #expect(model.activeSession?.location?.horizontalAccuracy == 9)
+    }
+
+    @Test("A save with no fix to be had is not left saying it is locating")
+    func noFixClearsLocating() async throws {
+        let model = try makeModel()
+
+        #expect(await model.saveManualParking(ManualParkingDraft(floorText: "B2")))
+        for _ in 0 ..< 10 {
+            await Task.yield()
+        }
+
+        #expect(model.locatingSessionID == nil)
+    }
+
     @Test("With no permission of any kind, a manual parking saves and reads back")
     func savesWithEveryPermissionDenied() async throws {
         // Arrange — `UnavailableParkingLocationProvider` is the permission-less case:

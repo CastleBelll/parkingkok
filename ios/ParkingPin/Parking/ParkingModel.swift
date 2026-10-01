@@ -50,6 +50,9 @@ final class ParkingModel {
 
     private(set) var activeSession: ParkingSession?
     private(set) var completedSessions: [ParkingSession] = []
+    /// The parking whose location is still being asked for after a manual save, so the
+    /// screen can say `위치 확인 중` instead of `위치 없음` for those few seconds.
+    private(set) var locatingSessionID: UUID?
     /// Non-nil when the local store could not be read or written. Shown in place of the
     /// content rather than swallowed — a history that looks empty because of an IO error
     /// is indistinguishable from one the user really has not filled yet.
@@ -293,8 +296,13 @@ final class ParkingModel {
     /// had. The comment once claimed the store refused it; it did not, and the 20 s deadline
     /// made that window real.
     private func attachCurrentFix(to sessionID: UUID, improving existing: ParkedLocation?) {
+        locatingSessionID = sessionID
         Task { [weak self, locationProvider] in
-            guard let fix = await locationProvider.currentFix() else { return }
+            let fix = await locationProvider.currentFix()
+            if self?.locatingSessionID == sessionID {
+                self?.locatingSessionID = nil
+            }
+            guard let fix else { return }
             // A stored location that is already better stays. `currentFix` is this moment's,
             // so it wins ties on age; accuracy is the only reason to keep the old one.
             if let existing, existing.horizontalAccuracy <= fix.horizontalAccuracy {

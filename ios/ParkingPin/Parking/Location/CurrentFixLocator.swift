@@ -20,10 +20,14 @@ protocol OneShotLocating: Sendable {
     func currentFix(timeout: TimeInterval) async -> CLLocation?
 }
 
-/// `CLLocationManager.requestLocation()`, wrapped so a caller can `await` it.
+/// A short burst of `CLLocationManager` updates, wrapped so a caller can `await` one fix.
 ///
-/// `requestLocation` is the right API and not `startUpdatingLocation`: it delivers one fix
-/// and stops on its own, which is exactly the lifetime of a save.
+/// **Not `requestLocation()`.** That API waits for the best fix it can get before it
+/// answers, which on an iPhone on 2026-10-01 was 10 s for a 12 m fix — ten seconds in which
+/// the saved parking showed `위치 없음` and read as a save that had lost its location
+/// ("여전히 직접 입력하면 위치가 저장이 안되네"). Updates arrive coarse first and sharpen, so this
+/// answers as soon as one is [goodEnoughAccuracy], or with the best seen so far once
+/// [settleDelay] has passed, and only gives up at the caller's timeout.
 @MainActor
 final class CoreLocationOneShotLocator: NSObject, OneShotLocating {
     /// How long a save's location may take to arrive. Nobody waits on it: the record is
@@ -35,9 +39,24 @@ final class CoreLocationOneShotLocator: NSObject, OneShotLocating {
     /// taken later is where the phone is, not the car, and 20 s of walking is about 25 m.
     static let defaultTimeout: TimeInterval = 20
 
+    /// A fix this good answers at once: waiting longer buys nothing a car park can use.
+    static let goodEnoughAccuracy: CLLocationAccuracy = 20
+
+    /// After this long the best fix so far is the answer, if it is usable at all.
+    static let settleDelay: TimeInterval = 5
+
+    /// What [settleDelay] will settle for — the same bound the provider applies.
+    static let usableAccuracy: CLLocationAccuracy = 100
+
     private let manager = CLLocationManager()
     private var continuation: CheckedContinuation<CLLocation?, Never>?
-    private var timeoutTask: Task<Void, Never>?
+    private var deadlineTasks: [Task<Void, Never>] = []
+    private var best: CLLocation?
+    private var requestedAt = Date.distantPast
+
+    /// `startUpdatingLocation` may hand back the OS's cached fix first; one older than this
+    /// before the request is where the phone was, not where the car is.
+    static let maximumCachedAge: TimeInterval = 5
 
     override init() {
         super.init()
@@ -64,24 +83,56 @@ final class CoreLocationOneShotLocator: NSObject, OneShotLocating {
 
         return await withCheckedContinuation { continuation in
             self.continuation = continuation
-            timeoutTask = Task { [weak self] in
-                try? await Task.sleep(for: .seconds(timeout))
-                guard !Task.isCancelled else { return }
-                #if PK_DEV
-                    SaveLocationDiagnostics.note("fix", "timeout")
-                #endif
-                self?.finish(nil)
-            }
-            manager.requestLocation()
+            best = nil
+            requestedAt = Date()
+            deadlineTasks = [
+                Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(Self.settleDelay))
+                    guard !Task.isCancelled else { return }
+                    self?.settleIfUsable()
+                },
+                Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(timeout))
+                    guard !Task.isCancelled else { return }
+                    #if PK_DEV
+                        SaveLocationDiagnostics.note("fix", "timeout")
+                    #endif
+                    self?.finish(self?.usableBest)
+                }
+            ]
+            manager.startUpdatingLocation()
         }
     }
 
-    /// Resumes at most once, whichever of Core Location and the timeout arrives first.
-    private func finish(_ location: CLLocation?) {
+    private var usableBest: CLLocation? {
+        best.flatMap { $0.horizontalAccuracy <= Self.usableAccuracy ? $0 : nil }
+    }
+
+    fileprivate func consider(_ location: CLLocation) {
+        guard continuation != nil, location.horizontalAccuracy > 0,
+              location.timestamp >= requestedAt.addingTimeInterval(-Self.maximumCachedAge)
+        else { return }
+        if best.map({ location.horizontalAccuracy < $0.horizontalAccuracy }) ?? true {
+            best = location
+        }
+        if location.horizontalAccuracy <= Self.goodEnoughAccuracy {
+            finish(location)
+        }
+    }
+
+    private func settleIfUsable() {
+        guard let usableBest else { return }
+        finish(usableBest)
+    }
+
+    /// Resumes at most once, whichever of Core Location and the deadlines arrives first.
+    fileprivate func finish(_ location: CLLocation?) {
         guard let pending = continuation else { return }
         continuation = nil
-        timeoutTask?.cancel()
-        timeoutTask = nil
+        manager.stopUpdatingLocation()
+        deadlineTasks.forEach { $0.cancel() }
+        deadlineTasks = []
+        best = nil
         pending.resume(returning: location)
     }
 }
@@ -96,16 +147,20 @@ extension CoreLocationOneShotLocator: @MainActor CLLocationManagerDelegate {
                 SaveLocationDiagnostics.note("fixRaw", "accuracy=\(Int(last.horizontalAccuracy))m")
             }
         #endif
-        finish(locations.last)
+        locations.forEach(consider)
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: any Error) {
         // The code only. A Core Location error carries no coordinate, but its description
         // has carried region identifiers before, and docs/09 §11 keeps those out.
+        // `locationUnknown` is "no fix yet, still trying" while updates are running.
+        if (error as? CLError)?.code == .locationUnknown {
+            return
+        }
         AppLog.detection.info("one-shot fix failed: \((error as NSError).code, privacy: .public)")
         #if PK_DEV
             SaveLocationDiagnostics.note("fix", "failed code=\((error as NSError).code)")
         #endif
-        finish(nil)
+        finish(usableBest)
     }
 }

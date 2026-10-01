@@ -63,7 +63,7 @@ struct ParkingDetailView: View {
                             onTap: { startDirections(to: point) }
                         )
                     } else {
-                        ParkingMapUnavailableCard()
+                        ParkingMapUnavailableCard(isLocating: model.locatingSessionID == session.id)
                     }
                 }
                 .pkEntrance(0)
