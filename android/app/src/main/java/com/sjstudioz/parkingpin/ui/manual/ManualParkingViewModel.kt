@@ -14,6 +14,7 @@ import com.sjstudioz.parkingpin.detection.ParkingCandidateCoordinator
 import com.sjstudioz.parkingpin.detection.ParkingDetectionRuntime
 import com.sjstudioz.parkingpin.detection.ParkingEndProposalCoordinator
 import com.sjstudioz.parkingpin.domain.parking.FloorParser
+import com.sjstudioz.parkingpin.domain.parking.ParkingFieldLimits
 import com.sjstudioz.parkingpin.domain.parking.usecase.AttachParkingPhotoUseCase
 import com.sjstudioz.parkingpin.domain.parking.usecase.ManualParkingInput
 import com.sjstudioz.parkingpin.domain.parking.usecase.SaveManualParkingResult
@@ -31,6 +32,8 @@ import java.util.UUID
 
 /** The manual entry form (FR-001). */
 data class ManualParkingUiState(
+    /** `수정` of an existing record ([EditParkingViewModel]) rather than a new save. */
+    val editing: Boolean = false,
     val floorRaw: String = "",
     val zone: String = "",
     val spot: String = "",
@@ -60,6 +63,8 @@ data class ManualParkingUiState(
      * left behind, no 인식 실패 dialog".
      */
     val pillarSuggestionOffered: Boolean = false,
+    /** `사진으로 입력` found no camera app; the form says so instead of opening silently. */
+    val cameraUnavailable: Boolean = false,
 )
 
 /**
@@ -183,6 +188,12 @@ class ManualParkingViewModel(
         captureHandled = true
     }
 
+    /** No camera app answered `사진으로 입력`: the form opens to typing, and says why. */
+    fun onCameraUnavailable() {
+        captureHandled = true
+        _uiState.update { it.copy(cameraUnavailable = true) }
+    }
+
     /**
      * Fills the blanks the pillar answered, and nothing else.
      *
@@ -266,9 +277,9 @@ class ManualParkingViewModel(
             candidateId,
             ConfirmedCandidateDetails(
                 floor = FloorParser.parse(input.floorRaw),
-                zone = input.zone?.normalize(MAX_SHORT_FIELD),
-                spot = input.spot?.normalize(MAX_SHORT_FIELD),
-                memo = input.memo?.normalize(MAX_MEMO),
+                zone = ParkingFieldLimits.normalize(input.zone, ParkingFieldLimits.MAX_SHORT_FIELD),
+                spot = ParkingFieldLimits.normalize(input.spot, ParkingFieldLimits.MAX_SHORT_FIELD),
+                memo = ParkingFieldLimits.normalize(input.memo, ParkingFieldLimits.MAX_MEMO),
             ),
         )
         if (result is ConfirmCandidateResult.Confirmed) {
@@ -306,22 +317,9 @@ class ManualParkingViewModel(
         }
     }
 
-    /**
-     * The same trimming [SaveManualParkingUseCase] applies, because the confirmation path
-     * bypasses it. FR-006's caps are a property of what gets stored, not of which screen
-     * stored it.
-     */
-    private fun String.normalize(maxLength: Int): String? =
-        trim().take(maxLength).takeIf { it.isNotEmpty() }
-
     companion object {
         private const val TAG = "ManualParking"
 
-        /** FR-006: zone and spot are each capped at 40 characters. */
-        private const val MAX_SHORT_FIELD = 40
-
-        /** FR-006 does not size the memo; this is a storage bound, not a product rule. */
-        private const val MAX_MEMO = 200
 
         fun factory(
             container: AppContainer,

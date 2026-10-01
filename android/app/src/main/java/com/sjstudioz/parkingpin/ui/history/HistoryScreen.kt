@@ -1,5 +1,6 @@
 package com.sjstudioz.parkingpin.ui.history
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -43,9 +44,9 @@ import com.sjstudioz.parkingpin.ui.components.ParkingpinRow
 import com.sjstudioz.parkingpin.ui.components.ParkingpinScreen
 import com.sjstudioz.parkingpin.ui.components.RowChevron
 import com.sjstudioz.parkingpin.ui.components.StatusBadge
-import com.sjstudioz.parkingpin.ui.motion.pressScale
 import com.sjstudioz.parkingpin.ui.format.dayText
 import com.sjstudioz.parkingpin.ui.format.timeOfDayText
+import com.sjstudioz.parkingpin.ui.motion.pressScale
 
 /**
  * `04-history-list.png`.
@@ -194,10 +195,15 @@ private fun HistoryRow(record: ParkingRecord, nowMillis: Long, onClick: () -> Un
     // into two columns of chips. The badge is a word, never a colour: docs/01 §8.
     if (detected) {
         Row(
-            modifier = Modifier.padding(
-                start = MaterialTheme.spacing.large + BADGE_INDENT,
-                bottom = MaterialTheme.spacing.medium,
-            ),
+            // Part of the row it badges: a tap on the badge's strip used to do nothing
+            // (audit 2026-10-01).
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(
+                    start = MaterialTheme.spacing.large + BADGE_INDENT,
+                    bottom = MaterialTheme.spacing.medium,
+                ),
         ) {
             StatusBadge(
                 text = stringResource(R.string.history_badge_detected),

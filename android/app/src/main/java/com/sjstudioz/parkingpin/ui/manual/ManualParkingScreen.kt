@@ -70,14 +70,28 @@ fun ManualParkingScreen(
 
     ParkingpinScreen(
         modifier = modifier,
-        header = { DetailHeader(title = stringResource(R.string.manual_title), onBack = onBack) },
+        header = {
+            DetailHeader(
+                title = stringResource(if (state.editing) R.string.edit_title else R.string.manual_title),
+                onBack = onBack,
+            )
+        },
     ) {
         item("intro") {
             Text(
-                text = stringResource(R.string.manual_subtitle),
+                text = stringResource(if (state.editing) R.string.edit_subtitle else R.string.manual_subtitle),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+        if (state.cameraUnavailable) {
+            item("camera-unavailable") {
+                Text(
+                    text = stringResource(R.string.notice_camera_unavailable),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
         }
 
         item("form") {

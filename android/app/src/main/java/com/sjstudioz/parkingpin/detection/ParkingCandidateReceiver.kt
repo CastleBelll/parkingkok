@@ -63,7 +63,15 @@ class ParkingCandidateReceiver : BroadcastReceiver() {
         val pending = goAsync()
         container.applicationScope.launch {
             try {
-                container.candidateConfirmation.confirm(candidateId, floorAnswer(typed))
+                val result = container.candidateConfirmation.confirm(candidateId, floorAnswer(typed))
+                // Not written — another parking is still open — while the candidate still
+                // stands: the question goes back up, so the body tap can finish it in the
+                // app. It used to vanish with the typed floor (audit 2026-10-01).
+                if (result is ConfirmCandidateResult.AlreadyActive) {
+                    container.detectionStateStore.readCandidateOnce()
+                        ?.takeIf { it.id == candidateId }
+                        ?.let { NotificationCandidateDelivery(context).post(it) }
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (@Suppress("TooGenericExceptionCaught") failure: Exception) {

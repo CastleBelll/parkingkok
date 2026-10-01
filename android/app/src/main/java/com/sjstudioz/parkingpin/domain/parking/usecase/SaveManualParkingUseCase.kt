@@ -5,6 +5,7 @@ import com.sjstudioz.parkingpin.analytics.AnalyticsRecording
 import com.sjstudioz.parkingpin.analytics.DisabledAnalyticsRecorder
 import com.sjstudioz.parkingpin.core.Clock
 import com.sjstudioz.parkingpin.domain.parking.FloorParser
+import com.sjstudioz.parkingpin.domain.parking.ParkingFieldLimits
 import com.sjstudioz.parkingpin.domain.parking.ParkingLocation
 import com.sjstudioz.parkingpin.domain.parking.ParkingLocationProvider
 import com.sjstudioz.parkingpin.domain.parking.ParkingRecord
@@ -92,9 +93,9 @@ class SaveManualParkingUseCase(
             confidenceBucket = null,
             location = captureLocation(),
             floor = FloorParser.parse(input.floorRaw),
-            zone = input.zone.normalize(MAX_SHORT_FIELD),
-            spot = input.spot.normalize(MAX_SHORT_FIELD),
-            memo = input.memo.normalize(MAX_MEMO),
+            zone = ParkingFieldLimits.normalize(input.zone, ParkingFieldLimits.MAX_SHORT_FIELD),
+            spot = ParkingFieldLimits.normalize(input.spot, ParkingFieldLimits.MAX_SHORT_FIELD),
+            memo = ParkingFieldLimits.normalize(input.memo, ParkingFieldLimits.MAX_MEMO),
             photoRelativePath = null,
             createdAtMillis = now,
             updatedAtMillis = now,
@@ -148,21 +149,4 @@ class SaveManualParkingUseCase(
      */
     private suspend fun captureLocation(): ParkingLocation? =
         runCatching { locationProvider.lastReliableLocation() }.getOrNull()
-
-    /**
-     * Trims, drops empties, and truncates.
-     *
-     * FR-006 caps zone and spot at 40 characters. Truncating rather than rejecting keeps
-     * a paste from blocking a save the user is making in a hurry in a car park.
-     */
-    private fun String?.normalize(maxLength: Int): String? =
-        this?.trim()?.take(maxLength)?.takeIf { it.isNotEmpty() }
-
-    private companion object {
-        /** FR-006: zone and spot are each capped at 40 characters. */
-        const val MAX_SHORT_FIELD = 40
-
-        /** FR-006 does not size the memo; this is a storage bound, not a product rule. */
-        const val MAX_MEMO = 200
-    }
 }

@@ -1,5 +1,6 @@
 package com.sjstudioz.parkingpin.ui.detail
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -22,6 +23,7 @@ import com.sjstudioz.parkingpin.domain.photo.PillarSuggestion
 import com.sjstudioz.parkingpin.domain.photo.ReadPillarSuggestionUseCase
 import com.sjstudioz.parkingpin.map.MapOpenResult
 import com.sjstudioz.parkingpin.ui.UiNotice
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -163,7 +165,18 @@ class ParkingDetailViewModel(
     }
 
     fun onRemovePhoto() {
-        viewModelScope.launch { removePhoto(recordId) }
+        viewModelScope.launch {
+            try {
+                removePhoto(recordId)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (@Suppress("TooGenericExceptionCaught") failure: Exception) {
+                // By type only: the message may name the file. Said, not swallowed (audit
+                // 2026-10-01) — the photo is still there and the user should know it.
+                Log.w(TAG, "photo removal failed: ${failure.javaClass.simpleName}")
+                notice.value = UiNotice.PHOTO_NOT_REMOVED
+            }
+        }
     }
 
     fun onCameraUnavailable() {
@@ -190,6 +203,8 @@ class ParkingDetailViewModel(
     }
 
     companion object {
+        private const val TAG = "ParkingDetail"
+
         private const val STOP_TIMEOUT_MILLIS = 5_000L
 
         fun factory(container: AppContainer, recordId: String): ViewModelProvider.Factory =
