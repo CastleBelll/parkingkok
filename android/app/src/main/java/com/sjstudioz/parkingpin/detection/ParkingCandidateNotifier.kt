@@ -127,7 +127,9 @@ class NotificationCandidateDelivery(context: Context) : CandidateNotifying {
                 // never runs again. It is a backstop for the visible half only — the
                 // stored candidate is what decides whether anything can still be created
                 // from it, and that check is the coordinator's.
-                .setTimeoutAfter(candidate.expiresAtMillis - candidate.detectedAtMillis)
+                // From now: a re-post (an upgrade, a refused inline answer) used to restart the
+                // full 45 minutes and outlive the candidate (audit 2026-10-01).
+                .setTimeoutAfter(maxOf(0L, candidate.expiresAtMillis - System.currentTimeMillis()))
                 // A guess the user may simply not want to answer. Swiping it away must not
                 // be mistaken for 주차 아님, so the candidate outlives the notification and
                 // expires on its own.

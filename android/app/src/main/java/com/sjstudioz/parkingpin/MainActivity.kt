@@ -50,8 +50,13 @@ class MainActivity : ComponentActivity() {
         // splash's white window.
         installSplashScreen()
         super.onCreate(savedInstanceState)
-        pendingCandidateId = intent.candidateId()
-        pendingOpenActiveParking = intent.opensActiveParking()
+        // Only on a fresh start. A recreation (rotation, dark mode) still carries the launch
+        // intent, and re-reading it reset the stack to the confirmation or the detail screen
+        // under whatever the user had moved on to (audit 2026-10-01).
+        if (savedInstanceState == null) {
+            pendingCandidateId = intent.candidateId()
+            pendingOpenActiveParking = intent.opensActiveParking()
+        }
         enableEdgeToEdge()
         // The fallback only fires under a harness whose Application is not ours. It is
         // safe because `preferencesDataStore` memoizes one DataStore per process, so a
@@ -67,6 +72,14 @@ class MainActivity : ComponentActivity() {
                     onActiveParkingOpened = { pendingOpenActiveParking = false },
                 )
             }
+        }
+        // A force-stop or an OEM "deep sleep" kill cancels the transition PendingIntent, and
+        // no broadcast says so; the stored record then claims a subscription Play services
+        // no longer has, and detection stayed dead until a reboot (audit 2026-10-01). The
+        // user opening the app is the one moment that follows such a kill, so a cold UI start
+        // re-registers. Same PendingIntent, so it is idempotent when nothing was lost.
+        if (savedInstanceState == null) {
+            container.applicationScope.launch { container.registrationCoordinator.reconcileAfterSystemReset() }
         }
         runFirebaseSelfCheckIfRequested(container)
         replayDriveIfRequested(container)

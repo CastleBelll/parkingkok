@@ -26,6 +26,15 @@ fun interface ParkingLocationProvider {
      * made the save button look broken for up to eight seconds.
      */
     suspend fun currentFix(): ParkingLocation? = null
+
+    companion object {
+        /**
+         * How old a known location may be and still describe where the car is now. The
+         * engine keeps its last reliable fix across sessions, so without a bound a save in an
+         * underground garage took last week's fix from somewhere else (audit 2026-10-01).
+         */
+        const val MAX_SAVED_LOCATION_AGE_MILLIS: Long = 10 * 60_000L
+    }
     // Still a `fun interface`: `currentFix` has a default, so `lastReliableLocation` is the
     // one abstract member and every `ParkingLocationProvider { null }` in the tests keeps
     // working.

@@ -107,12 +107,15 @@ class ParkingCandidateReceiver : BroadcastReceiver() {
         val pending = goAsync()
         container.applicationScope.launch {
             try {
-                container.parkingCandidateCoordinator.reject(candidateId)
                 // §3a `CANDIDATE_PENDING -> IDLE` on rejection. Without it the machine
                 // stays pending and §12's one-candidate rule keeps the next trip silent.
-                container.parkingDetectionRuntime.handleUserAnswer(
-                    DetectionEvent.UserRejectedParking(container.clock.nowEpochMillis()),
-                )
+                // Only when this candidate was still the stored one: the event carries no id,
+                // and a stale 주차 아님 used to end a newer candidate (audit 2026-10-01).
+                if (container.parkingCandidateCoordinator.reject(candidateId)) {
+                    container.parkingDetectionRuntime.handleUserAnswer(
+                        DetectionEvent.UserRejectedParking(container.clock.nowEpochMillis()),
+                    )
+                }
             } finally {
                 pending.finish()
             }

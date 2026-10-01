@@ -8,6 +8,7 @@ import com.sjstudioz.parkingpin.data.DetectionStateStore
 import com.sjstudioz.parkingpin.domain.detection.DetectionEffect
 import com.sjstudioz.parkingpin.domain.detection.DetectionEngineState
 import com.sjstudioz.parkingpin.domain.detection.DetectionEvent
+import com.sjstudioz.parkingpin.domain.detection.DetectionState
 import com.sjstudioz.parkingpin.domain.detection.MotionDomainEvent
 import com.sjstudioz.parkingpin.domain.detection.MotionEventKind
 import com.sjstudioz.parkingpin.domain.detection.ParkingDetectionEngine
@@ -195,6 +196,22 @@ class ParkingDetectionRuntime(
 
     /** The user answered the prompt. Fed back so the state machine leaves `CANDIDATE_PENDING`. */
     suspend fun handleUserAnswer(event: DetectionEvent): List<DetectionEffect> = handle(listOf(event))
+
+    /**
+     * A candidate became a record. `user_confirmed` is the engine's row only in
+     * `CANDIDATE_PENDING`; answered after a new drive had begun, or after the engine's copy
+     * expired a moment before the store's, it was ignored — the record existed and §11 never
+     * watched it (audit 2026-10-01). Outside that state the record is what a hand save is,
+     * the `any → PARKED` row.
+     */
+    suspend fun handleCandidateConfirmed(atMillis: Long): List<DetectionEffect> {
+        val pending = store.readEngineStateOnce()?.state == DetectionState.CANDIDATE_PENDING
+        return if (pending) {
+            handleUserAnswer(DetectionEvent.UserConfirmedParking(atMillis))
+        } else {
+            handleUserSavedParking(atMillis)
+        }
+    }
 
     /**
      * The user saved a parking themselves, not by answering a prompt (docs/05 §11c).

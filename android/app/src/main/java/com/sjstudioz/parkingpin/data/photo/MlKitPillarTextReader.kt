@@ -7,7 +7,9 @@ import com.google.mlkit.vision.text.korean.KoreanTextRecognizerOptions
 import com.sjstudioz.parkingpin.domain.photo.PhotoSource
 import com.sjstudioz.parkingpin.domain.photo.PillarLine
 import com.sjstudioz.parkingpin.domain.photo.PillarTextReader
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
 
 /**
  * Reads the pillar with ML Kit's **bundled** Korean model
@@ -52,7 +54,12 @@ class MlKitPillarTextReader : PillarTextReader {
         // The same bounded decode the store uses, so a 12-megapixel camera file never
         // exists at full size (docs/11 §12). A pillar sign survives the downsample: it is
         // the largest thing in the frame.
-        val bitmap = BitmapPhotos.decodeScaled(source, RECOGNITION_LONG_EDGE) ?: return emptyList()
+        // Off the main thread: three blocking passes over a 12 MP file, reached from
+        // `viewModelScope`, janked the screen and could not be pre-empted by the reader's
+        // timeout (audit 2026-10-01).
+        val bitmap = withContext(Dispatchers.Default) {
+            BitmapPhotos.decodeScaled(source, RECOGNITION_LONG_EDGE)
+        } ?: return emptyList()
         return try {
             recognizer.process(InputImage.fromBitmap(bitmap, ROTATION_APPLIED))
                 .await()

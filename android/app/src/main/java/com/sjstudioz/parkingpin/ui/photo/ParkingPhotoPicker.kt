@@ -13,6 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -58,7 +59,10 @@ fun ParkingPhotoPicker(
     onCancelled: () -> Unit = {},
 ) {
     val context = LocalContext.current
-    var captureUri by remember { mutableStateOf<Uri?>(null) }
+    // Saveable: the camera app is a different process, and while it is in front this
+    // activity can be recreated or killed. A plain `remember` came back null and the photo
+    // the camera wrote was discarded as cancelled (audit 2026-10-01).
+    var captureUri by rememberSaveable { mutableStateOf<Uri?>(null) }
 
     val pickFromAlbum = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia(),

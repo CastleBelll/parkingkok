@@ -116,10 +116,12 @@ class ConfirmCandidateViewModel(
         if (_uiState.value.working) return
         _uiState.update { it.copy(working = true) }
         viewModelScope.launch {
-            coordinator.reject(candidateId)
-            detectionRuntime?.handleUserAnswer(
-                DetectionEvent.UserRejectedParking(clock.nowEpochMillis()),
-            )
+            // The engine hears it only for the candidate it is holding (the event has no id).
+            if (coordinator.reject(candidateId)) {
+                detectionRuntime?.handleUserAnswer(
+                    DetectionEvent.UserRejectedParking(clock.nowEpochMillis()),
+                )
+            }
             // True whether or not a stored candidate was found: the user has answered, and
             // the screen's job is done either way.
             _uiState.update { it.copy(working = false, rejected = true) }

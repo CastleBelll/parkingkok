@@ -43,6 +43,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.core.app.ActivityCompat
 import androidx.core.net.toUri
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -265,7 +266,10 @@ private fun RouteViewModelHost(
     route: ParkingpinRoute,
     content: @Composable () -> Unit,
 ) {
-    val stores = remember { mutableMapOf<String, ViewModelStore>() }
+    // Held by the activity's ViewModel, not by `remember`: a rotation, a dark-mode switch or a
+    // font-size change recreates the composition, and a remembered map took every screen's
+    // ViewModel with it — the typed form and the pillar photo both lost (audit 2026-10-01).
+    val stores = viewModel<RouteStores>().stores
     val liveKeys = backStack.entries.map(ParkingpinRouteCodec::encode).toSet()
 
     // **After the composition, against the keys that are live now.** Doing this in a
@@ -277,14 +281,6 @@ private fun RouteViewModelHost(
         stores.keys.toList()
             .filterNot { it in liveKeys }
             .forEach { stores.remove(it)?.clear() }
-    }
-
-    // Leaving the shell entirely: an uncleared `ViewModelStore` leaks every ViewModel in it.
-    DisposableEffect(Unit) {
-        onDispose {
-            stores.values.forEach(ViewModelStore::clear)
-            stores.clear()
-        }
     }
 
     val key = ParkingpinRouteCodec.encode(route)
@@ -846,4 +842,18 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this
     is ContextWrapper -> baseContext.findActivity()
     else -> null
+}
+
+
+/**
+ * The per-route `ViewModelStore`s, owned by the activity's `ViewModelStore` so they outlive a
+ * configuration change and are cleared when the activity finishes for good.
+ */
+class RouteStores : ViewModel() {
+    val stores = mutableMapOf<String, ViewModelStore>()
+
+    override fun onCleared() {
+        stores.values.forEach(ViewModelStore::clear)
+        stores.clear()
+    }
 }
