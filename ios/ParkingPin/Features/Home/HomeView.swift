@@ -33,6 +33,9 @@ struct HomeView: View {
     /// choosing `B2` while the screen said 사진에서 층을 찾지 못했어요. Presenting from the
     /// value itself removes the window in which only half of it is set.
     @State private var pillarEntry: PillarEntry?
+    /// True while a pillar photo is being read: up to six seconds with the camera closed
+    /// and nothing on screen to say why (audit 2026-10-01 L6).
+    @State private var isReadingPillar = false
     private let pillarReader: any PillarTextReading = VisionPillarTextReader()
     /// Ticks once a minute so the elapsed line ages while the screen is open, without a
     /// timer that survives the screen.
@@ -132,6 +135,7 @@ struct HomeView: View {
                     // Shown beside a pending candidate too: hiding it left answering the
                     // guess as the only way to save a parking by hand (audit 2026-10-01).
                     EmptyParkingCard(
+                        isReadingPhoto: isReadingPillar,
                         onSaveManually: { isManualSheetPresented = true },
                         onPhotoEntry: beginPillarEntry
                     )
@@ -268,11 +272,14 @@ private extension HomeView {
     /// §6a: never throws, never explains. A floor, or nothing at all because there was no
     /// text or the read timed out — either way the same form opens.
     func readPillar(_ imageData: Data) {
+        isReadingPillar = true
         Task {
             // One assignment, which both presents the sheet and fills it. `.sheet(item:)`
             // rather than a boolean beside two other pieces of state: SwiftUI builds the
             // sheet from the value it was given, so there is no ordering left to get wrong.
-            pillarEntry = PillarEntry(photo: imageData, reading: await pillarReader.read(imageData))
+            let reading = await pillarReader.read(imageData)
+            isReadingPillar = false
+            pillarEntry = PillarEntry(photo: imageData, reading: reading)
         }
     }
 }
@@ -324,6 +331,7 @@ private struct PendingCandidateCard: View {
 
 /// docs/02 §8's empty home.
 private struct EmptyParkingCard: View {
+    var isReadingPhoto = false
     let onSaveManually: () -> Void
     let onPhotoEntry: () -> Void
 
@@ -344,9 +352,17 @@ private struct EmptyParkingCard: View {
                 Button {
                     onPhotoEntry()
                 } label: {
-                    Label("사진으로 입력", systemImage: "camera")
+                    if isReadingPhoto {
+                        HStack(spacing: PKSpacing.s) {
+                            ProgressView()
+                            Text("사진 읽는 중")
+                        }
+                    } else {
+                        Label("사진으로 입력", systemImage: "camera")
+                    }
                 }
                 .buttonStyle(PKOutlineButtonStyle())
+                .disabled(isReadingPhoto)
             }
             .padding(PKSpacing.xl)
         }

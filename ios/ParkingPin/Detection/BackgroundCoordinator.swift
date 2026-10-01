@@ -254,6 +254,8 @@ actor BackgroundCoordinator {
             AppLog.detection.error("checkpoint load failed: \(failure.diagnosticDescription, privacy: .public)")
         }
 
+        consumedVehicleEvidenceAt = Self.replayWatermark(for: restored)
+
         if restored?.state == .driving || restored?.state == .drivingCandidate {
             snapshot.drivingSessionResumedFromCheckpoint = true
             snapshot.drivingSessionStartedAt = restored?.stateEnteredAt
@@ -286,6 +288,27 @@ actor BackgroundCoordinator {
             return
         }
         await evaluateMotionEvidence(now: now)
+    }
+
+    /// The newest vehicle evidence a restored checkpoint has already accounted for
+    /// (audit 2026-10-01 M3).
+    ///
+    /// The replay below re-reads up to five minutes of motion history, and the watermark
+    /// that stops it re-sending what was already handled lived only in memory. After a
+    /// relaunch the drive that had just *ended* came back as a new one: from an unanswered
+    /// candidate it opened a second session for the same parking, and from `PARKED` it
+    /// started §11's getting-back-in capture for a car nobody had got into.
+    ///
+    /// `lastAutomotiveAt` is what the engine already saw. A candidate or a parking also
+    /// closed the drive that led to it, so nothing before it entered that state is new.
+    static func replayWatermark(for checkpoint: DetectionCheckpoint?) -> Date? {
+        guard let checkpoint else { return nil }
+        switch checkpoint.state {
+        case .candidatePending, .parked:
+            return max(checkpoint.lastAutomotiveAt ?? .distantPast, checkpoint.stateEnteredAt)
+        default:
+            return checkpoint.lastAutomotiveAt
+        }
     }
 
     /// A significant change arrived.

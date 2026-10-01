@@ -395,19 +395,29 @@ struct ParkingDetailView: View {
 
     /// §6a on the 사진 추가 path, and the one case where it is worth interrupting.
     ///
-    /// Only for a record with **no floor yet** — the `층 미입력` row that genuinely exists
-    /// in the history list. On a record that already names a floor the read is dropped
-    /// without a word: the user did not ask to be asked again, and a photo is not better
-    /// evidence than what they already typed.
+    /// Only when the photo fills a field the record **left blank** — the same rule as
+    /// Android's `SuggestFromPillarPhotoUseCase`. A floor the user already gave is not
+    /// second-guessed, but a pillar that names only the zone still saves a line of typing:
+    /// gating on a read floor dropped `A · 47` on the floor the user had typed (audit
+    /// 2026-10-01 L1). The editor it opens fills blanks only, so nothing typed is replaced.
     ///
     /// Silent on every failure path (§6a "no message, no spinner left behind, no 인식 실패
     /// dialog") — no text, nothing parsed, no model, too slow all end here doing nothing.
     private func offerPillarReading(from data: Data) async {
-        guard let session, session.floor == nil else { return }
+        guard let session else { return }
         let reading = await pillarReader.read(data)
-        guard reading.floorText != nil else { return }
+        guard Self.reading(reading, fillsBlanksOf: session) else { return }
         pillarSuggestion = reading
         isEditing = true
+    }
+
+    static func reading(_ reading: PillarReading, fillsBlanksOf session: ParkingSession) -> Bool {
+        func isBlank(_ value: String?) -> Bool {
+            (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        return (session.floor == nil && reading.floorText != nil)
+            || (isBlank(session.zone) && reading.zone != nil)
+            || (isBlank(session.spot) && reading.spot != nil)
     }
 
     private func loadPhoto() async {

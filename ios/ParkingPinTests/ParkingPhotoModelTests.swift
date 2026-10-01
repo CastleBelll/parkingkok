@@ -196,7 +196,8 @@ struct ParkingPhotoModelTests {
     func sweepKeepsReferencedPhotos() async throws {
         // Arrange — one photo on the active parking, one file nothing points at.
         let directory = try TemporaryDirectory()
-        let store = directory.makePhotoStore()
+        // Sweeping as the next launch would, past the grace period that spares new files.
+        let store = directory.makePhotoStore().later()
         let model = try makeModel(photoStore: store)
         let sessionID = try await startParking(model)
         let source = try TestImage.jpegData(width: 800, height: 600)
