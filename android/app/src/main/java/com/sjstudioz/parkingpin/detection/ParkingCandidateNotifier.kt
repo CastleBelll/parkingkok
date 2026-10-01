@@ -9,6 +9,7 @@ import android.net.Uri
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.RemoteInput
 import com.sjstudioz.parkingpin.MainActivity
 import com.sjstudioz.parkingpin.R
 import com.sjstudioz.parkingpin.domain.detection.ParkingCandidate
@@ -72,6 +73,11 @@ object ParkingCandidateChannel {
 
     const val ACTION_REJECT: String = "com.sjstudioz.parkingpin.CANDIDATE_REJECT"
 
+    /** `층 입력`, answered inline: the typed floor arrives as [KEY_FLOOR] in the RemoteInput. */
+    const val ACTION_ENTER_FLOOR: String = "com.sjstudioz.parkingpin.CANDIDATE_ENTER_FLOOR"
+
+    const val KEY_FLOOR: String = "com.sjstudioz.parkingpin.extra.FLOOR"
+
     const val EXTRA_CANDIDATE_ID: String = "com.sjstudioz.parkingpin.extra.CANDIDATE_ID"
 
     /**
@@ -115,7 +121,7 @@ class NotificationCandidateDelivery(context: Context) : CandidateNotifying {
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setCategory(NotificationCompat.CATEGORY_RECOMMENDATION)
                 .setContentIntent(openConfirmationIntent(candidate.id))
-                .addAction(0, ParkingCandidateNotice.ACTION_OPEN, openConfirmationIntent(candidate.id))
+                .addAction(enterFloorAction(candidate.id))
                 .addAction(0, ParkingCandidateNotice.ACTION_REJECT, rejectIntent(candidate.id))
                 // §10a expiry: the OS withdraws it at the deadline even if this process
                 // never runs again. It is a backstop for the visible half only — the
@@ -184,6 +190,37 @@ class NotificationCandidateDelivery(context: Context) : CandidateNotifying {
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+    }
+
+    /**
+     * `층 입력` with a text field, iOS's `UNTextInputNotificationAction` (docs/02 §5: the floor
+     * is enterable where the user already is). The receiver confirms the candidate with
+     * whatever was typed — an empty answer still says "yes, I parked".
+     *
+     * `FLAG_MUTABLE` is required: the system writes the typed text into this intent. It is
+     * safe because the intent is explicit — its component is fixed, so a mutable copy can
+     * only ever reach [ParkingCandidateReceiver].
+     */
+    private fun enterFloorAction(candidateId: String): NotificationCompat.Action {
+        val intent = Intent(appContext, ParkingCandidateReceiver::class.java).apply {
+            action = ParkingCandidateChannel.ACTION_ENTER_FLOOR
+            data = Uri.fromParts("parkingkok-candidate-floor", candidateId, null)
+            putExtra(ParkingCandidateChannel.EXTRA_CANDIDATE_ID, candidateId)
+        }
+        val pendingIntent = PendingIntent.getBroadcast(
+            appContext,
+            0,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
+        )
+        val input = RemoteInput.Builder(ParkingCandidateChannel.KEY_FLOOR)
+            .setLabel(ParkingCandidateNotice.FLOOR_INPUT_HINT)
+            .build()
+        return NotificationCompat.Action.Builder(0, ParkingCandidateNotice.ACTION_OPEN, pendingIntent)
+            .addRemoteInput(input)
+            // The reply is the whole answer; no suggested replies to tap by mistake.
+            .setAllowGeneratedReplies(false)
+            .build()
     }
 
     /** `주차 아님`, answered from the shade without the app coming forward. */

@@ -7,12 +7,12 @@ import androidx.lifecycle.viewModelScope
 import com.sjstudioz.parkingpin.AppContainer
 import com.sjstudioz.parkingpin.core.Clock
 import com.sjstudioz.parkingpin.core.SystemClock
+import com.sjstudioz.parkingpin.detection.CandidateConfirmation
 import com.sjstudioz.parkingpin.detection.ConfirmCandidateResult
 import com.sjstudioz.parkingpin.detection.ConfirmedCandidateDetails
 import com.sjstudioz.parkingpin.detection.ParkingCandidateCoordinator
 import com.sjstudioz.parkingpin.detection.ParkingDetectionRuntime
 import com.sjstudioz.parkingpin.detection.ParkingEndProposalCoordinator
-import com.sjstudioz.parkingpin.domain.detection.DetectionEvent
 import com.sjstudioz.parkingpin.domain.parking.FloorParser
 import com.sjstudioz.parkingpin.domain.parking.usecase.AttachParkingPhotoUseCase
 import com.sjstudioz.parkingpin.domain.parking.usecase.ManualParkingInput
@@ -262,7 +262,7 @@ class ManualParkingViewModel(
         coordinator: ParkingCandidateCoordinator,
         input: ManualParkingInput,
     ) {
-        val result = coordinator.confirm(
+        val result = CandidateConfirmation(coordinator, endProposals, detectionRuntime, clock).confirm(
             candidateId,
             ConfirmedCandidateDetails(
                 floor = FloorParser.parse(input.floorRaw),
@@ -270,15 +270,8 @@ class ManualParkingViewModel(
                 spot = input.spot?.normalize(MAX_SHORT_FIELD),
                 memo = input.memo?.normalize(MAX_MEMO),
             ),
-            // Asked only after the candidate proved live (docs/05 §11a): an expired or
-            // superseded candidate writes nothing and must leave the asked-about parking open.
-            pendingEnd = { endProposals?.pendingEnd() },
         )
-        // Only a write that happened moves the machine: `Gone` and `AlreadyActive` left
-        // the candidate exactly where it was.
         if (result is ConfirmCandidateResult.Confirmed) {
-            result.endedPrevious?.let { endProposals?.retire(it.id) }
-            detectionRuntime?.handleUserAnswer(DetectionEvent.UserConfirmedParking(clock.nowEpochMillis()))
             attachPillarPhoto(result.record.id)
         }
         _uiState.update {

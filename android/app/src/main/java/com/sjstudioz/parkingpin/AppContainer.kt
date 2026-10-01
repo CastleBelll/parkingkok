@@ -35,6 +35,7 @@ import com.sjstudioz.parkingpin.detection.FusedLocationSessionController
 import com.sjstudioz.parkingpin.detection.FusedLocationSessionRegistrar
 import com.sjstudioz.parkingpin.detection.NotificationCandidateDelivery
 import com.sjstudioz.parkingpin.detection.ParkingCandidateCoordinator
+import com.sjstudioz.parkingpin.detection.CandidateConfirmation
 import com.sjstudioz.parkingpin.detection.NotificationParkingEndProposalDelivery
 import com.sjstudioz.parkingpin.detection.ParkingEndProposalCoordinator
 import com.sjstudioz.parkingpin.detection.ParkingDetectionRuntime
@@ -358,6 +359,11 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
      * bargain [parkingCandidateCoordinator] makes; `아직 주차 중` reaches the engine through
      * [ParkingDetectionRuntime.handleUserKeptParking], resolved when called.
      */
+    /** The one confirmation path the screen and the notification's inline `층 입력` share. */
+    val candidateConfirmation: CandidateConfirmation by lazy {
+        CandidateConfirmation(parkingCandidateCoordinator, parkingEndProposalCoordinator, parkingDetectionRuntime, clock)
+    }
+
     val parkingEndProposalCoordinator: ParkingEndProposalCoordinator by lazy {
         ParkingEndProposalCoordinator(
             store = detectionStateStore,

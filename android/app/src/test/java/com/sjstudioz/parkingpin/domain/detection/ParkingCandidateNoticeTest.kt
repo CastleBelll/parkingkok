@@ -116,4 +116,11 @@ class ParkingCandidateNoticeTest {
             optionalVehicleSignal = false,
         ),
     )
+
+    @Test
+    fun `the inline floor field's hint is the example iOS shows`() {
+        // An input hint, not notification copy: it names an example floor on purpose, and
+        // nothing from the candidate reaches it. iOS CandidateNotificationCopy.enterFloorPlaceholder.
+        assertEquals("예: B3", ParkingCandidateNotice.FLOOR_INPUT_HINT)
+    }
 }
