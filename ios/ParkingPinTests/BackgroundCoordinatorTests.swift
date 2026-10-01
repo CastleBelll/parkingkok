@@ -238,6 +238,45 @@ struct BackgroundCoordinatorTests {
         #expect(snapshot.currentCheckpoint?.lastLocationAt == nil)
     }
 
+    /// Audit 2026-10-01: the window was anchored on the checkpoint *after* this sample was
+    /// noted into it, so it shrank to the seconds since the sample.
+    @Test("A significant-change wake replays motion from before the wake, not from its own sample")
+    func significantChangeReplaysFromPriorAnchor() async throws {
+        // Arrange — an idle checkpoint last touched twenty minutes ago.
+        let checkpoint = DetectionCheckpoint(
+            state: .idle,
+            stateEnteredAt: TestTime.offset(-1_200),
+            lastLocationAt: TestTime.offset(-1_200),
+            revision: 2
+        )
+        let motion = StubMotionHistoryProvider()
+        let coordinator = makeCoordinator(store: StubCheckpointStore(loadResult: .restored(checkpoint)), motion: motion)
+        await coordinator.rehydrate(launchReason: .significantLocationChange)
+        let sample = LocationQualitySample(timestamp: TestTime.offset(-5), horizontalAccuracy: 50)
+
+        // Act
+        await coordinator.handleSignificantChange(sample)
+
+        // Assert
+        let window = try #require(motion.requestedWindow)
+        #expect(window.start < sample.timestamp)
+    }
+
+    /// Audit 2026-10-01: Core Motion's first query is its permission prompt, and a launch
+    /// raised it before the opt-in had been answered.
+    @Test("A launch with motion never asked does not query Core Motion")
+    func launchDoesNotPromptForMotion() async {
+        // Arrange
+        let motion = StubMotionHistoryProvider(authorization: .notDetermined)
+        let coordinator = makeCoordinator(store: StubCheckpointStore(), motion: motion)
+
+        // Act
+        await coordinator.rehydrate(launchReason: .userInitiated)
+
+        // Assert
+        #expect(motion.requestedWindow == nil)
+    }
+
     @Test("A fresh fix still lands, so the guard does not swallow real movement")
     func acceptsFreshSignificantChange() async {
         // Arrange

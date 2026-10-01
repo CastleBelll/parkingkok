@@ -25,6 +25,12 @@ final class DetectionRuntime {
     private(set) var isMotionHistoryAvailable: Bool
     private(set) var locationAuthorization: LocationAuthorization
     private(set) var hasBootstrapped = false
+
+    /// The launch's restore, which every other entry point waits for (audit 2026-10-01): a
+    /// significant change or a notification answer that reached the coordinator first saw an
+    /// unrestored `IDLE` engine, wrote it over the stored checkpoint, and the restore then
+    /// read back that `IDLE` — losing the parking and its departure watch.
+    private var rehydration: Task<Void, Never>?
     /// Non-nil when the checkpoint file could not even be located, which would otherwise
     /// look like "no checkpoint yet".
     private(set) var storeSetupFailure: String?
@@ -208,7 +214,7 @@ final class DetectionRuntime {
         AppLog.lifecycle.notice("bootstrap reason=\(launchReason.rawValue, privacy: .public)")
 
         let isOptedIn = preference.isEnabled
-        Task { [weak self, coordinator, carLink] in
+        rehydration = Task { [weak self, coordinator, carLink] in
             // Before rehydration, because rehydration replays motion history and docs/05 §9
             // records nothing while the user is opted out.
             await coordinator.setTraceRecordingEnabled(isOptedIn)
@@ -389,6 +395,7 @@ final class DetectionRuntime {
     /// Querying here with `try?` swallowed the one error that explains an unresponsive
     /// button, which is exactly the silent recovery the checkpoint path forbids.
     func requestMotionPermission() async {
+        await rehydration?.value
         await coordinator.requestMotionHistoryAccess()
         refreshAuthorizationStatuses()
         await exportDiagnostics()
@@ -406,6 +413,7 @@ final class DetectionRuntime {
             }
             startMonitoringIfPermitted()
             Task { [weak self, coordinator] in
+                await self?.rehydration?.value
                 await coordinator.setSmartDetectionEnabled(true)
                 await coordinator.setTraceRecordingEnabled(true)
                 await self?.exportDiagnostics()
@@ -415,6 +423,7 @@ final class DetectionRuntime {
             // Neither the bounded session nor the open trace may outlive the opt-in that
             // authorized them (docs/05 §9).
             Task { [weak self, coordinator] in
+                await self?.rehydration?.value
                 await coordinator.setSmartDetectionEnabled(false)
                 await coordinator.setTraceRecordingEnabled(false)
                 await self?.exportDiagnostics()
@@ -440,6 +449,7 @@ final class DetectionRuntime {
 /// the main actor, so this is the one hop between them.
 extension DetectionRuntime: CandidateResolving {
     func resolveCandidate(_ outcome: CandidateOutcome) async {
+        await rehydration?.value
         await coordinator.resolveCandidate(outcome)
         await exportDiagnostics()
     }
@@ -454,12 +464,14 @@ extension DetectionRuntime: CandidateResolving {
 /// turned back on: the car *is* parked, and the first drive after re-enabling ends it.
 extension DetectionRuntime: ManualParkingReporting {
     func userSavedParking(at date: Date, location: LastReliableLocation?) async {
+        await rehydration?.value
         await coordinator.userSavedParking(at: date, location: location)
         await exportDiagnostics()
     }
 
     /// docs/05 §11a: 아직 주차 중 — the car is still where the active parking says.
     func userKeptParking(at date: Date) async {
+        await rehydration?.value
         await coordinator.userKeptParking(at: date)
         await exportDiagnostics()
     }
@@ -496,6 +508,7 @@ extension DetectionRuntime: SignificantLocationMonitorDelegate {
     /// Notifications, then motion — each only if never asked, so a refusal is not nagged.
     private func requestFollowUpPermissions() {
         Task { [weak self] in
+            await self?.rehydration?.value
             guard let self else { return }
             if await notificationAuthorization() == "notDetermined" {
                 await requestNotificationPermission()
@@ -510,6 +523,7 @@ extension DetectionRuntime: SignificantLocationMonitorDelegate {
     /// most needs to outlive the process.
     func monitorDidReceiveLocation(_ sample: LocationQualitySample) {
         Task { [weak self, coordinator, carLink] in
+            await self?.rehydration?.value
             await coordinator.handleSignificantChange(sample)
             // The one wake that reliably happens during a drive, so it is where the §3a
             // link edges are derived from consecutive samples of the audio route.
@@ -520,6 +534,7 @@ extension DetectionRuntime: SignificantLocationMonitorDelegate {
 
     func monitorDidFail(_ description: String) {
         Task { [weak self, coordinator] in
+            await self?.rehydration?.value
             await coordinator.recordLocationFailure(description)
             await self?.exportDiagnostics()
         }
@@ -534,6 +549,7 @@ extension DetectionRuntime: SignificantLocationMonitorDelegate {
 extension DetectionRuntime: BoundedLocationCaptureDelegate {
     func captureDidProduce(_ fix: LocationFix) {
         Task { [weak self, coordinator] in
+            await self?.rehydration?.value
             await coordinator.handleDrivingFix(fix)
             await self?.exportDiagnostics()
         }
@@ -541,6 +557,7 @@ extension DetectionRuntime: BoundedLocationCaptureDelegate {
 
     func captureDidLoseAuthorization() {
         Task { [weak self, coordinator] in
+            await self?.rehydration?.value
             await coordinator.handleCaptureAuthorizationLost()
             await self?.exportDiagnostics()
         }
@@ -548,6 +565,7 @@ extension DetectionRuntime: BoundedLocationCaptureDelegate {
 
     func captureDidFail(_ description: String) {
         Task { [weak self, coordinator] in
+            await self?.rehydration?.value
             await coordinator.handleCaptureFailure(description)
             await self?.exportDiagnostics()
         }
@@ -555,6 +573,7 @@ extension DetectionRuntime: BoundedLocationCaptureDelegate {
 
     func captureWatchdogDidTick() {
         Task { [weak self, coordinator, carLink] in
+            await self?.rehydration?.value
             await coordinator.evaluateDrivingTimeouts()
             // While a bounded session is open this ticks far more often than a significant
             // change arrives, which is what makes a disconnect at the destination land in
