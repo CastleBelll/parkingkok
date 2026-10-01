@@ -153,6 +153,12 @@ class HomeViewModel(
     private val photoBusy = MutableStateFlow(false)
     private val pillarSuggestion = MutableStateFlow<PillarSuggestion?>(null)
 
+    /**
+     * The record [pillarSuggestion] was read for. Applying writes there and nowhere else:
+     * the active record at tap time may be a different parking (audit 2026-10-01).
+     */
+    private var pillarSuggestionRecordId: String? = null
+
     /** The record whose §18 offer was applied or waved away; it is not asked again. */
     private val usualSpotAnsweredFor = MutableStateFlow<String?>(null)
 
@@ -244,6 +250,7 @@ class HomeViewModel(
             // Only a photo that was actually kept is worth reading: §6a's whole premise
             // is "the photo the user takes anyway".
             if (result is AttachParkingPhotoResult.Attached) {
+                pillarSuggestionRecordId = recordId
                 pillarSuggestion.value =
                     suggestFromPillarPhoto(recordId, source).takeUnless { it.isEmpty }
             }
@@ -253,7 +260,7 @@ class HomeViewModel(
     /** §6a: the record changes here and nowhere earlier. */
     fun onApplyPillarSuggestion() {
         val suggestion = pillarSuggestion.value ?: return
-        val recordId = uiState.value.active?.id ?: return
+        val recordId = pillarSuggestionRecordId ?: return
         pillarSuggestion.value = null
         viewModelScope.launch { applyPillarSuggestion(recordId, suggestion) }
     }
