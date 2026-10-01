@@ -147,6 +147,15 @@ class NavBackStackTest {
     }
 
     @Test
+    fun `the launcher shortcut opens the active parking's detail over home`() {
+        // docs/02 §17: map and 길찾기 in one tap; back shows the app, as after a hero tap.
+        val stack = NavBackStack.openingDetail("record-1")
+
+        assertEquals(ParkingpinRoute.Detail("record-1"), stack.current)
+        assertEquals(ParkingpinRoute.Home, stack.pop().current)
+    }
+
+    @Test
     fun `a manual form opened to confirm a candidate is a different screen from a blank one`() {
         // They share a composable but not an identity: encoding one must not restore the
         // other, or a process death would turn a confirmation into a fresh manual save.

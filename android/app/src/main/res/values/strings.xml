@@ -212,6 +212,8 @@
     <!-- Parking detail (design-references/03-parking-detail.png) -->
     <string name="detail_title">주차 위치</string>
     <string name="detail_share">위치 보내기</string>
+    <string name="shortcut_active_parking_short">주차 위치</string>
+    <string name="shortcut_active_parking_long">지금 주차한 위치 보기</string>
     <string name="detail_parked_at">주차 시간</string>
     <string name="detail_ended_at">종료 시간</string>
     <string name="detail_source">저장 방식</string>
