@@ -105,6 +105,21 @@ class SettingsViewModel(
     }
 
     /**
+     * A permission answered, or the user back from system Settings. Detection registers
+     * only through [com.sjstudioz.parkingpin.detection.DetectionRegistrationCoordinator], so
+     * a grant that is not followed by a reconcile leaves the switch on and nothing
+     * registered until the next process start (audit 2026-10-01). Cheap when nothing
+     * changed: an already-registered subscription issues no call.
+     */
+    fun onPermissionsChanged() {
+        refresh()
+        viewModelScope.launch {
+            container.registrationCoordinator.reconcile()
+            refresh()
+        }
+    }
+
+    /**
      * docs/07 §13a. The token comes from the UI layer because Credential Manager needs an
      * `Activity` context; everything the token *means* is decided below, in
      * [LinkingAccountIdentity], which links it to the uid this device already has.

@@ -6,19 +6,17 @@ import SwiftUI
 /// Section order is docs/19's: 자동 감지 → 알림 → 권한 → Plus → 데이터 → 개인정보, with a
 /// 개발자 section at the end that is not in the mock.
 ///
-/// Features that do not exist yet are shown disabled and labelled `준비 중` rather than
-/// hidden or faked. A switch that does nothing would be worse than an honest gap — and
-/// hiding them would lose the section order the mock establishes.
-///
-/// The badge has to come **off** on the day the feature lands, and twice it did not:
-/// 주차 종료 자동 감지 and the widget both shipped while this screen still called them
-/// 준비 중. Only Plus and CSV export are placeholders now.
+/// Features that do not exist yet are **not shown** (device feedback 2026-10-01: "아직
+/// 눌리지도 않는 버튼들"). Plus and CSV export used to sit here as disabled `준비 중` rows;
+/// on the device they read as broken buttons, so they return when they work. The
+/// developer section is DEV and STAGING only.
 struct SettingsView: View {
     private let appInfo: AppInfo
     private let parkingModel: ParkingModel?
     @Binding private var path: [AppRoute]
 
     @State private var model = SettingsModel()
+    @Environment(\.scenePhase) private var scenePhase
     @State private var isConfirmingDataDeletion = false
 
     init(appInfo: AppInfo, model: ParkingModel?, path: Binding<[AppRoute]>) {
@@ -37,7 +35,6 @@ struct SettingsView: View {
             detectionSection
             notificationSection
             permissionSection
-            plusSection
             dataSection
             privacySection
             developerSection
@@ -48,6 +45,10 @@ struct SettingsView: View {
         .navigationTitle("설정")
         .navigationBarTitleDisplayMode(.large)
         .task { await model.refresh() }
+        // Coming back from Settings.app is when a badge changes; read it again then.
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await model.refresh() } }
+        }
         .confirmationDialog(
             "이 기기의 주차 데이터를 모두 삭제할까요?",
             isPresented: $isConfirmingDataDeletion,
@@ -146,6 +147,18 @@ struct SettingsView: View {
             )) {
                 SettingsLabel(title: "자동 주차 감지", subtitle: "주차한 순간을 앱이 먼저 알아차려요")
             }
+            // Audit 2026-10-01: the switch read 켜짐 while location was 앱 사용 중, where
+            // nothing is monitored. Said, with the one way out — iOS shows the Always
+            // prompt once, so after that it is Settings.
+            if model.needsAlwaysLocation {
+                SettingsStatusRow(
+                    title: "위치를 '항상'으로 바꿔 주세요",
+                    subtitle: "앱을 열지 않아도 주차를 감지하려면 '항상' 허용이 필요해요",
+                    status: model.locationStatusText
+                ) {
+                    Task { await model.resolveLocationPermission() }
+                }
+            }
             // FR-010, and it is built — docs/05 §11a. It has no switch of its own because
             // it is the same state machine: `DEPARTURE_CANDIDATE` only exists inside a
             // detection session, so the toggle above already turns it off. A second switch
@@ -203,15 +216,17 @@ struct SettingsView: View {
             SettingsStatusRow(
                 title: "위치 권한",
                 subtitle: "주차한 위치를 기록하기 위해 필요해요",
-                status: model.locationStatusText,
-                action: model.openSystemSettings
-            )
+                status: model.locationStatusText
+            ) {
+                Task { await model.resolveLocationPermission() }
+            }
             SettingsStatusRow(
                 title: "동작 및 피트니스",
                 subtitle: "차량 이동과 도보를 구분하기 위해 필요해요",
-                status: model.motionStatusText,
-                action: model.openSystemSettings
-            )
+                status: model.motionStatusText
+            ) {
+                Task { await model.resolveMotionPermission() }
+            }
         } header: {
             Text("권한")
         } footer: {
@@ -220,19 +235,8 @@ struct SettingsView: View {
         .listRowBackground(PKColor.surface)
     }
 
-    /// FR-012. No StoreKit product exists, and docs/10 §9 forbids a fake badge — so this
-    /// says what it is instead of showing a price nobody can pay.
-    private var plusSection: some View {
-        Section("주차핀 Plus") {
-            SettingsPlaceholderRow(title: "Plus 구독", subtitle: "기록 무제한과 위젯 +/- 를 준비 중이에요")
-        }
-        .listRowBackground(PKColor.surface)
-    }
-
     private var dataSection: some View {
         Section("데이터") {
-            // FR-011 export is a Plus feature with no subscription behind it yet.
-            SettingsPlaceholderRow(title: "주차 기록 내보내기", subtitle: "기록을 CSV 파일로 저장해요")
             Button(role: .destructive) {
                 isConfirmingDataDeletion = true
             } label: {
@@ -263,10 +267,11 @@ struct SettingsView: View {
         .listRowBackground(PKColor.surface)
     }
 
-    /// Where the P0 diagnostics readout moved to. It is still in every build because the
-    /// field-test checklists in `ios/README.md` have no other way to read the counters.
+    /// Where the P0 diagnostics readout moved to — DEV and STAGING only, where the field-test
+    /// checklists in `ios/README.md` read the counters. A store build keeps the version.
     private var developerSection: some View {
         Section {
+            #if !PK_PROD
             Button { path.append(.diagnostics) } label: {
                 HStack {
                     SettingsLabel(title: "감지 진단", subtitle: "저전력 깨우기와 복원 상태를 확인해요")
@@ -278,6 +283,7 @@ struct SettingsView: View {
                 }
             }
             .tint(PKColor.textPrimary)
+            #endif
             LabeledContent("버전", value: appInfo.versionSummary)
                 .font(PKTypography.supporting)
             #if PK_DEV
@@ -291,7 +297,11 @@ struct SettingsView: View {
                     .textSelection(.enabled)
             #endif
         } header: {
-            Text("개발자")
+            #if PK_PROD
+                Text("앱 정보")
+            #else
+                Text("개발자")
+            #endif
         }
         .listRowBackground(PKColor.surface)
     }
@@ -343,12 +353,7 @@ private struct SettingsStatusRow: View {
     }
 }
 
-/// A feature the app does not have yet. Disabled and named as such — docs/19's quality
-/// bar is that the UI does not overstate what is there.
 /// A row for something that works and has no switch of its own — the state says so.
-///
-/// Not `SettingsPlaceholderRow`: that one means "does not exist yet", and wearing it while
-/// the feature shipped is how 주차 종료 자동 감지 spent a week telling users it was missing.
 private struct SettingsStateRow: View {
     let title: String
     let subtitle: String
@@ -362,21 +367,5 @@ private struct SettingsStateRow: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityValue(state)
-    }
-}
-
-private struct SettingsPlaceholderRow: View {
-    let title: String
-    let subtitle: String
-
-    var body: some View {
-        HStack {
-            SettingsLabel(title: title, subtitle: subtitle)
-            Spacer(minLength: PKSpacing.s)
-            PKBadge("준비 중", tone: .muted)
-        }
-        .foregroundStyle(PKColor.textSecondary)
-        .accessibilityElement(children: .combine)
-        .accessibilityValue("준비 중, 아직 사용할 수 없습니다")
     }
 }

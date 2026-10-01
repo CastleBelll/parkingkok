@@ -64,6 +64,7 @@ import com.sjstudioz.parkingpin.location.CheckpointParkingLocationProvider
 import com.sjstudioz.parkingpin.location.CurrentFixParkingLocationProvider
 import com.sjstudioz.parkingpin.trace.FileTraceStore
 import com.sjstudioz.parkingpin.trace.NotificationLabelPromptDelivery
+import com.sjstudioz.parkingpin.trace.NoOpTraceLabelPrompting
 import com.sjstudioz.parkingpin.trace.TraceLabelPrompter
 import com.sjstudioz.parkingpin.trace.TraceRecorder
 import android.Manifest
@@ -189,7 +190,8 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
      * `buildConfig` is off for this module and turning it on to read one flag would slow
      * every build. Mirrors iOS's `#if PK_DEV` guard on `OSLogAnalyticsSink`.
      */
-    private val isDebuggable: Boolean
+    /** A debuggable build: where the diagnostics screen and field-data prompts live. */
+    val isDebuggable: Boolean
         get() = (appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
 
     /**
@@ -440,10 +442,16 @@ class AppContainer(context: Context, val clock: Clock = SystemClock) {
         // §9's labelling problem: the in-app screen went unused for three days because the
         // user carries the phone without opening the app. P0 instrumentation — this wiring
         // and the two `trace/TraceLabelPrompt*` files go together when it is removed.
-        prompter = TraceLabelPrompter(
-            delivery = NotificationLabelPromptDelivery(appContext),
-            stateStore = detectionStateStore,
-        ),
+        // Field-data collection, not the product: a release build never asks "이 이동,
+        // 무엇이었나요?" (audit 2026-10-01).
+        prompter = if (isDebuggable) {
+            TraceLabelPrompter(
+                delivery = NotificationLabelPromptDelivery(appContext),
+                stateStore = detectionStateStore,
+            )
+        } else {
+            NoOpTraceLabelPrompting
+        },
     )
 
     val locationSessionController: FusedLocationSessionController = FusedLocationSessionController(

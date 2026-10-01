@@ -145,10 +145,8 @@ final class SettingsModel {
 
     /// docs/04 §4: Always is requested contextually, only after this opt-in.
     func setSmartDetection(_ enabled: Bool) async {
+        // The runtime asks for the next permission itself (its ladder), so this does not.
         runtime.setSmartDetectionEnabled(enabled)
-        if enabled {
-            runtime.requestNextLocationPermission()
-        }
         // docs/17 §2 `smart_detection_enabled` — the detection opt-in, which is a product
         // signal. The analytics opt-in below is not reported at all.
         analytics.record(.smartDetectionEnabled(enabled))
@@ -164,6 +162,33 @@ final class SettingsModel {
     func setAnalyticsConsent(_ granted: Bool) async {
         analyticsConsent.setGranted(granted)
         await refresh()
+    }
+
+    /// The 위치 권한 row: a prompt when never asked, Settings.app once answered (iOS shows
+    /// each prompt once; after that only Settings can change it).
+    func resolveLocationPermission() async {
+        if locationAuthorization == .notDetermined {
+            runtime.requestNextLocationPermission()
+        } else {
+            openSystemSettings()
+        }
+        await refresh()
+    }
+
+    /// The 동작 및 피트니스 row: Core Motion's first query is its prompt.
+    func resolveMotionPermission() async {
+        if motionAuthorization == .notDetermined {
+            await runtime.requestMotionPermission()
+        } else {
+            openSystemSettings()
+        }
+        await refresh()
+    }
+
+    /// The switch is on but nothing is monitored: significant change needs Always
+    /// (`LocationAuthorization.allowsSignificantLocationMonitoring`).
+    var needsAlwaysLocation: Bool {
+        isSmartDetectionEnabled && locationAuthorization != .always
     }
 
     func requestNotificationPermission() async {
