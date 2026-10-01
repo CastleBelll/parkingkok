@@ -394,6 +394,11 @@ class ParkingDetectionRuntime(
 
                 is DetectionEffect.RetireCandidate -> candidates().retire(effect.candidateId)
 
+                is DetectionEffect.UpgradeCandidate -> candidates().upgrade(
+                    candidateId = effect.upgraded.candidateId,
+                    evidence = effect.upgraded.toDetectionProperties(),
+                )
+
                 // The record is written by the confirmation flow, which is the only thing
                 // that holds the floor the user typed. Reaching `PARKED` is the engine's
                 // half and it is already in the checkpoint written below.

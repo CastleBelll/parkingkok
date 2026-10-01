@@ -176,6 +176,32 @@ class ParkingCandidateCoordinator(
     }
 
     /**
+     * docs/05 §3a "A stop-only candidate takes the exit that follows it": the engine re-scored
+     * the pending candidate in place. The stored candidate takes the new evidence and keeps its
+     * id, times and location; re-storing the same id leaves the history alone.
+     *
+     * Posted only when this is the first time it qualifies — a `low` candidate becoming
+     * `medium`. One already on screen keeps its notification: posting again would buzz twice
+     * for one parking. No analytics event either: `parking_candidate_created` was reported
+     * when it was created, and a second one would count this parking twice.
+     */
+    suspend fun upgrade(candidateId: String, evidence: DetectionProperties) {
+        var before: ParkingCandidate? = null
+        val upgraded = store.updateCandidate { previous ->
+            if (previous?.id != candidateId) {
+                previous
+            } else {
+                before = previous
+                previous.copy(evidence = evidence)
+            }
+        }
+        val previous = before ?: return
+        if (upgraded != null && upgraded.isNotifiable && !previous.isNotifiable && notifier.isAuthorized()) {
+            notifier.post(upgraded)
+        }
+    }
+
+    /**
      * Turns the candidate into a parking record — §10a: `source = detected`, the
      * candidate's `lastReliableLocation`, and the floor the user chose.
      *

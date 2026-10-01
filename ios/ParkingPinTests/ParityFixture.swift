@@ -88,6 +88,17 @@ struct ParityFixtureOutcome {
 
     var didCreateCandidate: Bool { !candidates.isEmpty }
 
+    /// The newest description of the newest candidate: its creation, or a later in-place
+    /// re-score (docs/05 §3a "A stop-only candidate takes the exit that follows it").
+    var latestCandidate: ParkingCandidate? {
+        effects.reversed().lazy.compactMap { effect -> ParkingCandidate? in
+            switch effect {
+            case let .createCandidate(candidate), let .upgradeCandidate(candidate): candidate
+            default: nil
+            }
+        }.first
+    }
+
     /// Candidates each travel session produced, in order. A session opens where the
     /// engine resets §12's "one candidate per travel session": on entering
     /// `DRIVING_CANDIDATE`, and on a departure confirmed into `DRIVING` (§11).
@@ -299,7 +310,7 @@ enum ParityFixtureRunner {
             }
             for effect in effects {
                 switch effect {
-                case let .createCandidate(created):
+                case let .createCandidate(created), let .upgradeCandidate(created):
                     candidate = created
                 case let .withdrawCandidate(id) where candidate?.id == id:
                     candidate = nil
@@ -491,6 +502,9 @@ struct OutcomeTraceEntry: Codable, Equatable, CustomStringConvertible {
             return "create \(candidate.confidenceBucket.rawValue) \(codes)"
         case .withdrawCandidate:
             return "withdraw"
+        case let .upgradeCandidate(candidate):
+            let codes = candidate.reasonCodes.map(\.rawValue).sorted().joined(separator: ",")
+            return "upgrade \(candidate.confidenceBucket.rawValue) \(codes)"
         case .proposeParkingEnd:
             return "proposeParkingEnd"
         default:

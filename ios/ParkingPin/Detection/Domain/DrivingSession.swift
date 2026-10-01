@@ -105,6 +105,14 @@ struct DrivingEvidence: Sendable, Equatable, Codable {
     /// predecessor was `good` or `fair`, or from a `location_quality_degraded` event that
     /// ended in `poor` (or named no bucket). docs/05 §8b "location_quality_degraded".
     private(set) var lastDegradedToPoorAt: Date?
+    /// The newest fix that could not have shown movement (`LocationFix.isBlind`).
+    /// docs/05 §3a "A blind fix is not a stop" (2026-10-01).
+    ///
+    /// A tunnel or an underground road hands Core Location's coarse fixes to a car still
+    /// doing 60 km/h, and none of them can clear §7's noise floor. Counted as silence, they
+    /// let `movementIdleWindow` fire mid-drive and the transition lapse to `IDLE` — the
+    /// field drives of 2026-09-30 and 2026-10-01 lost the parking at the end that way.
+    private(set) var lastBlindFixAt: Date?
 
     init(startedAt: Date, lastVehicleEvidenceAt: Date? = nil) {
         self.startedAt = startedAt
@@ -156,6 +164,29 @@ struct DrivingEvidence: Sendable, Equatable, Codable {
     ///
     /// A drive that has never moved stays un-anchored: §3a "an absent fix is not absent
     /// movement", and seeding the anchor here would let an underground drive idle out.
+    /// Before the outlier check on purpose: a coarse fix that jumps is still a fix that says
+    /// the sky is gone. Only while the idle window is still open, though — a blind fix that
+    /// lands after it closed says nothing about the silence before it, which §3a already
+    /// read as idle ("an absent fix" on a drive that moved). That is also what keeps a
+    /// relaunch, which settles the windows before the waking fix, agreeing with a process
+    /// that never died.
+    private mutating func noteBlind(_ fix: LocationFix) {
+        guard fix.isBlind else { return }
+        if let anchor = movementIdleAnchor,
+           fix.timestamp.timeIntervalSince(anchor) >= ParkingTransitionPolicy.movementIdleWindow {
+            return
+        }
+        lastBlindFixAt = max(lastBlindFixAt ?? fix.timestamp, fix.timestamp)
+    }
+
+    /// The moment `movementIdleWindow` is measured from: the last moving sample, or a later
+    /// blind fix. `nil` while the drive has never moved (§3a "an absent fix is not absent
+    /// movement") — a blind fix alone does not start the clock either.
+    var movementIdleAnchor: Date? {
+        guard let lastMovingSampleAt else { return nil }
+        return max(lastMovingSampleAt, lastBlindFixAt ?? lastMovingSampleAt)
+    }
+
     mutating func reanchorMovementIdle(at date: Date) {
         guard let lastMoving = lastMovingSampleAt else { return }
         lastMovingSampleAt = max(lastMoving, date)
@@ -196,6 +227,7 @@ struct DrivingEvidence: Sendable, Equatable, Codable {
             return false
         }
         fixCount += 1
+        noteBlind(fix)
 
         if let previous = lastFix {
             guard LocationOutlierPolicy.isPlausibleStep(from: previous, to: fix) else {
@@ -575,7 +607,7 @@ enum DrivingSessionTimeoutPolicy {
         // before confirmation there is no movement to have stopped, and treating silence
         // there as a parking transition would open a candidate for a car nobody drove.
         if evidence.isConfirmed,
-           ParkingTransitionPolicy.isMovementIdle(lastMovingSampleAt: evidence.lastMovingSampleAt, now: now) {
+           ParkingTransitionPolicy.isMovementIdle(anchor: evidence.movementIdleAnchor, now: now) {
             return .movementIdle
         }
         return nil

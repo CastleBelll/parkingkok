@@ -688,6 +688,21 @@ actor BackgroundCoordinator {
         case let .createCandidate(candidate):
             saveCandidate(candidate)
 
+        case let .upgradeCandidate(candidate):
+            // Same id, re-scored: the store takes the new evidence. Not `saveCandidate` —
+            // that counts and reports a creation, and this parking was already reported.
+            do {
+                try candidateStore?.save(candidate)
+                snapshot.candidateStoreFailure = nil
+            } catch {
+                snapshot.candidateStoreFailure = String(describing: error)
+                AppLog.detection.error("candidate upgrade failed: \(String(describing: error), privacy: .public)")
+            }
+            snapshot.lastCandidateConfidence = candidate.confidenceBucket
+            AppLog.detection.notice(
+                "candidate upgraded, confidence=\(candidate.confidenceBucket.rawValue, privacy: .public)"
+            )
+
         case let .issueCandidateNotification(candidate):
             await candidateNotifier?.post(candidate)
 

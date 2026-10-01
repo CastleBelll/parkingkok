@@ -44,6 +44,18 @@ struct LocationFix: Sendable, Equatable, Codable {
         horizontalAccuracy >= 0
     }
 
+    /// docs/05 §3a "A blind fix is not a stop": no reported speed, and coarser than
+    /// `blindAccuracyMeters` — so it can show neither movement nor stillness.
+    var isBlind: Bool {
+        speed == nil && horizontalAccuracy > Self.blindAccuracyMeters
+    }
+
+    /// Above this a speedless fix is a cell or Wi-Fi guess, not a position: the tunnels of
+    /// the 2026-09-30/10-01 field drives reported 89–2,300 m, while a parked car in a
+    /// garage (field s16, s31) reads 30–55 m and must still be able to look still.
+    /// **unvalidated**
+    static let blindAccuracyMeters: Double = 80
+
     /// The durable form, once `ReliableLocationPolicy` has accepted this fix.
     var reliableLocation: LastReliableLocation {
         LastReliableLocation(

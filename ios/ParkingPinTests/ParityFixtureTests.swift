@@ -39,7 +39,11 @@ struct ParityFixtureTests {
             "manual_save_then_short_departure.json",
             "quiet_transition_expires_no_candidate.json",
             "red_light_no_candidate.json",
+            // docs/05 §3a "A stop-only candidate takes the exit that follows it" (2026-10-01).
+            "stop_candidate_takes_following_exit.json",
             "subway_commute_underground.json",
+            // docs/05 §3a "A blind fix is not a stop" (2026-10-01).
+            "tunnel_blind_then_parks.json",
             "tunnel_no_parking.json",
             "vehicle_then_walk.json"
         ]
@@ -139,7 +143,7 @@ struct ParityFixtureTests {
                 "\(fixture.name): candidate \(outcome.didCreateCandidate), expected \(fixture.expected.candidate)"
             )
 
-            guard let candidate = outcome.candidates.last else { continue }
+            guard let candidate = outcome.latestCandidate else { continue }
             if let expectedConfidence = fixture.expected.confidence {
                 #expect(
                     candidate.confidenceBucket == expectedConfidence,

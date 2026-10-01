@@ -65,7 +65,7 @@ struct UserSavedParkingTests {
     ) {
         for effect in effects {
             switch effect {
-            case .createCandidate, .issueCandidateNotification:
+            case .createCandidate, .upgradeCandidate, .issueCandidateNotification:
                 Issue.record("user_saved must not raise a candidate: \(effect)", sourceLocation: sourceLocation)
             case .sessionEnded:
                 Issue.record("user_saved drops the session silently: \(effect)", sourceLocation: sourceLocation)

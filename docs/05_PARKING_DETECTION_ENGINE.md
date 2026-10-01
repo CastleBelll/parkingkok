@@ -74,7 +74,7 @@ field data exists. Neither platform may pick its own value for one.
 | `IDLE` | `DRIVING_CANDIDATE` | `vehicle_enter` |
 | `DRIVING_CANDIDATE` | `DRIVING` | vehicle activity sustained ≥ `minimumVehicleDuration` |
 | `DRIVING_CANDIDATE` | `IDLE` | `vehicle_exit`, or no promotion within `drivingCandidateWindow` |
-| `DRIVING` | `PARKING_TRANSITION` | `vehicle_exit`, **or** no movement evidence for `movementIdleWindow` |
+| `DRIVING` | `PARKING_TRANSITION` | `vehicle_exit`, **or** no movement evidence for `movementIdleWindow`, measured from the last moving sample or a later blind fix (see "A blind fix is not a stop") |
 | `PARKING_TRANSITION` | `CANDIDATE_PENDING` | any of `walking_enter`, `stationary_enter`, location stop — within `transitionWindow` (location stop: see "The `PARKING_TRANSITION` rows, exactly") |
 | `PARKING_TRANSITION` | `DRIVING` | movement evidence returns before `transitionWindow` elapses — a fix that clears §7's movement bar, or `vehicle_enter` |
 | `PARKING_TRANSITION` | `IDLE` | `transitionWindow` elapses with no confirming signal |
@@ -96,6 +96,7 @@ field data exists. Neither platform may pick its own value for one.
 | `drivingCandidateWindow` | 300s | §7 `vehicleEvidenceMaxAge` — evidence older than this is already not counted |
 | `movementIdleWindow` | 180s | §7 `maximumBaseline`. **unvalidated** |
 | `transitionWindow` | 300s | §7 vehicle window, reused so a walk that starts late still counts. **unvalidated** |
+| `blindAccuracyMeters` | 80 m | "A blind fix is not a stop": a speedless fix coarser than this cannot show movement or stillness. Field tunnels 89–2,300 m, a parked car in a garage 30–55 m. **unvalidated** |
 | `nearEndHorizon` | 300s | §8b: how far before the drive's end "near end" evidence may lie. `transitionWindow` reused. **unvalidated** |
 | `vehicleEvidenceTimeout` | 600s | silence bound on a session: no vehicle evidence for this long ends it even if no walk ever arrives. Long enough to survive a tunnel or a long queue, where the vehicle signal can drop for minutes; short enough that a missed walk costs one bounded session, not hours of GPS. iOS `DrivingSessionTimeoutPolicy` applies it to a live session (the adapter's `.vehicleEvidenceExpired`) and to every restore; Android uses it (`VEHICLE_EVIDENCE_TIMEOUT_MILLIS`) only to drop a stale `PARKED` get-in at a system reset (§14). Not a §3a window: no fixture reaches it. **unvalidated** |
 | `sessionMaximumDuration` | 2h | hard ceiling on one `DRIVING` session. Longer than any ordinary commute, far shorter than a day; without it a drive that never sees another fix keeps the location capture up for ever (§19). Ends in `IDLE` with no candidate — two hours in, nothing knows where the car was left. Android gained it 2026-09-21; iOS always had it |
@@ -398,6 +399,41 @@ Folding the evidence **first** remains the half that is easy to get wrong, and t
 above: a batch opened with a tick judges the windows before the fix that would have advanced
 them, which is the 2026-09-20 measurement that retired the subway trip.
 
+#### DECIDED 2026-10-01: a blind fix is not a stop
+
+The 2026-09-21 rule covers a drive that never moved. The field drives of 2026-09-30 and
+2026-10-01 found its mid-drive twin: a car doing 60 km/h through a tunnel or an underground
+road, handed speedless Core Location fixes of 300–2,300 m for ten minutes. None of them can
+clear §7's noise floor, so `lastMovingSample` stood still, `movementIdleWindow` fired, the
+transition lapsed to `IDLE`, and the parking at the end of the drive was never looked for —
+both engines, on replay.
+
+**A fix with no reported speed and an accuracy coarser than `blindAccuracyMeters` is blind:
+it can show neither movement nor stillness.** `movementIdleWindow` is measured from the later
+of the last moving sample and the last blind fix. The rule adds nothing else:
+
+- a blind fix does not *start* the clock — a drive that has never moved stays un-anchored;
+- a blind fix is noted whether or not it passes the §5 outlier check (a coarse fix that jumps
+  still says the sky is gone);
+- a blind fix counts only while the window is still open. One that lands after
+  `movementIdleWindow` already ran out says nothing about the silence before it, which the
+  2026-09-21 rule reads as idle on a drive that has moved. This is also what keeps a relaunch —
+  which settles the windows before folding the fix that woke it (§14) — agreeing with a
+  process that never died; without it `field_s24` diverged on the restore replay;
+- when the sky returns, a real stop is judged from there, so the clock restarts rather than
+  stops.
+
+**The threshold is not §2's `poor` (35 m).** Field s16 parks under a slab and reads 30–55 m
+with no speed; at 35 m that parking stopped looking still and its candidate disappeared.
+80 m sits between the garage (≤ 55 m) and the tunnel (≥ 89 m).
+
+**What it costs.** A car parked where every fix stays above 80 m — deep underground with only
+cell positions — no longer ends its drive by `movementIdleWindow`. It ends by `vehicle_exit`
+(Android's transition, iOS's derived exit after `vehicleEvidenceTimeout`), by a walk, or by the
+two-hour ceiling. Pinned by `tunnel_blind_then_parks.json` (the replayed drive) and by the
+unit tests "Blind fixes in a tunnel do not end a drive as movement idle", "A real stop after
+the tunnel still ends the drive" and "A garage fix of 50 m is not blind" on both platforms.
+
 ### Leaving a pending candidate behind
 
 `CANDIDATE_PENDING → DRIVING_CANDIDATE` on `vehicle_enter` exists because a candidate can
@@ -635,6 +671,37 @@ longer than `movementIdleWindow + transitionWindow` (8 minutes) with no
 movement still leaves a silent candidate behind, and a tunnel longer than that with no fix and
 no car link ends in `IDLE` — §13's "tunnel must remain DRIVING" holds only while a link is
 connected. Both are for §18 field tuning, not for a rule change on one trace.
+
+### A stop-only candidate takes the exit that follows it (DECIDED 2026-10-01)
+
+A location stop can confirm a `movementIdle` transition seconds before the exit and the walk
+that say the same thing more strongly. On 2026-09-30 20:52 and 2026-10-01 10:36 the walk came
+1–30 s after the stop, the candidate was scored without it, stayed `low` (45), and §9 posted
+nothing: two real parkings the user never heard about.
+
+**Until `transitionWindow` has run from the drive's end, a `vehicle_exit` or a `walking_enter`
+re-scores a stop-only candidate.** The added code joins its reasons; if the bucket rises the
+candidate is **upgraded in place** — `upgradeCandidate` / `UpgradeCandidate`, the same id,
+detection time, expiry and location. It is not a new candidate: nothing is withdrawn, the
+history gains no `응답 없음` row, `parking_candidate_created` is not reported twice, and the
+notification is posted only the first time the candidate qualifies — so `low → medium → high`
+on one parking buzzes once. A code that does not move the bucket is kept, so an exit (+15)
+followed a second later by a walk (+30) is credited with both. That is why this is its own
+record (`CandidateRescore` / `StopOnlyRescore`) and not part of the resume window: the exit
+closes the window, and the walk after it must still count.
+
+**After the window it is not used.** The car may have driven on and parked somewhere else; an
+exit there upgrading a candidate pinned to the old spot would notify the wrong place.
+
+The storm counter ignores an upgrade (contract §8 rule 5); its outcome-trace label is
+`upgrade <bucket> <codes>`. Pinned by
+`stop_candidate_takes_following_exit.json` and by the unit tests "A walk before the drive's
+window closes re-scores a stop-only candidate", "An exit and then a walk both count towards a
+stop-only candidate" and the late-walk test on both platforms.
+
+**Residual.** The 2026-09-30 08:06 drive met a long light at 08:37 between two tunnels: the
+stop confirmed a silent candidate there, no second ≥ 2 m/s fix came inside the window, and
+the parking at 08:51 was not found. Left for §18 tuning.
 
 ### Turning Smart Detection off (DECIDED 2026-09-28)
 
@@ -1765,6 +1832,7 @@ Platform-independent conceptual effects:
 - stopLocationCapture
 - persistCheckpoint
 - createCandidate
+- upgradeCandidate — §3a "A stop-only candidate takes the exit that follows it"; the pending candidate re-scored in place, same id
 - issueCandidateNotification
 - markParkingActive
 - proposeParkingEnd(departedAt) — §11a; the engine never ends a parking itself

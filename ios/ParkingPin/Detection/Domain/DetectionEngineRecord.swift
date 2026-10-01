@@ -28,6 +28,8 @@ struct DetectionEngineRecord: Sendable, Equatable, Codable {
     var candidateDrive: DrivingEvidence?
     /// docs/05 §3a "A stop-only candidate can still be a long light".
     var candidateResume: CandidateResume?
+    /// docs/05 §3a "A stop-only candidate takes the exit that follows it".
+    var candidateRescore: CandidateRescore?
     /// The vehicle-activity *level* (`DetectionEvent`).
     var isVehicleActive = false
     /// When the current stretch of vehicle activity began, as the evidence dates it.
@@ -124,4 +126,20 @@ struct CandidateResume: Sendable, Equatable, Codable {
     /// Fixes inside the window that reported moving speed. §7's "one event alone never
     /// confirms": a single Doppler spike under a slab must not withdraw a parking.
     var reportedMovingFixes = 0
+}
+
+/// docs/05 §3a "A stop-only candidate takes the exit that follows it" (2026-10-01): what a
+/// stop-only candidate was scored on, so an exit or a walk before `deadline` can re-score it.
+/// Android's `StopOnlyRescore`.
+///
+/// Separate from `CandidateResume` on purpose. That window is the capture's lifetime and an
+/// exit closes it; the walk that follows the exit a second later must still count. Read only
+/// while it names the pending candidate, so a stale one is inert and is never cleared path by
+/// path.
+struct CandidateRescore: Sendable, Equatable, Codable {
+    let candidateId: UUID
+    /// The drive's end plus `transitionWindow`: the car has provably not moved on before it.
+    let deadline: Date
+    /// The candidate's evidence so far, signals that did not move the bucket included.
+    var evidence: ParkingEvidence
 }
