@@ -102,7 +102,11 @@ sealed interface DetectionEvent {
      * `PARKED`, because §11 only watches for a departure from there — and a parking the
      * engine was never told about is one no drive away could ever end.
      */
-    data class UserSavedParking(override val atMillis: Long) : DetectionEvent
+    data class UserSavedParking(
+        override val atMillis: Long,
+        /** Where the saved parking says the car is, when it knows (docs/05 §11d). */
+        val location: ReliableLocation? = null,
+    ) : DetectionEvent
 
     /**
      * The user answered a departure proposal with `아직 주차 중` (docs/05 §11a, contract §2

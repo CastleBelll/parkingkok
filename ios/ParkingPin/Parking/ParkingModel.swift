@@ -26,7 +26,8 @@ struct ManualParkingDraft: Sendable, Equatable {
 /// to exist, and a build with no detection at all still saves parkings.
 @MainActor
 protocol ManualParkingReporting: AnyObject {
-    func userSavedParking(at date: Date) async
+    /// `location`: where the saved parking says the car is, when it knows (§11d).
+    func userSavedParking(at date: Date, location: LastReliableLocation?) async
     /// docs/05 §11a: the user answered a departure proposal with 아직 주차 중.
     func userKeptParking(at date: Date) async
 }
@@ -239,7 +240,7 @@ final class ParkingModel {
         if saved {
             analytics.record(.parkingManualSaved)
             attachCurrentFix(to: session.id, improving: location)
-            reportToDetection(savedAt: now)
+            reportToDetection(savedAt: now, location: location)
         }
         return saved
     }
@@ -249,10 +250,21 @@ final class ParkingModel {
     /// Detached like `attachCurrentFix`: the hop crosses the coordinator actor, which may be
     /// busy with a wake, and the sheet must close on the save alone. Only a written record
     /// is reported — a refused save has no parking for a departure to end.
-    private func reportToDetection(savedAt date: Date) {
+    private func reportToDetection(savedAt date: Date, location: ParkedLocation?) {
         guard let detection else { return }
+        // §11d: the engine measures the next drive's start against this spot. The fix the
+        // save had in hand, not the one `attachCurrentFix` may still improve it to: the two
+        // are metres apart, and the test allows hundreds.
+        let spot = location.map {
+            LastReliableLocation(
+                latitude: $0.latitude,
+                longitude: $0.longitude,
+                horizontalAccuracy: $0.horizontalAccuracy,
+                capturedAt: $0.capturedAt
+            )
+        }
         detectionReport = Task {
-            await detection.userSavedParking(at: date)
+            await detection.userSavedParking(at: date, location: spot)
         }
     }
 

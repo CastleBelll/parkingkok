@@ -106,6 +106,16 @@ actor ParkingDetectionEngine {
         set { memory.candidateRescore = newValue }
     }
 
+    private var parkedLocation: LastReliableLocation? {
+        get { memory.parkedLocation }
+        set { memory.parkedLocation = newValue }
+    }
+
+    private var passengerRideLastVehicleAt: Date? {
+        get { memory.passengerRideLastVehicleAt }
+        set { memory.passengerRideLastVehicleAt = newValue }
+    }
+
     /// The vehicle-activity *level*. Set by `vehicleEnter`, cleared by `vehicleExit` — see
     /// `DetectionEvent` for why this is a level and not a decaying sample.
     private var isVehicleActive: Bool {
@@ -387,7 +397,13 @@ actor ParkingDetectionEngine {
         // that. Android has always answered it first; iOS used to let a lapsing window
         // report `candidateRuleUnmet` on the way.
         switch event {
-        case .userSavedParking, .userKeptParking:
+        case let .userSavedParking(_, location):
+            // §11d: the hand save says where the car is now, or that it does not know.
+            parkedLocation = location
+            passengerRideLastVehicleAt = nil
+            return adoptUserSavedParking(now: now) + persistIfChanged()
+        case .userKeptParking:
+            // The car is still where the active parking says; the ride that asked was not it.
             return adoptUserSavedParking(now: now) + persistIfChanged()
         default:
             break
@@ -502,8 +518,8 @@ actor ParkingDetectionEngine {
         case .userSavedParking, .userKeptParking:
             // Answered in `handle` before anything else; never reaches here.
             return []
-        case .location:
-            return applyFixEdge(now: now)
+        case let .location(fix):
+            return applyFixEdge(fix, now: now)
         // §3a has no row for these: `stationary_exit` inside a drive is a car leaving a
         // light, a degradation is supporting evidence, and a tick is only an invitation to
         // re-examine the windows.
@@ -706,6 +722,8 @@ actor ParkingDetectionEngine {
     private func confirmDeparture(now: Date) -> [DetectionEffect] {
         let departedAt = checkpoint.stateEnteredAt
         hasProducedCandidateInSession = false
+        // The car has left; where it was parked no longer says anything about the next drive.
+        parkedLocation = nil
         driving?.markConfirmed(at: now)
         return [.proposeParkingEnd(departedAt: departedAt)] + moveTo(.driving, now: now) + [.drivingConfirmed(at: now)]
     }
@@ -762,6 +780,16 @@ actor ParkingDetectionEngine {
             }
             return openDrivingCandidate(vehicleEvidenceAt: date, now: now)
         case .parked:
+            // §11d: more of a ride already judged to be someone else's. Recent vehicle
+            // evidence keeps the ride going and opens nothing; evidence after a silence
+            // longer than the session bound is a new trip and is judged afresh.
+            if let ride = passengerRideLastVehicleAt {
+                if date.timeIntervalSince(ride) < DrivingSessionTimeoutPolicy.vehicleEvidenceTimeout {
+                    passengerRideLastVehicleAt = max(ride, date)
+                    return [persistedCheckpoint()]
+                }
+                passengerRideLastVehicleAt = nil
+            }
             // §11: getting back in. The session opens here so the bars have something to
             // measure, and the state does not move until they are cleared — `PARKED` is
             // where a phone that merely woke up in a parked car has to stay.
@@ -808,6 +836,11 @@ actor ParkingDetectionEngine {
             }
             return abandonDeparture(now: now)
         case .parked:
+            // §11d: the ride in someone else's car is over.
+            if passengerRideLastVehicleAt != nil {
+                passengerRideLastVehicleAt = nil
+                return [persistedCheckpoint()]
+            }
             // Got in, got out again. §11 never moved, so there is nothing to undo beyond
             // releasing the capture this session opened.
             guard driving != nil else { return [] }
@@ -999,6 +1032,11 @@ actor ParkingDetectionEngine {
         guard checkpoint.state == .candidatePending else { return [] }
         let released = closeCandidateResume()
         candidateDrive = nil
+        if confirmed {
+            // §11d: the confirmed candidate's fix is where the car now is.
+            parkedLocation = pendingCandidate?.lastReliableLocation
+            passengerRideLastVehicleAt = nil
+        }
         pendingCandidate = nil
         checkpoint.candidateId = nil
         hasProducedCandidateInSession = false
@@ -1443,7 +1481,10 @@ actor ParkingDetectionEngine {
     ///   stillness (§7).
     ///
     /// The two cannot both hold for one fix, so their order is immaterial.
-    private func applyFixEdge(now: Date) -> [DetectionEffect] {
+    private func applyFixEdge(_ fix: LocationFix, now: Date) -> [DetectionEffect] {
+        if checkpoint.state == .parked || checkpoint.state == .departureCandidate {
+            return applyPassengerTest(fix, now: now)
+        }
         if checkpoint.state == .candidatePending {
             return applyFixEdgeToStopOnlyCandidate(now: now)
         }
@@ -1459,6 +1500,26 @@ actor ParkingDetectionEngine {
         current.evidence.locationStopConfirmed = true
         transition = current
         return createCandidate(from: current, now: now)
+    }
+
+    /// docs/05 §11d: a fix of a departure-in-waiting that the parked car could not have
+    /// reached ends the departure as someone else's ride — no question asked, the capture
+    /// released, and the rest of that ride's vehicle evidence ignored. Judged before the
+    /// departure edge, which then finds no session to move.
+    private func applyPassengerTest(_ fix: LocationFix, now: Date) -> [DetectionEffect] {
+        guard let parked = parkedLocation, let evidence = driving else { return [] }
+        let vehicleStartedAt = max(evidence.startedAt, vehicleActiveSince ?? evidence.startedAt)
+        guard PassengerRidePolicy.isElsewhere(fix: fix, parked: parked, vehicleStartedAt: vehicleStartedAt)
+        else { return [] }
+        // From the judgement on, not from the ride's first evidence: the ride is still going
+        // at this fix.
+        passengerRideLastVehicleAt = max(evidence.lastVehicleEvidenceAt ?? fix.timestamp, fix.timestamp)
+        driving = nil
+        isDrivingCaptureLost = false
+        let effects: [DetectionEffect] = [.stopLocationCapture]
+        return checkpoint.state == .departureCandidate
+            ? effects + moveTo(.parked, now: now)
+            : effects + [persistedCheckpoint()]
     }
 
     /// §3a "A stop-only candidate can still be a long light": the second fix that *reported*
