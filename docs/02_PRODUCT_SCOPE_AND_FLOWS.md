@@ -381,3 +381,26 @@ MVP does not require user login. Therefore:
 - free referral balance recovery across uninstall/platform switch is not guaranteed until optional account linking is introduced
 
 This limitation must not be hidden if user asks about transfer.
+
+## 17. 내 차 어디? — Siri and the launcher shortcut (DECIDED 2026-10-01)
+The question the home hero answers, asked without opening the app.
+
+### iOS — Siri and Shortcuts
+`WhereIsMyCarIntent` (App Intents, `openAppWhenRun = false`), offered as an App Shortcut with
+the phrases `주차핀에서 내 차 위치`, `주차핀 내 차 어디`, `주차핀 주차 위치`. It reads the widget's
+App Group projection, so it never opens the database, and answers in one sentence:
+
+| state | answer |
+|---|---|
+| active, place known | `B3 · A구역 · 142, 1시간 24분째 주차 중이에요.` |
+| active, just now | `B3, 방금 주차했어요.` |
+| active, nothing entered | `2시간째 주차 중이에요. 층은 기록하지 않았어요.` |
+| none | `진행 중인 주차가 없어요.` |
+
+The place is the home hero's (`placeText`, a bay alone takes `번`). No coordinate, memo or
+photo — nothing the widget would not draw (docs/06 §1).
+
+### Android — launcher shortcut
+A static shortcut `주차 위치` on a long press of the icon opens the active parking's detail
+(map and `길찾기`) over home; with none, home. Android has no counterpart to answering by
+voice without an Assistant integration, which is out of scope.

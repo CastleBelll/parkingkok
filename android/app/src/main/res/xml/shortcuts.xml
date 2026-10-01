@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- docs/02 §17 (DECIDED 2026-10-01): a long press on the icon opens the parking in
+     progress — its map and 길찾기 — in one tap. The action string is
+     MainActivity.ACTION_OPEN_ACTIVE_PARKING. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="active_parking"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_place"
+        android:shortcutShortLabel="@string/shortcut_active_parking_short"
+        android:shortcutLongLabel="@string/shortcut_active_parking_long">
+        <intent
+            android:action="com.sjstudioz.parkingpin.OPEN_ACTIVE_PARKING"
+            android:targetPackage="com.sjstudioz.parkingpin"
+            android:targetClass="com.sjstudioz.parkingpin.MainActivity" />
+    </shortcut>
+</shortcuts>

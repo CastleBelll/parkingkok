@@ -73,6 +73,7 @@ import com.sjstudioz.parkingpin.ui.photo.ParkingPhotoPicker
 import com.sjstudioz.parkingpin.ui.settings.SettingsScreen
 import com.sjstudioz.parkingpin.ui.settings.SettingsViewModel
 import java.time.ZoneId
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -92,6 +93,9 @@ fun ParkingpinApp(
      */
     candidateId: String? = null,
     onCandidateOpened: () -> Unit = {},
+    /** The launcher's `주차 위치` shortcut (docs/02 §17): open the active parking, consumed once. */
+    openActiveParking: Boolean = false,
+    onActiveParkingOpened: () -> Unit = {},
 ) {
     var backStack by rememberSaveable(saver = NavBackStackSaver) {
         mutableStateOf(NavBackStack.rootedAtHome())
@@ -122,6 +126,16 @@ fun ParkingpinApp(
         if (candidateId != null) {
             backStack = NavBackStack.openingCandidate(candidateId)
             onCandidateOpened()
+        }
+    }
+
+    // docs/02 §17: straight to the map and 길찾기 of the parking in progress. With none,
+    // home is the honest answer — it says there is no parking.
+    LaunchedEffect(openActiveParking) {
+        if (openActiveParking) {
+            val active = container.parkingRepository.observeActive().first()
+            backStack = active?.let { NavBackStack.openingDetail(it.id) } ?: NavBackStack.rootedAtHome()
+            onActiveParkingOpened()
         }
     }
 

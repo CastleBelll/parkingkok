@@ -66,6 +66,14 @@ value class NavBackStack private constructor(val entries: List<ParkingpinRoute>)
             NavBackStack(listOf(ParkingpinRoute.Home, ParkingpinRoute.Confirm(candidateId)))
 
         /**
+         * Home with a parking's detail on top — where the launcher's `주차 위치` shortcut
+         * lands (docs/02 §17). Home underneath, so back behaves as if the user had tapped
+         * the hero.
+         */
+        fun openingDetail(recordId: String): NavBackStack =
+            NavBackStack(listOf(ParkingpinRoute.Home, ParkingpinRoute.Detail(recordId)))
+
+        /**
          * Restores a stack saved by [encode], skipping tokens this build no longer knows.
          * A stack that decodes to nothing falls back to the root.
          */

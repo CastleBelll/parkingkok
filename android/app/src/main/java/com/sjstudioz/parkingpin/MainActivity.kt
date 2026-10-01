@@ -39,6 +39,11 @@ class MainActivity : ComponentActivity() {
     private fun Intent.candidateId(): String? =
         getStringExtra(ParkingCandidateChannel.EXTRA_CANDIDATE_ID)?.takeIf { it.isNotEmpty() }
 
+    /** The launcher's `주차 위치` shortcut (res/xml/shortcuts.xml), consumed once like the candidate. */
+    private var pendingOpenActiveParking by mutableStateOf(false)
+
+    private fun Intent.opensActiveParking(): Boolean = action == ACTION_OPEN_ACTIVE_PARKING
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // Before super.onCreate, which is what the library requires: it swaps the splash
         // theme out for Theme.Parkingpin, so the activity is never drawn wearing the
@@ -46,6 +51,7 @@ class MainActivity : ComponentActivity() {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         pendingCandidateId = intent.candidateId()
+        pendingOpenActiveParking = intent.opensActiveParking()
         enableEdgeToEdge()
         // The fallback only fires under a harness whose Application is not ours. It is
         // safe because `preferencesDataStore` memoizes one DataStore per process, so a
@@ -57,6 +63,8 @@ class MainActivity : ComponentActivity() {
                     container = container,
                     candidateId = pendingCandidateId,
                     onCandidateOpened = { pendingCandidateId = null },
+                    openActiveParking = pendingOpenActiveParking,
+                    onActiveParkingOpened = { pendingOpenActiveParking = false },
                 )
             }
         }
@@ -75,6 +83,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         pendingCandidateId = intent.candidateId()
+        pendingOpenActiveParking = intent.opensActiveParking()
     }
 
     /**
@@ -187,3 +196,6 @@ class MainActivity : ComponentActivity() {
         const val TAG = "PkIdentity"
     }
 }
+
+/** Declared in res/xml/shortcuts.xml (docs/02 §17); `LauncherShortcutTest` keeps the two equal. */
+const val ACTION_OPEN_ACTIVE_PARKING = "com.sjstudioz.parkingpin.OPEN_ACTIVE_PARKING"
