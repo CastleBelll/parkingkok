@@ -14,13 +14,7 @@ plugins {
 // created, `AppContainer` sees none, and analytics falls back to the local sink. That is
 // the same "no transport" behaviour this module shipped before Firebase existed, which is
 // why a config-less build stays honest rather than half-wired.
-//
-// Per environment (docs/18 §13): src/debug/google-services.json is the parkingpin-dev
-// project and src/release/google-services.json the production one, so a debug build can
-// never report into production. The plugin resolves the file per build type; it is applied
-// when either exists, and then each built variant needs its own.
-val firebaseOptionsFiles = listOf("src/debug/google-services.json", "src/release/google-services.json")
-if (firebaseOptionsFiles.any { file(it).exists() }) {
+if (file("google-services.json").exists()) {
     apply(plugin = libs.plugins.google.services.get().pluginId)
 }
 
