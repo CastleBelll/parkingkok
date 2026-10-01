@@ -411,7 +411,7 @@ struct ParkingDetailView: View {
         isEditing = true
     }
 
-    static func reading(_ reading: PillarReading, fillsBlanksOf session: ParkingSession) -> Bool {
+    nonisolated static func reading(_ reading: PillarReading, fillsBlanksOf session: ParkingSession) -> Bool {
         func isBlank(_ value: String?) -> Bool {
             (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
