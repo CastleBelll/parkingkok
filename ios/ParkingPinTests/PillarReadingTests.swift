@@ -553,6 +553,32 @@ struct PillarPhotoFixtureTests {
         #expect(reading.spot == "47")
     }
 
+    /// Audit 2026-10-01 L12: the floor badge has a pillar label's shape (`B1` is `A9`), and
+    /// counting it made the wall look labelled.
+    @Test("The floor badge does not hide a lone-letter zone beside it")
+    func floorBadgeDoesNotHideLoneLetterZone() {
+        let reading = PillarFloorSuggestion.reading(from: [
+            PillarLine("B1", height: 0.150),
+            PillarLine("A", height: 0.140),
+            PillarLine("47", height: 0.143)
+        ])
+
+        #expect(reading.floorText == "B1")
+        #expect(reading.zone == "A")
+        #expect(reading.spot == "47")
+    }
+
+    @Test("The floor badge does not turn bay 85 into a misread B5")
+    func floorBadgeDoesNotEatAnEightBay() {
+        let reading = PillarFloorSuggestion.reading(from: [
+            PillarLine("B2", height: 0.150),
+            PillarLine("85", height: 0.140)
+        ])
+
+        #expect(reading.floorText == "B2")
+        #expect(reading.spot == "85")
+    }
+
     /// Three bays in one frame — `02` in front of the camera, `03` and `04` down the row.
     @Test("98E8104E — the nearest bay wins, not the first one read")
     func nearestBayWins() {
