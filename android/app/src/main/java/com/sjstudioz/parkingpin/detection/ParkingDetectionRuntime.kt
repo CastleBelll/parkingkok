@@ -204,12 +204,14 @@ class ParkingDetectionRuntime(
      * watched it (audit 2026-10-01). Outside that state the record is what a hand save is,
      * the `any → PARKED` row.
      */
-    suspend fun handleCandidateConfirmed(atMillis: Long): List<DetectionEffect> {
+    suspend fun handleCandidateConfirmed(atMillis: Long, location: ParkingLocation?): List<DetectionEffect> {
         val pending = store.readEngineStateOnce()?.state == DetectionState.CANDIDATE_PENDING
         return if (pending) {
             handleUserAnswer(DetectionEvent.UserConfirmedParking(atMillis))
         } else {
-            handleUserSavedParking(atMillis)
+            // The candidate expired in the engine: a hand save, with the record's location
+            // as the parked spot for the passenger rule (docs/05 §11d).
+            handleUserSavedParking(atMillis, location)
         }
     }
 
